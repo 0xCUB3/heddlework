@@ -1,20 +1,48 @@
-import React, { memo, useEffect, useMemo, useState } from 'react'
-import type { PiImageContent } from '../pi/types.ts'
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { useGpuixRequired } from '@gpuix/react'
+import type { PiForkMessage, PiImageContent, PiMessage } from '../pi/types.ts'
 import type { WorkbenchState, ToolRun } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon, type IconName } from './icons.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { openExternal } from './open-external.ts'
-import { copyTextToClipboard } from './clipboard-media.ts'
+import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
+import { NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
 
 const MAX_TOOL_OUTPUT = 24_000
+const TRANSCRIPT_PAGE_MESSAGES = 80
 
 type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'tool' }> | {
   id: string
   kind: 'tool-group'
   tools: Array<Extract<TimelineItem, { kind: 'tool' }>>
   revertEntryId?: string
+}
+
+export interface TranscriptMessageWindow {
+  messages: PiMessage[]
+  forkMessages: PiForkMessage[]
+  hasOlder: boolean
+}
+
+export function transcriptMessageWindow(messages: PiMessage[], forkMessages: PiForkMessage[], limit: number): TranscriptMessageWindow {
+  const boundedLimit = Math.max(1, limit)
+  const tentativeStart = Math.max(0, messages.length - boundedLimit)
+  let start = tentativeStart
+  const earliestBoundary = Math.max(0, tentativeStart - boundedLimit)
+  for (let index = tentativeStart; index >= earliestBoundary; index -= 1) {
+    if (messages[index]?.role !== 'user') continue
+    start = index
+    break
+  }
+  const visibleMessages = messages.slice(start)
+  const visibleUserCount = visibleMessages.filter((message) => message.role === 'user').length
+  return {
+    messages: visibleMessages,
+    forkMessages: forkMessages.slice(Math.max(0, forkMessages.length - visibleUserCount)),
+    hasOlder: start > 0,
+  }
 }
 
 export const Transcript = memo(function Transcript({
@@ -28,29 +56,81 @@ export const Transcript = memo(function Transcript({
   onOpenDiff(): void
   onRevert(entryId: string): void
 }) {
-  const items = useMemo(
-    () => groupToolItems(buildTimeline(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)),
-    [state.forkMessages, state.messages, state.liveAssistant, state.liveTools],
+  const renderer = useGpuixRequired()
+  const listRef = useRef<NativeElementHandle | null>(null)
+  const paging = useRef(false)
+  const sessionKey = state.session.sessionFile ?? state.session.sessionId ?? state.workspacePath
+  const [page, setPage] = useState({ sessionKey, count: TRANSCRIPT_PAGE_MESSAGES })
+  const [tail, setTail] = useState({ sessionKey, following: true })
+  const visibleCount = page.sessionKey === sessionKey ? page.count : TRANSCRIPT_PAGE_MESSAGES
+  const followTail = tail.sessionKey === sessionKey ? tail.following : true
+  useEffect(() => {
+    if (page.sessionKey !== sessionKey) setPage({ sessionKey, count: TRANSCRIPT_PAGE_MESSAGES })
+    if (tail.sessionKey !== sessionKey) setTail({ sessionKey, following: true })
+  }, [page.sessionKey, sessionKey, tail.sessionKey])
+  useEffect(() => {
+    paging.current = false
+  }, [visibleCount])
+
+  const windowed = useMemo(
+    () => transcriptMessageWindow(state.messages, state.forkMessages, visibleCount),
+    [state.forkMessages, state.messages, visibleCount],
   )
+  const hydratedMessages = useMemo(() => hydrateMessageImages(windowed.messages), [windowed.messages])
+  const items = useMemo(
+    () => groupToolItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, windowed.forkMessages)),
+    [hydratedMessages, state.liveAssistant, state.liveTools, windowed.forkMessages],
+  )
+  const loadEarlier = () => {
+    if (!windowed.hasOlder || paging.current) return
+    paging.current = true
+    setPage({ sessionKey, count: Math.min(state.messages.length, visibleCount + TRANSCRIPT_PAGE_MESSAGES) })
+  }
+  const handleScroll = (event: NativeScrollEvent) => {
+    if (followTail) setTail({ sessionKey, following: false })
+    queueMicrotask(() => {
+      const offset = renderer.getScrollOffset?.(listRef.current?.id ?? event.elementId)
+      const y = offset?.[1]
+      if (typeof y === 'number' && y >= -180) loadEarlier()
+    })
+  }
 
   return (
-    <virtual-list
-      alignment="top"
-      followTail
-      overdraw={440}
-      estimatedItemHeight={108}
-      style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
-    >
-      {items.length === 0 ? (
-        <EmptyConversation workspacePath={state.workspacePath} />
-      ) : items.map((item) => (
-        <TimelineRow key={item.id} item={item} presenters={presenters} onOpenDiff={onOpenDiff} onRevert={onRevert} />
-      ))}
-      {state.session.isStreaming && <WorkingRow activity={state.activity} />}
-      <ComposerSpacer />
-    </virtual-list>
+    <div testId="transcript-scroll-surface" onScroll={handleScroll} style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+      <NativeVirtualList
+        testId="transcript-list"
+        elementRef={listRef}
+        alignment="top"
+        followTail={followTail}
+        overdraw={440}
+        estimatedItemHeight={108}
+        onScroll={handleScroll}
+        style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
+      >
+        {items.length === 0 ? (
+          <EmptyConversation workspacePath={state.workspacePath} />
+        ) : items.map((item) => (
+          <TimelineRow key={item.id} item={item} presenters={presenters} onOpenDiff={onOpenDiff} onRevert={onRevert} />
+        ))}
+        {state.session.isStreaming && <WorkingRow activity={state.activity} />}
+        <ComposerSpacer />
+      </NativeVirtualList>
+      {windowed.hasOlder && (
+        <div style={{ position: 'absolute', top: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center' }}>
+          <OlderMessagesButton onLoad={loadEarlier} />
+        </div>
+      )}
+    </div>
   )
 })
+
+function OlderMessagesButton({ onLoad }: { onLoad(): void }) {
+  return (
+    <div testId="load-earlier-messages" tabIndex={0} style={{ height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 11, paddingRight: 11, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onLoad} onKeyDown={(event) => { if (event.key === 'enter') onLoad() }}>
+      <text style={{ color: colors.textFaint, fontSize: 10 }}>Load earlier messages</text>
+    </div>
+  )
+}
 
 function TimelineRow({ item, presenters, onOpenDiff, onRevert }: { item: DisplayTimelineItem; presenters: ReadonlyMap<string, ToolPresenter>; onOpenDiff(): void; onRevert(entryId: string): void }) {
   return (
@@ -149,20 +229,20 @@ function ToolGroup({ tools, presenters, onOpenDiff, onRevert }: { tools: Array<E
   const commandCount = tools.filter((item) => item.tool.name === 'bash').length
   const changedPaths = [...new Set(tools.flatMap((item) => changedPath(item.tool) ? [changedPath(item.tool)!] : []))]
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 4, paddingLeft: 3, paddingRight: 1 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 4, paddingLeft: 3, paddingRight: 1, fontFamily: nativeTheme.fontMono }}>
       <div
         testId="tool-row"
         tabIndex={0}
-        style={{ minHeight: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }}
+        style={{ minHeight: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 6, fontFamily: nativeTheme.fontMono, cursor: 'pointer', hover: { backgroundColor: colors.hover } }}
         onClick={() => setExpanded((value) => !value)}
         onKeyDown={(event) => { if (event.key === 'enter') setExpanded((value) => !value) }}
       >
-        <text style={{ color: failed ? colors.error : colors.textMuted, fontSize: 12 }}>{running ? 'Working' : `Worked for ${workDuration(tools)}`}</text>
+        <text style={{ color: failed ? colors.error : colors.textMuted, fontSize: 12, fontFamily: nativeTheme.fontMono }}>{running ? 'Working' : `Worked for ${workDuration(tools)}`}</text>
         <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={11} color={colors.textFaint} />
       </div>
       {expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingBottom: 5 }}>
-          <text style={{ color: colors.textFaint, fontSize: 10 }}>{workSummary(commandCount, tools.length - commandCount)}</text>
+          <text style={{ color: colors.textFaint, fontSize: 10, fontFamily: nativeTheme.fontMono }}>{workSummary(commandCount, tools.length - commandCount)}</text>
           {tools.map((item) => <ToolRow key={item.tool.id} item={item} presenters={presenters} onRevert={onRevert} />)}
         </div>
       )}
@@ -183,7 +263,7 @@ function ToolRow({ item, presenters, onRevert }: { item: Extract<TimelineItem, {
   const icon = toolIcon(tool.name)
   const summary = presentation.title ?? toolSummary(tool)
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', fontFamily: nativeTheme.fontMono }}>
       <div
         testId="tool-detail-row"
         tabIndex={0}
@@ -207,11 +287,11 @@ function ToolRow({ item, presenters, onRevert }: { item: Extract<TimelineItem, {
         <div style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Icon name={tool.isError ? 'x' : icon} size={15} color={tool.isError ? colors.error : colors.textFaint} />
         </div>
-        <text style={{ color: colors.textMuted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis', ...(tool.name === 'fabric_exec' ? { fontFamily: nativeTheme.fontMono } : {}) }}>{summary}</text>
+        <text testId="tool-summary-label" style={{ color: colors.textMuted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontMono }}>{summary}</text>
         <div style={{ flexGrow: 1 }} />
         {hovered && <InlineAction icon="copy" testId="copy-tool" onClick={() => void copyTextToClipboard(toolCopyText(tool, args, content))} />}
         {hovered && item.revertEntryId && <InlineAction icon="undo" testId="revert-tool" onClick={() => onRevert(item.revertEntryId!)} />}
-        <text style={{ color: tool.isError ? colors.error : tool.status === 'complete' ? colors.textFaint : colors.info, fontSize: 10 }}>
+        <text style={{ color: tool.isError ? colors.error : tool.status === 'complete' ? colors.textFaint : colors.info, fontSize: 10, fontFamily: nativeTheme.fontMono }}>
           {tool.isError ? 'failed' : tool.status === 'complete' ? 'done' : tool.status}
         </text>
         <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={11} color={colors.textFaint} />
@@ -223,7 +303,7 @@ function ToolRow({ item, presenters, onRevert }: { item: Extract<TimelineItem, {
           {args && <code code={args} language="json" showHeader={false} theme={nativeTheme} style={{ width: '100%' }} />}
           {content ? (
             presentation.kind === 'diff'
-              ? <diff patch={content} wordDiff maxLines={500} theme={nativeTheme} style={{ width: '100%' }} />
+              ? <diff patch={content} wordDiff maxLines={500} theme={nativeTheme} style={{ width: '100%', fontFamily: nativeTheme.fontMono }} />
               : (
                 <code
                   code={content}
@@ -235,7 +315,7 @@ function ToolRow({ item, presenters, onRevert }: { item: Extract<TimelineItem, {
                 />
               )
           ) : tool.status === 'complete' ? null : (
-            <text style={{ color: colors.textFaint, fontSize: 11 }}>Waiting for output…</text>
+            <text style={{ color: colors.textFaint, fontSize: 11, fontFamily: nativeTheme.fontMono }}>Waiting for output…</text>
           )}
         </div>
       ))}
@@ -254,7 +334,7 @@ function FabricToolBody({ fabric, output }: { fabric: FabricToolPresentation; ou
           <div style={{ flexGrow: 1 }} />
           <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>{`TypeScript · ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`}</text>
         </div>
-        {fabric.description && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17 }}>{fabric.description}</text>}
+        {fabric.description && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, fontFamily: nativeTheme.fontMono }}>{fabric.description}</text>}
       </div>
       {fabric.code && <code code={fabric.code} language="typescript" showHeader theme={nativeTheme} style={{ width: '100%' }} />}
       {fabric.audits.length > 0 && (
@@ -439,21 +519,21 @@ function groupToolItems(items: TimelineItem[]): DisplayTimelineItem[] {
 
 export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpenDiff(): void }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 5, padding: 10, borderRadius: 10, backgroundColor: colors.card }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 5, padding: 10, borderRadius: 10, backgroundColor: colors.card, fontFamily: nativeTheme.fontMono }}>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Icon name="chevronDown" size={10} color={colors.textFaint} />
-        <text style={{ color: colors.text, fontSize: 10, fontWeight: 600 }}>{`${paths.length} changed ${paths.length === 1 ? 'file' : 'files'}`}</text>
+        <text style={{ color: colors.text, fontSize: 10, fontWeight: 600, fontFamily: nativeTheme.fontMono }}>{`${paths.length} changed ${paths.length === 1 ? 'file' : 'files'}`}</text>
         <div style={{ flexGrow: 1 }} />
         <div testId="changed-files-open-diff" tabIndex={0} style={{ height: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, paddingLeft: 7, paddingRight: 7, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onOpenDiff} onKeyDown={(event) => { if (event.key === 'enter') onOpenDiff() }}>
           <Icon name="fileDiff" size={11} color={colors.textFaint} />
-          <text style={{ color: colors.textMuted, fontSize: 9 }}>Open diff</text>
+          <text style={{ color: colors.textMuted, fontSize: 9, fontFamily: nativeTheme.fontMono }}>Open diff</text>
         </div>
       </div>
       {paths.map((path) => (
         <React.Fragment key={path}>
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 13 }}>
             <Icon name="fileDiff" size={11} color={colors.textFaint} />
-            <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{path}</text>
+            <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontMono }}>{path}</text>
           </div>
         </React.Fragment>
       ))}

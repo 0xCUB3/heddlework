@@ -1,7 +1,7 @@
+import { resolve } from 'node:path'
 import { PiSessionCatalog, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
 import { loadWorkspaceDiff } from '../workspace/git-diff.ts'
-import { hydrateMessageImages } from '../ui/clipboard-media.ts'
 import {
   errorMessage,
   isExtensionUiRequest,
@@ -24,6 +24,8 @@ import {
   type WorkbenchState,
 } from './state.ts'
 
+const SESSION_PAGE_SIZE = 120
+
 export class WorkbenchController {
   readonly #transport: AgentTransport
   readonly #sessionCatalog: PiSessionCatalog
@@ -33,6 +35,8 @@ export class WorkbenchController {
   #connecting = false
   #refreshTimer: ReturnType<typeof setTimeout> | undefined
   #dialogTimer: ReturnType<typeof setTimeout> | undefined
+  #sessionLimit = SESSION_PAGE_SIZE
+  #sessionRefresh: Promise<void> | undefined
   #unsubscribeEvent: () => void
   #unsubscribeStatus: () => void
 
@@ -55,6 +59,7 @@ export class WorkbenchController {
     if (this.#started || this.#connecting) return
     this.#connecting = true
     this.#patch({ connection: 'connecting', connectionMessage: 'Starting Pi…' })
+    void this.refreshSessions()
     try {
       await this.#transport.start()
       this.#started = true
@@ -154,8 +159,19 @@ export class WorkbenchController {
         this.#patch({ activity: 'Ready' })
         return
       }
-      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [] })
+      const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
+      this.#patch({
+        workspacePath,
+        messages: [],
+        forkMessages: [],
+        liveAssistant: undefined,
+        liveTools: [],
+        editorText: '',
+        editorImages: [],
+        workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
+      })
       await this.#bootstrap(false)
+      void this.refreshSessions()
     } catch (error) {
       this.#patch({ activity: 'Ready' })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
@@ -163,14 +179,31 @@ export class WorkbenchController {
   }
 
   async refreshSessions(): Promise<void> {
+    if (this.#sessionRefresh) return this.#sessionRefresh
     this.#patch({ sessionsLoading: true })
-    try {
-      const sessions = await this.#sessionCatalog.list(this.#state.workspacePath)
-      this.#patch({ sessions, sessionsLoading: false })
-    } catch (error) {
-      this.#patch({ sessionsLoading: false })
-      this.#setState((state) => addNotice(state, 'warning', `Could not list sessions: ${errorMessage(error)}`))
-    }
+    const task = (async () => {
+      try {
+        const sessions = await this.#sessionCatalog.list(this.#state.workspacePath, this.#sessionLimit + 1)
+        this.#patch({
+          sessions: sessions.slice(0, this.#sessionLimit),
+          sessionsLoading: false,
+          sessionsHasMore: sessions.length > this.#sessionLimit,
+        })
+      } catch (error) {
+        this.#patch({ sessionsLoading: false })
+        this.#setState((state) => addNotice(state, 'warning', `Could not list sessions: ${errorMessage(error)}`))
+      }
+    })().finally(() => {
+      if (this.#sessionRefresh === task) this.#sessionRefresh = undefined
+    })
+    this.#sessionRefresh = task
+    return task
+  }
+
+  async loadMoreSessions(): Promise<void> {
+    if (this.#state.sessionsLoading || !this.#state.sessionsHasMore) return
+    this.#sessionLimit += SESSION_PAGE_SIZE
+    await this.refreshSessions()
   }
 
   async cloneSession(): Promise<void> {
@@ -298,6 +331,7 @@ export class WorkbenchController {
   }
 
   async refreshWorkspaceDiff(): Promise<void> {
+    const workspacePath = this.#state.workspacePath
     this.#patch({
       workspaceDiff: {
         status: 'loading',
@@ -307,8 +341,8 @@ export class WorkbenchController {
         deletions: this.#state.workspaceDiff.deletions,
       },
     })
-    const workspaceDiff = await loadWorkspaceDiff(this.#state.workspacePath)
-    this.#patch({ workspaceDiff })
+    const workspaceDiff = await loadWorkspaceDiff(workspacePath)
+    if (this.#state.workspacePath === workspacePath) this.#patch({ workspaceDiff })
   }
 
   respondToDialog(response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void {
@@ -334,6 +368,14 @@ export class WorkbenchController {
 
   async #bootstrap(includeModels: boolean): Promise<void> {
     const session = await this.#transport.request<PiSessionState>({ type: 'get_state' })
+    this.#patch({
+      connection: 'connected',
+      connectionMessage: 'Connected',
+      session,
+      liveAssistant: undefined,
+      liveTools: [],
+      activity: session.isStreaming ? 'Working' : 'Ready',
+    })
     const tasks = await Promise.allSettled([
       this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' }),
       includeModels
@@ -341,24 +383,15 @@ export class WorkbenchController {
         : Promise.resolve({ models: this.#state.models }),
       this.#getThinkingLevels(),
       this.#transport.request<PiSessionStats>({ type: 'get_session_stats' }),
-      this.#sessionCatalog.list(this.#state.workspacePath),
       this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
     ])
-    const [messagesResult, modelsResult, levelsResult, statsResult, sessionsResult, forkMessagesResult] = tasks
+    const [messagesResult, modelsResult, levelsResult, statsResult, forkMessagesResult] = tasks
     this.#patch({
-      connection: 'connected',
-      connectionMessage: 'Connected',
-      session,
-      messages: messagesResult.status === 'fulfilled' ? hydrateMessageImages(messagesResult.value.messages) : this.#state.messages,
+      messages: messagesResult.status === 'fulfilled' ? messagesResult.value.messages : this.#state.messages,
       forkMessages: forkMessagesResult.status === 'fulfilled' ? forkMessagesFrom(forkMessagesResult.value) : this.#state.forkMessages,
       models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
       thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
       stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
-      sessions: sessionsResult.status === 'fulfilled' ? sessionsResult.value : this.#state.sessions,
-      sessionsLoading: false,
-      liveAssistant: undefined,
-      liveTools: [],
-      activity: session.isStreaming ? 'Working' : 'Ready',
     })
     void this.refreshWorkspaceDiff()
   }
@@ -374,7 +407,7 @@ export class WorkbenchController {
         this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' }),
         this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
       ])
-      this.#patch({ messages: hydrateMessageImages(messages.messages), forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
+      this.#patch({ messages: messages.messages, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
     } catch (error) {
       this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
     }
@@ -393,7 +426,7 @@ export class WorkbenchController {
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
     this.#refreshTimer = setTimeout(() => {
       this.#refreshTimer = undefined
-      void (full ? this.#bootstrap(false) : Promise.all([this.#refreshMessages(), this.#refreshStats()]))
+      void (full ? Promise.all([this.#bootstrap(false), this.refreshSessions()]) : Promise.all([this.#refreshMessages(), this.#refreshStats()]))
     }, full ? 80 : 35)
   }
 

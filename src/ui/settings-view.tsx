@@ -16,8 +16,8 @@ export function SettingsView({ state, controller, onClose }: { state: WorkbenchS
         <div style={{ flexGrow: 1 }} />
         <Button label="Done" compact onClick={onClose} />
       </div>
-      <div style={{ flexGrow: 1, overflow: 'scroll', display: 'flex', flexDirection: 'row', justifyContent: 'center', padding: 28 }}>
-        <div style={{ width: '100%', maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'scroll', display: 'flex', flexDirection: 'row', justifyContent: 'center', paddingTop: 28, paddingBottom: 52, paddingLeft: 28, paddingRight: 28 }}>
+        <div testId="settings-content" style={{ width: '100%', maxWidth: 720, minHeight: 970, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 24 }}>
           <SettingsSection title="Connection" description="Pi runs as an isolated RPC sidecar for this native window.">
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
@@ -28,7 +28,7 @@ export function SettingsView({ state, controller, onClose }: { state: WorkbenchS
 
           <SettingsSection title="Project" description="The agent process and all coding tools are scoped to this working directory.">
             <SettingsRow icon="folder" label={basename(state.workspacePath) || state.workspacePath} value={state.workspacePath} />
-            <SettingsRow icon="terminal" label="Saved threads" value={String(state.sessions.length)} />
+            <SettingsRow icon="terminal" label="Saved threads" value={`${state.sessions.length}${state.sessionsHasMore ? ' +' : ''}`} />
             <SettingsActions>
               <Button label="Open in Finder" compact icon="box" onClick={() => openPath(state.workspacePath)} />
               <Button label="Refresh threads" compact icon="refresh" onClick={() => void controller.refreshSessions()} />
@@ -46,8 +46,9 @@ export function SettingsView({ state, controller, onClose }: { state: WorkbenchS
           </SettingsSection>
 
           <SettingsSection title="About" description="A native GPUIX control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
-            <SettingsRow icon="panel" label="Pi Code" value="Alpha" />
+            <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
           </SettingsSection>
+          <div testId="settings-bottom-spacer" style={{ height: 96, flexShrink: 0 }} />
         </div>
       </div>
     </div>
@@ -66,9 +67,9 @@ function SettingsSection({ title, description, children }: { title: string; desc
   )
 }
 
-function SettingsRow({ icon, label, value, tone = 'normal' }: { icon: Parameters<typeof Icon>[0]['name']; label: string; value: string; tone?: 'normal' | 'success' }) {
+function SettingsRow({ icon, label, value, tone = 'normal', testId }: { icon: Parameters<typeof Icon>[0]['name']; label: string; value: string; tone?: 'normal' | 'success'; testId?: string }) {
   return (
-    <div style={{ minHeight: 46, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 13, paddingRight: 13, borderWidth: 1, borderColor: colors.border }}>
+    <div {...(testId ? { testId } : {})} style={{ minHeight: 46, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 13, paddingRight: 13, borderWidth: 1, borderColor: colors.border }}>
       <Icon name={icon} size={15} color={tone === 'success' ? colors.success : colors.textFaint} />
       <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>{label}</text>
       <div style={{ flexGrow: 1 }} />

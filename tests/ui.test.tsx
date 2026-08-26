@@ -86,6 +86,14 @@ describeNative('WorkbenchApp', () => {
     }
 
     const automation = await connectTest(root.renderer)
+    const longDraft = 'responsive input '.repeat(32).slice(0, 500)
+    const inputStartedAt = performance.now()
+    await automation.getByTestId('composer').fill(longDraft)
+    root.renderer.flush()
+    expect(controller.getSnapshot().editorText).toBe(longDraft)
+    expect(performance.now() - inputStartedAt).toBeLessThan(750)
+    await automation.getByTestId('composer').fill('')
+
     const pastedImage = createComposerImage(readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png')), 'image/png')
     controller.addEditorImage(pastedImage)
     expect(controller.getSnapshot().editorImages).toHaveLength(1)
@@ -179,6 +187,8 @@ describeNative('WorkbenchApp', () => {
     }
     await automation.getByTestId('tool-row').click()
     expect(root.renderer.getPaintedText()).toContain('Ran 1 command')
+    expect((await automation.getByTestId('tool-row').all())[0]?.style?.fontFamily).toBe('SF Mono')
+    expect((await automation.getByTestId('tool-summary-label').all())[0]?.style?.fontFamily).toBe('SF Mono')
     await automation.getByTestId('tool-detail-row').click()
     root.renderer.flush()
     expect(root.renderer.findByType('code').length).toBeGreaterThan(0)
@@ -192,11 +202,32 @@ describeNative('WorkbenchApp', () => {
     expect(await automation.getByTestId('diff-panel').count()).toBe(1)
     expect(root.renderer.getPaintedText()).toContain('Working tree')
     expect(root.renderer.getPaintedText()).toContain('README.md')
+    expect((await automation.getByTestId('diff-content').all())[0]?.style?.fontFamily).toBe('SF Mono')
+    await automation.getByTestId('diff-file-list').click()
+    expect(await automation.getByTestId('diff-file-list-panel').count()).toBe(1)
+    expect(root.renderer.getPaintedText()).toContain('All changes')
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-diff.png')
       root.renderer.captureScreenshot(screenshot)
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
+    await automation.getByTestId('right-panel-new-tab').click()
+    expect(await automation.getByTestId('surface-picker').count()).toBe(1)
+    expect(root.renderer.getPaintedText()).toContain('Open a surface')
+    expect(root.renderer.getPaintedText()).toContain('Browser')
+    expect(root.renderer.getPaintedText()).toContain('Terminal')
+    expect(root.renderer.getPaintedText()).toContain('Files')
+    expect(root.renderer.getPaintedText()).toContain('Agents')
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-surface-picker.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+    await automation.getByTestId('surface-option-terminal').click()
+    expect(await automation.getByTestId('surface-placeholder').count()).toBe(1)
+    await automation.getByTestId('right-panel-new-tab').click()
+    await automation.getByTestId('surface-option-diff').click()
+    expect(await automation.getByTestId('diff-panel').count()).toBe(1)
     await automation.getByTestId('close-diff').click()
 
     const sessionCardBeforeHover = await automation.getByTestId('sidebar-session-card-active').bounds()
@@ -239,6 +270,14 @@ describeNative('WorkbenchApp', () => {
 
     await automation.getByTestId('sidebar-settings').click()
     expect(root.renderer.getPaintedText()).toContain('Pi executable')
+    const settingsScroll = (await automation.getByTestId('settings-scroll').all())[0]!
+    root.renderer.scrollTo(settingsScroll.id, 0, -10_000)
+    root.renderer.flush()
+    expect(root.renderer.getScrollOffset(settingsScroll.id)?.[1]).toBeLessThan(0)
+    expect(root.renderer.getPaintedText()).toContain('Alpha')
+    const alphaBounds = await automation.getByTestId('settings-alpha').bounds()
+    expect(alphaBounds.y).toBeGreaterThanOrEqual(52)
+    expect(alphaBounds.y + alphaBounds.height).toBeLessThanOrEqual(sidebarBounds.y + sidebarBounds.height)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-settings.png')
       root.renderer.captureScreenshot(screenshot)

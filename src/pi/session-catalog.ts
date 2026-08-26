@@ -50,6 +50,7 @@ const READ_CHUNK_BYTES = 16 * 1024
 const RENAME_TAIL_BYTES = 32 * 1024
 const FULL_SCAN_BYTES = 128 * 1024
 const DEFAULT_CONCURRENCY = 24
+const SESSION_META_CONCURRENCY = 64
 
 export class PiSessionCatalog {
   readonly #options: SessionCatalogOptions
@@ -59,8 +60,9 @@ export class PiSessionCatalog {
     this.#options = options
   }
 
-  list(cwd: string): Promise<PiSessionSummary[]> {
-    return listPiSessionsCached(cwd, this.#options, this.#cache)
+  list(cwd: string, limit = this.#options.limit): Promise<PiSessionSummary[]> {
+    const options = limit === undefined ? this.#options : { ...this.#options, limit }
+    return listPiSessionsCached(cwd, options, this.#cache)
   }
 }
 
@@ -74,7 +76,7 @@ async function listPiSessionsCached(
   cache: Map<string, SessionCacheEntry>,
 ): Promise<PiSessionSummary[]> {
   const paths = await listSessionPaths(cwd, options)
-  const metas = (await mapConcurrent(paths, options.concurrency ?? DEFAULT_CONCURRENCY, sessionMeta))
+  const metas = (await mapConcurrent(paths, options.concurrency ?? SESSION_META_CONCURRENCY, sessionMeta))
     .filter((meta): meta is SessionFileMeta => meta !== null)
     .sort((left, right) => right.mtimeMs - left.mtimeMs)
   const selected = options.limit === undefined ? metas : metas.slice(0, Math.max(0, options.limit))

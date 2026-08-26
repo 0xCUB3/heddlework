@@ -61,6 +61,11 @@ describe('PiSessionCatalog', () => {
       JSON.stringify({ type: 'session_info', name: 'Tail rename' }),
     ].join('\n'))
 
+    const pageStartedAt = performance.now()
+    const firstPage = await listPiSessions(currentCwd, { agentDir, limit: 25 })
+    expect(firstPage).toHaveLength(25)
+    expect(performance.now() - pageStartedAt).toBeLessThan(1_000)
+
     const startedAt = performance.now()
     const sessions = await listPiSessions(currentCwd, { agentDir })
     expect(sessions).toHaveLength(106)

@@ -82,6 +82,7 @@ export interface WorkbenchState {
   forkMessages: PiForkMessage[]
   sessions: PiSessionSummary[]
   sessionsLoading: boolean
+  sessionsHasMore: boolean
   liveAssistant: LiveAssistant | undefined
   liveTools: ToolRun[]
   activity: string
@@ -112,6 +113,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     forkMessages: [],
     sessions: [],
     sessionsLoading: false,
+    sessionsHasMore: false,
     liveAssistant: undefined,
     liveTools: [],
     activity: 'Ready',

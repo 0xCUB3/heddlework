@@ -6,7 +6,7 @@ import { WorkbenchController } from '../src/workbench/controller.ts'
 
 const sessions: PiSessionSummary[] = [
   { id: 'one', path: '/tmp/one.jsonl', cwd: '/tmp/project', title: 'First thread', firstMessage: 'First', messageCount: 1, createdAt: 1, modifiedAt: 1 },
-  { id: 'two', path: '/tmp/two.jsonl', cwd: '/tmp/project', title: 'Second thread', firstMessage: 'Second', messageCount: 1, createdAt: 2, modifiedAt: 2 },
+  { id: 'two', path: '/tmp/two.jsonl', cwd: '/tmp/project-two', title: 'Second thread', firstMessage: 'Second', messageCount: 1, createdAt: 2, modifiedAt: 2 },
 ]
 
 class StaticCatalog extends PiSessionCatalog {
@@ -66,6 +66,7 @@ describe('clickable session switching', () => {
       expect(controller.getSnapshot().sessions.map((session) => session.title)).toEqual(['First thread', 'Second thread'])
       await controller.switchSession(sessions[1]!)
       expect(controller.getSnapshot().session.sessionId).toBe('two')
+      expect(controller.getSnapshot().workspacePath).toBe('/tmp/project-two')
       expect(controller.getSnapshot().messages[0]?.content).toBe('Second')
     } finally {
       await controller.dispose()

@@ -7,12 +7,14 @@ import { DiffPanel } from './diff-panel.tsx'
 import { NotificationLedgerView, NotificationToast } from './notifications.tsx'
 import { SettingsView } from './settings-view.tsx'
 import { WorkbenchSidebar } from './sidebar.tsx'
+import { SurfacePickerPanel, SurfacePlaceholderPanel, type SurfaceKind } from './surface-picker.tsx'
 import { Transcript } from './transcript.tsx'
 import type { ToolPresenter } from './tool-presenters.ts'
 import { colors } from './theme.ts'
 
 type Surface = 'chat' | 'settings'
-type RightPanel = 'diff' | 'notifications'
+type DeferredSurface = Exclude<SurfaceKind, 'diff'>
+type RightPanel = 'diff' | 'notifications' | 'surfaces' | DeferredSurface
 
 export function WorkbenchApp({
   controller,
@@ -61,6 +63,16 @@ export function WorkbenchApp({
     else openDiff()
   }
 
+  const openSurfacePicker = () => {
+    setSurface('chat')
+    setRightPanel('surfaces')
+  }
+
+  const selectSurface = (selection: SurfaceKind) => {
+    if (selection === 'diff') openDiff()
+    else setRightPanel(selection)
+  }
+
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
       <WorkbenchSidebar
@@ -93,8 +105,12 @@ export function WorkbenchApp({
               )}
             </div>
           </div>
-          {rightPanel === 'diff' && <DiffPanel diff={state.workspaceDiff} controller={controller} onClose={() => setRightPanel(undefined)} />}
+          {rightPanel === 'diff' && <DiffPanel diff={state.workspaceDiff} controller={controller} onNewSurface={openSurfacePicker} onClose={() => setRightPanel(undefined)} />}
           {rightPanel === 'notifications' && <NotificationLedgerView state={state} controller={controller} onClose={() => setRightPanel(undefined)} />}
+          {rightPanel === 'surfaces' && <SurfacePickerPanel onSelect={selectSurface} onClose={() => setRightPanel(undefined)} />}
+          {(rightPanel === 'browser' || rightPanel === 'terminal' || rightPanel === 'files' || rightPanel === 'agents') && (
+            <SurfacePlaceholderPanel surface={rightPanel} onNew={openSurfacePicker} onClose={() => setRightPanel(undefined)} />
+          )}
         </div>
       )}
       <NotificationToast notices={state.notices} rightInset={rightPanel ? 436 : 16} />

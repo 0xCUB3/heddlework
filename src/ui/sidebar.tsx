@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { resolve } from 'node:path'
 import { sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { IconButton } from './primitives.tsx'
+import { IconButton, NativeVirtualList, type NativeScrollEvent } from './primitives.tsx'
 import { launchWorkspaceWindow } from './open-external.ts'
 import { colors } from './theme.ts'
 
@@ -30,6 +30,7 @@ export function WorkbenchSidebar({
   const [showProjectLauncher, setShowProjectLauncher] = useState(false)
   const [snoozeMenu, setSnoozeMenu] = useState<string | null>(null)
   const [clock, setClock] = useState(Date.now())
+  const sessionScrollDistance = useRef(0)
   const activePath = state.session.sessionFile
   const activeSummary = useMemo(
     () => state.sessions.find((session) => session.path === activePath) ?? syntheticActiveSession(state),
@@ -79,21 +80,27 @@ export function WorkbenchSidebar({
         projectName={sessionProjectName(session)}
         active={active}
         running={active && state.session.isStreaming}
-        disabled={state.session.isStreaming && !active}
+        disabled={state.connection !== 'connected' || (state.session.isStreaming && !active)}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}
         snoozeOpen={snoozeMenu === session.path}
-        onClick={() => {
-          if (resolve(session.cwd) === resolve(state.workspacePath)) void controller.switchSession(session)
-          else launchWorkspaceWindow(session.cwd, session.path)
-        }}
+        onClick={() => { void controller.switchSession(session) }}
         onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}
         onWake={() => controller.wakeThread(session.path)}
         onSnooze={() => setSnoozeMenu((current) => current === session.path ? null : session.path)}
         onSchedule={(until) => { setSnoozeMenu(null); controller.snoozeThread(session.path, until) }}
       />
     )
+  }
+
+  const handleSessionScroll = (event: NativeScrollEvent) => {
+    const delta = event.deltaY ?? 0
+    if (delta <= 0 || !state.sessionsHasMore || state.sessionsLoading) return
+    sessionScrollDistance.current += event.precise ? delta : delta * 32
+    if (sessionScrollDistance.current < 640) return
+    sessionScrollDistance.current = 0
+    void controller.loadMoreSessions()
   }
 
   return (
@@ -135,7 +142,7 @@ export function WorkbenchSidebar({
         {showProjectLauncher && <ProjectLauncher onClose={() => setShowProjectLauncher(false)} />}
       </div>
 
-      <virtual-list alignment="top" estimatedItemHeight={78} overdraw={280} style={{ flexGrow: 1, minHeight: 0, width: '100%', paddingLeft: 8, paddingRight: 8 }}>
+      <NativeVirtualList testId="sidebar-session-list" alignment="top" estimatedItemHeight={78} overdraw={280} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%', paddingLeft: 8, paddingRight: 8 }}>
         {projectExpanded && (
           <>
             {activeSessions.map((session) => renderSession(session, 'active'))}
@@ -143,14 +150,19 @@ export function WorkbenchSidebar({
             {snoozedSessions.map((session) => renderSession(session, 'snoozed'))}
             {settledSessions.length > 0 && <SectionLabel label="Settled" />}
             {settledSessions.map((session) => renderSession(session, 'settled'))}
-            {visibleSessions.length === 0 && (
+            {state.sessionsHasMore && !normalizedSearch && (
+              <div testId="sidebar-load-more" tabIndex={0} style={{ height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: state.sessionsLoading ? 'default' : 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => { if (!state.sessionsLoading) void controller.loadMoreSessions() }}>
+                <text style={{ color: colors.textFaint, fontSize: 10 }}>{state.sessionsLoading ? 'Loading threads…' : 'Load more threads'}</text>
+              </div>
+            )}
+            {visibleSessions.length === 0 && !state.sessionsLoading && (
               <div style={{ paddingTop: 22, paddingLeft: 78 }}>
                 <text style={{ color: colors.textFaint, fontSize: 11 }}>{normalizedSearch ? 'No threads found' : 'No threads yet'}</text>
               </div>
             )}
           </>
         )}
-      </virtual-list>
+      </NativeVirtualList>
 
       <div style={{ height: 46, paddingLeft: 8, paddingRight: 8, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         <IconButton icon="settings" label="Settings" testId="sidebar-settings" active={settingsActive} onClick={onSettings} />

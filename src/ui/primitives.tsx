@@ -107,6 +107,49 @@ export function IconButton({
   )
 }
 
+export interface NativeElementHandle {
+  id: number
+}
+
+export interface NativeScrollEvent {
+  elementId: number
+  deltaY?: number
+  precise?: boolean
+}
+
+export function NativeVirtualList({
+  children,
+  style,
+  alignment = 'top',
+  followTail = false,
+  overdraw,
+  estimatedItemHeight,
+  testId,
+  onScroll,
+  elementRef,
+}: {
+  children: React.ReactNode
+  style: Record<string, unknown>
+  alignment?: 'top' | 'bottom'
+  followTail?: boolean
+  overdraw?: number
+  estimatedItemHeight?: number
+  testId?: string
+  onScroll?(event: NativeScrollEvent): void
+  elementRef?: React.Ref<NativeElementHandle>
+}) {
+  return React.createElement('virtual-list', {
+    alignment,
+    followTail,
+    overdraw,
+    estimatedItemHeight,
+    style,
+    ...(testId ? { testId } : {}),
+    ...(onScroll ? { onScroll } : {}),
+    ...(elementRef ? { ref: elementRef } : {}),
+  } as never, children)
+}
+
 export interface SelectOption {
   value: string
   label: string
@@ -161,26 +204,32 @@ export function ChipSelect({
         <Icon name="chevronDown" size={12} color={colors.textFaint} />
       </SelectTrigger>
       <SelectContent
+        {...(testId ? { testId: `${testId}-content` } : {})}
         side="top"
         sideOffset={7}
         style={{
           width,
           maxHeight: 340,
+          minHeight: 0,
           padding: 5,
           borderRadius: 10,
           borderWidth: 1,
           borderColor: colors.borderStrong,
           backgroundColor: '#171719',
+          overflow: 'scroll',
         }}
       >
         {options.map((option) => (
           <SelectItem
             key={option.value}
+            {...(testId ? { testId: `${testId}-option` } : {})}
             value={option.value}
             textValue={option.label}
             style={(state: SelectItemState) => ({
               display: 'flex',
               flexDirection: 'column',
+              width: '100%',
+              minWidth: 0,
               gap: 2,
               paddingTop: 7,
               paddingBottom: 7,
@@ -193,10 +242,10 @@ export function ChipSelect({
           >
             {(itemState: SelectItemState) => (
               <>
-                <text style={{ color: itemState.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: itemState.selected ? 650 : 500 }}>
+                <text style={{ color: itemState.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: itemState.selected ? 650 : 500, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                   {option.label}
                 </text>
-                {option.detail && <text style={{ color: colors.textFaint, fontSize: 10 }}>{option.detail}</text>}
+                {option.detail && <text style={{ color: colors.textFaint, fontSize: 10, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.detail}</text>}
               </>
             )}
           </SelectItem>
