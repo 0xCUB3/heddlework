@@ -44,7 +44,7 @@ globalThis.__piWorkbenchRuntime = runtime
 render(
   <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} />,
   {
-    title: 'π Workbench',
+    title: 'π Code',
     width: 1240,
     height: 820,
     titlebarTransparent: true,

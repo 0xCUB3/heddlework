@@ -2,16 +2,20 @@
 
 A first native desktop workbench for [pi](https://github.com/earendil-works/pi), rendered with [GPUIX](https://github.com/remorses/gpuix).
 
-The current version is intentionally focused: one workspace, one active Pi session, a native transcript, model controls, tool cards, extension prompts, and a durable Pi subprocess. Browser integration is out of scope.
+The desktop experience closely adapts the MIT-licensed [T3 Code](https://github.com/pingdotgg/t3code) control surface for Pi: searchable threads, project-oriented navigation, a centered conversation timeline, compact tool disclosures, and a floating composer. Browser integration remains out of scope.
 
 ## Features
 
-- Native GPUIX window with a virtualized transcript
-- Streaming markdown and reasoning display
-- Specialized `bash`, `read`, `edit`, and `write` tool cards
-- Native code and unified diff rendering
+- Native shell reproduced against a locally run T3 Code reference: neutral chrome, centered draft composer, top-aligned threads, and compact header actions
+- Searchable, clickable persisted Pi sessions discovered from Pi's JSONL session directory
+- Hover actions and functional Active, Snoozed, and Settled thread groups
+- Streaming markdown, expandable reasoning, and collapsed “Worked for” tool summaries
+- Specialized `bash`, `read`, `edit`, and `write` tool details plus changed-file summaries with direct Diff access
+- Functional split-pane Git working-tree review with native unified diff rendering
+- Opaque two-second notification toasts with an unread badge and complete in-app ledger
 - Persistent Pi sessions through `pi --mode rpc`
-- New session, prompt, steer, abort, model, thinking, and compaction controls
+- New/switch/export session, prompt, steer, abort, model, thinking, and compaction controls
+- Open a second project in a separate native workbench process
 - Pi extension `select`, `confirm`, `input`, `editor`, notification, status, widget, title, and editor-text requests
 - Reconnect behavior and process error reporting
 - A no-credentials demo transport for UI development
@@ -77,7 +81,9 @@ The desktop shell follows a small subset of Cordis's design:
 - `src/core/kernel.ts` owns services, keyed contribution slots, plugin scopes, and reverse-order cleanup.
 - `src/pi/transport.ts` is the provider-neutral agent transport seam.
 - `src/pi/rpc-transport.ts` is the real Pi provider and implements strict LF-only JSONL framing.
-- `src/workbench/controller.ts` projects RPC events into UI state and rehydrates from Pi's authoritative transcript.
+- `src/pi/session-catalog.ts` reads Pi's persisted session metadata for the clickable thread sidebar.
+- `src/workspace/git-diff.ts` loads tracked and untracked patches through argument-safe Git processes.
+- `src/workbench/controller.ts` projects RPC events into UI state, switches sessions, tracks thread lifecycle metadata, and rehydrates from Pi's authoritative transcript.
 - `src/ui/tool-presenters.ts` is a keyed, reversible UI contribution slot.
 - `src/ui/` contains the GPUIX shell; it does not own agent or session truth.
 
@@ -85,7 +91,11 @@ Pi remains the source of truth for messages and sessions. Streaming state is tem
 
 ## Current limitations
 
-- Only the active session is shown; a cross-project recent-session browser is not implemented yet.
-- No native file picker, terminal emulator, or code editor.
+- Each window owns one active project and Pi process; opening another project starts another window.
+- Project selection currently uses an absolute-path input rather than a native file picker.
+- No terminal emulator or code editor yet.
+- Snooze/settle metadata and notification history currently live for the lifetime of the workbench process.
 - Pi TUI-only custom components cannot be represented over RPC; the standard extension UI protocol is supported.
 - Packaging is an unsigned executable, not a notarized installer.
+
+See [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) for T3 Code and icon attributions.

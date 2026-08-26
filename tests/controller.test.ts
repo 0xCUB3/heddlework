@@ -2,6 +2,22 @@ import { describe, expect, it } from 'bun:test'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 
+function waitForSettled(controller: WorkbenchController): Promise<void> {
+  if (isFullySettled(controller)) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = controller.subscribe(() => {
+      if (!isFullySettled(controller)) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
+
+function isFullySettled(controller: WorkbenchController): boolean {
+  const state = controller.getSnapshot()
+  return !state.session.isStreaming && state.liveAssistant === undefined && state.liveTools.length === 0
+}
+
 describe('WorkbenchController', () => {
   it('boots, streams a task, and rehydrates the authoritative transcript', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace')
@@ -13,7 +29,7 @@ describe('WorkbenchController', () => {
       controller.setEditorText('Inspect the repository')
       await controller.submit(controller.getSnapshot().editorText)
       expect(controller.getSnapshot().session.isStreaming).toBe(true)
-      await Bun.sleep(1_650)
+      await waitForSettled(controller)
 
       const state = controller.getSnapshot()
       expect(state.session.isStreaming).toBe(false)

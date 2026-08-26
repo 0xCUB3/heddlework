@@ -1,4 +1,6 @@
+import { PiSessionCatalog, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
+import { loadWorkspaceDiff } from '../workspace/git-diff.ts'
 import {
   errorMessage,
   isExtensionUiRequest,
@@ -21,6 +23,7 @@ import {
 
 export class WorkbenchController {
   readonly #transport: AgentTransport
+  readonly #sessionCatalog: PiSessionCatalog
   readonly #listeners = new Set<() => void>()
   #state: WorkbenchState
   #started = false
@@ -30,8 +33,9 @@ export class WorkbenchController {
   #unsubscribeEvent: () => void
   #unsubscribeStatus: () => void
 
-  constructor(transport: AgentTransport, workspacePath: string) {
+  constructor(transport: AgentTransport, workspacePath: string, sessionCatalog = new PiSessionCatalog()) {
     this.#transport = transport
+    this.#sessionCatalog = sessionCatalog
     this.#state = createInitialState(workspacePath)
     this.#unsubscribeEvent = transport.onEvent((event) => this.#handleEvent(event))
     this.#unsubscribeStatus = transport.onStatus((status) => this.#handleStatus(status))
@@ -122,6 +126,52 @@ export class WorkbenchController {
     }
   }
 
+  async switchSession(session: PiSessionSummary): Promise<void> {
+    if (
+      this.#state.session.isStreaming ||
+      session.path === this.#state.session.sessionFile ||
+      session.id === this.#state.session.sessionId
+    ) return
+    try {
+      this.#patch({ activity: 'Opening thread' })
+      const result = await this.#transport.request<{ cancelled?: boolean }>({
+        type: 'switch_session',
+        sessionPath: session.path,
+      })
+      if (result.cancelled) {
+        this.#patch({ activity: 'Ready' })
+        return
+      }
+      this.#patch({ messages: [], liveAssistant: undefined, liveTools: [], editorText: '' })
+      await this.#bootstrap(false)
+    } catch (error) {
+      this.#patch({ activity: 'Ready' })
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
+  async refreshSessions(): Promise<void> {
+    this.#patch({ sessionsLoading: true })
+    try {
+      const sessions = await this.#sessionCatalog.list(this.#state.workspacePath)
+      this.#patch({ sessions, sessionsLoading: false })
+    } catch (error) {
+      this.#patch({ sessionsLoading: false })
+      this.#setState((state) => addNotice(state, 'warning', `Could not list sessions: ${errorMessage(error)}`))
+    }
+  }
+
+  async exportSession(): Promise<string | undefined> {
+    try {
+      const data = await this.#transport.request<{ path: string }>({ type: 'export_html' })
+      this.#setState((state) => addNotice(state, 'info', `Exported session to ${data.path}`))
+      return data.path
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      return undefined
+    }
+  }
+
   async setModel(model: PiModel): Promise<void> {
     try {
       await this.#transport.request({ type: 'set_model', provider: model.provider, modelId: model.id })
@@ -165,6 +215,47 @@ export class WorkbenchController {
     this.#patch({ notices: this.#state.notices.filter((notice) => notice.id !== id) })
   }
 
+  clearNotices(): void {
+    this.#patch({ notices: [] })
+  }
+
+  settleThread(path: string): void {
+    const threadLifecycle = {
+      ...this.#state.threadLifecycle,
+      [path]: { settledAt: Date.now() },
+    }
+    this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread moved to Settled'))
+  }
+
+  snoozeThread(path: string, snoozedUntil: number): void {
+    const threadLifecycle = {
+      ...this.#state.threadLifecycle,
+      [path]: { snoozedUntil },
+    }
+    const time = new Date(snoozedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', `Snoozed until ${time}`))
+  }
+
+  wakeThread(path: string): void {
+    const threadLifecycle = { ...this.#state.threadLifecycle }
+    delete threadLifecycle[path]
+    this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread returned to Active'))
+  }
+
+  async refreshWorkspaceDiff(): Promise<void> {
+    this.#patch({
+      workspaceDiff: {
+        status: 'loading',
+        branch: this.#state.workspaceDiff.branch,
+        files: this.#state.workspaceDiff.files,
+        additions: this.#state.workspaceDiff.additions,
+        deletions: this.#state.workspaceDiff.deletions,
+      },
+    })
+    const workspaceDiff = await loadWorkspaceDiff(this.#state.workspacePath)
+    this.#patch({ workspaceDiff })
+  }
+
   respondToDialog(response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void {
     const dialog = this.#state.dialog
     if (!dialog) return
@@ -195,8 +286,9 @@ export class WorkbenchController {
         : Promise.resolve({ models: this.#state.models }),
       this.#getThinkingLevels(),
       this.#transport.request<PiSessionStats>({ type: 'get_session_stats' }),
+      this.#sessionCatalog.list(this.#state.workspacePath),
     ])
-    const [messagesResult, modelsResult, levelsResult, statsResult] = tasks
+    const [messagesResult, modelsResult, levelsResult, statsResult, sessionsResult] = tasks
     this.#patch({
       connection: 'connected',
       connectionMessage: 'Connected',
@@ -205,10 +297,13 @@ export class WorkbenchController {
       models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
       thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
       stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
+      sessions: sessionsResult.status === 'fulfilled' ? sessionsResult.value : this.#state.sessions,
+      sessionsLoading: false,
       liveAssistant: undefined,
       liveTools: [],
       activity: session.isStreaming ? 'Working' : 'Ready',
     })
+    void this.refreshWorkspaceDiff()
   }
 
   async #getThinkingLevels(): Promise<ThinkingLevel[]> {
@@ -282,7 +377,7 @@ export class WorkbenchController {
       return
     }
     if (request.method === 'setTitle') {
-      this.#patch({ windowTitle: request.title ?? 'π Workbench' })
+      this.#patch({ windowTitle: request.title ?? 'π Code' })
       return
     }
     if (request.method === 'set_editor_text') {

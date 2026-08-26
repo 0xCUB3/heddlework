@@ -7,6 +7,7 @@ import {
   type SelectItemState,
   type SelectTriggerState,
 } from '@gpuix/react'
+import { Icon, type IconName } from './icons.tsx'
 import { colors } from './theme.ts'
 
 export interface ButtonProps {
@@ -16,16 +17,23 @@ export interface ButtonProps {
   tone?: 'default' | 'primary' | 'danger' | 'quiet'
   testId?: string
   compact?: boolean
+  icon?: IconName
 }
 
-export function Button({ label, onClick, disabled = false, tone = 'default', testId, compact = false }: ButtonProps) {
+export function Button({ label, onClick, disabled = false, tone = 'default', testId, compact = false, icon }: ButtonProps) {
   const palette = tone === 'primary'
-    ? { background: colors.accent, foreground: '#11140E', border: colors.accent }
+    ? { background: colors.primary, foreground: '#FFFFFF', border: colors.primary }
     : tone === 'danger'
-      ? { background: '#3B2024', foreground: colors.error, border: '#583038' }
+      ? { background: '#3A1B22', foreground: colors.error, border: '#52262E' }
       : tone === 'quiet'
         ? { background: colors.transparent, foreground: colors.textMuted, border: colors.transparent }
-        : { background: colors.raised, foreground: colors.text, border: colors.border }
+        : { background: colors.raised, foreground: colors.text, border: colors.borderStrong }
+  const handlers = disabled || !onClick ? {} : {
+    onClick,
+    onKeyDown: (event: { key?: string }) => {
+      if (event.key === 'enter' || event.key === 'space') onClick()
+    },
+  }
   return (
     <div
       {...(testId ? { testId } : {})}
@@ -35,27 +43,66 @@ export function Button({ label, onClick, disabled = false, tone = 'default', tes
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        minHeight: compact ? 26 : 32,
+        gap: 6,
+        minHeight: compact ? 28 : 32,
         paddingLeft: compact ? 9 : 12,
         paddingRight: compact ? 9 : 12,
-        borderRadius: 7,
+        borderRadius: 8,
         borderWidth: 1,
         borderColor: palette.border,
         backgroundColor: palette.background,
-        opacity: disabled ? 0.45 : 1,
+        opacity: disabled ? 0.35 : 1,
         userSelect: 'none',
-        ...(disabled ? {} : { cursor: 'pointer', hover: { backgroundColor: tone === 'primary' ? '#C8FF85' : colors.hover } }),
+        ...(disabled ? {} : { cursor: 'pointer', hover: { backgroundColor: tone === 'primary' ? colors.primaryHover : colors.hover } }),
       }}
-      {...(disabled ? {} : {
-        onClick,
-        onKeyDown: (event: { key?: string }) => {
-          if (event.key === 'enter' || event.key === 'space') onClick?.()
-        },
-      })}
+      {...handlers}
     >
-      <text style={{ color: palette.foreground, fontSize: compact ? 11 : 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
-        {label}
-      </text>
+      {icon && <Icon name={icon} size={compact ? 13 : 14} color={palette.foreground} />}
+      <text style={{ color: palette.foreground, fontSize: compact ? 11 : 12, fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</text>
+    </div>
+  )
+}
+
+export function IconButton({
+  icon,
+  label,
+  onClick,
+  active = false,
+  disabled = false,
+  testId,
+}: {
+  icon: IconName
+  label: string
+  onClick?(): void
+  active?: boolean
+  disabled?: boolean
+  testId?: string
+}) {
+  const handlers = disabled || !onClick ? {} : {
+    onClick,
+    onKeyDown: (event: { key?: string }) => {
+      if (event.key === 'enter' || event.key === 'space') onClick()
+    },
+  }
+  return (
+    <div
+      {...(testId ? { testId } : {})}
+      tabIndex={disabled ? -1 : 0}
+      style={{
+        width: 30,
+        height: 30,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 8,
+        backgroundColor: active ? colors.sidebarActive : colors.transparent,
+        opacity: disabled ? 0.35 : 1,
+        userSelect: 'none',
+        ...(disabled ? {} : { cursor: 'pointer', hover: { backgroundColor: colors.hover } }),
+      }}
+      {...handlers}
+    >
+      <Icon name={icon} size={16} color={active ? colors.text : colors.textMuted} />
     </div>
   )
 }
@@ -73,14 +120,17 @@ export function ChipSelect({
   onChange,
   testId,
   width = 190,
+  icon,
 }: {
   value: string
-  label: string
+  label?: string
   options: SelectOption[]
   onChange(value: string): void
   testId?: string
   width?: number
+  icon?: IconName
 }) {
+  const selected = options.find((option) => option.value === value)
   return (
     <Select value={value} onValueChange={onChange} disabled={options.length === 0}>
       <SelectTrigger
@@ -89,38 +139,38 @@ export function ChipSelect({
           display: 'flex',
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 7,
+          gap: 6,
           height: 28,
           minWidth: 0,
           maxWidth: width,
-          paddingLeft: 9,
-          paddingRight: 8,
+          paddingLeft: 8,
+          paddingRight: 7,
           borderRadius: 7,
-          borderWidth: 1,
-          borderColor: state.open ? colors.borderStrong : colors.border,
-          backgroundColor: state.open ? colors.hover : colors.raised,
+          borderWidth: 0,
+          backgroundColor: state.open ? colors.hover : colors.transparent,
           cursor: 'pointer',
           userSelect: 'none',
           hover: { backgroundColor: colors.hover },
         })}
       >
-        <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 600, flexShrink: 0 }}>{label}</text>
-        <text style={{ color: colors.text, fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis', minWidth: 0 }}>
-          {options.find((option) => option.value === value)?.label ?? 'Choose'}
+        {icon && <Icon name={icon} size={14} color={colors.textMuted} />}
+        {label && <text style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, flexShrink: 0 }}>{label}</text>}
+        <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 550, whiteSpace: 'nowrap', textOverflow: 'ellipsis', minWidth: 0 }}>
+          {selected?.label ?? 'Choose'}
         </text>
-        <text style={{ color: colors.textFaint, fontSize: 10, flexShrink: 0 }}>⌄</text>
+        <Icon name="chevronDown" size={12} color={colors.textFaint} />
       </SelectTrigger>
       <SelectContent
         side="top"
-        sideOffset={6}
+        sideOffset={7}
         style={{
           width,
-          maxHeight: 320,
+          maxHeight: 340,
           padding: 5,
-          borderRadius: 9,
+          borderRadius: 10,
           borderWidth: 1,
           borderColor: colors.borderStrong,
-          backgroundColor: '#202329',
+          backgroundColor: '#171719',
         }}
       >
         {options.map((option) => (
@@ -136,14 +186,14 @@ export function ChipSelect({
               paddingBottom: 7,
               paddingLeft: 9,
               paddingRight: 9,
-              borderRadius: 6,
-              backgroundColor: state.highlighted || state.selected ? colors.hover : '#202329',
+              borderRadius: 7,
+              backgroundColor: state.highlighted || state.selected ? colors.hover : '#171719',
               cursor: 'pointer',
             })}
           >
-            {(itemState) => (
+            {(itemState: SelectItemState) => (
               <>
-                <text style={{ color: itemState.selected ? colors.accent : colors.text, fontSize: 12, fontWeight: itemState.selected ? 600 : 500 }}>
+                <text style={{ color: itemState.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: itemState.selected ? 650 : 500 }}>
                   {option.label}
                 </text>
                 {option.detail && <text style={{ color: colors.textFaint, fontSize: 10 }}>{option.detail}</text>}
@@ -157,5 +207,5 @@ export function ChipSelect({
 }
 
 export function Label({ children }: { children: string }) {
-  return <text style={{ color: colors.textFaint, fontSize: 10, fontWeight: 700 }}>{children.toUpperCase()}</text>
+  return <text style={{ color: colors.textFaint, fontSize: 10, fontWeight: 650 }}>{children.toUpperCase()}</text>
 }

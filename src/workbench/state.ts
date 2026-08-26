@@ -1,3 +1,4 @@
+import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, ThinkingLevel } from '../pi/types.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
@@ -7,6 +8,28 @@ export interface Notice {
   id: number
   kind: NoticeKind
   message: string
+  createdAt: number
+}
+
+export interface ThreadLifecycle {
+  settledAt?: number
+  snoozedUntil?: number
+}
+
+export interface WorkspaceDiffFile {
+  path: string
+  patch: string
+  additions: number
+  deletions: number
+}
+
+export interface WorkspaceDiff {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  branch: string
+  files: WorkspaceDiffFile[]
+  additions: number
+  deletions: number
+  error?: string
 }
 
 export interface LiveBlock {
@@ -56,12 +79,16 @@ export interface WorkbenchState {
   models: PiModel[]
   thinkingLevels: ThinkingLevel[]
   messages: PiMessage[]
+  sessions: PiSessionSummary[]
+  sessionsLoading: boolean
   liveAssistant: LiveAssistant | undefined
   liveTools: ToolRun[]
   activity: string
   queue: { steering: string[]; followUp: string[] }
   stats: PiSessionStats | undefined
   notices: Notice[]
+  threadLifecycle: Record<string, ThreadLifecycle>
+  workspaceDiff: WorkspaceDiff
   statusItems: Record<string, string>
   widgets: Record<string, ExtensionWidget>
   dialog: ExtensionDialog | undefined
@@ -80,17 +107,21 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     models: [],
     thinkingLevels: ['off'],
     messages: [],
+    sessions: [],
+    sessionsLoading: false,
     liveAssistant: undefined,
     liveTools: [],
     activity: 'Ready',
     queue: { steering: [], followUp: [] },
     notices: [],
+    threadLifecycle: {},
+    workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
     stats: undefined,
     statusItems: {},
     widgets: {},
     dialog: undefined,
     editorText: '',
-    windowTitle: 'π Workbench',
+    windowTitle: 'π Code',
   }
 }
 
@@ -171,8 +202,8 @@ export function applyRpcEvent(state: WorkbenchState, event: RpcRecord): Workbenc
 }
 
 export function addNotice(state: WorkbenchState, kind: NoticeKind, message: string): WorkbenchState {
-  const notice: Notice = { id: ++noticeId, kind, message }
-  return { ...state, notices: [...state.notices.slice(-3), notice] }
+  const notice: Notice = { id: ++noticeId, kind, message, createdAt: Date.now() }
+  return { ...state, notices: [...state.notices, notice] }
 }
 
 function beginMessage(state: WorkbenchState, event: RpcRecord): WorkbenchState {

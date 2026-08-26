@@ -1,36 +1,80 @@
 import React from 'react'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdirSync, statSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join, resolve } from 'node:path'
+import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 
 const controllers: WorkbenchController[] = []
+const workspaces: string[] = []
 afterEach(async () => {
   await Promise.all(controllers.splice(0).map((controller) => controller.dispose()))
+  for (const workspace of workspaces.splice(0)) rmSync(workspace, { recursive: true, force: true })
 })
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
+function waitForSettled(controller: WorkbenchController): Promise<void> {
+  if (isFullySettled(controller)) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = controller.subscribe(() => {
+      if (!isFullySettled(controller)) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
+
+function waitForDiff(controller: WorkbenchController): Promise<void> {
+  const status = controller.getSnapshot().workspaceDiff.status
+  if (status === 'ready' || status === 'error') return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = controller.subscribe(() => {
+      const next = controller.getSnapshot().workspaceDiff.status
+      if (next !== 'ready' && next !== 'error') return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
+
+function isFullySettled(controller: WorkbenchController): boolean {
+  const state = controller.getSnapshot()
+  return !state.session.isStreaming && state.liveAssistant === undefined && state.liveTools.length === 0
+}
+
 describeNative('WorkbenchApp', () => {
-  it('renders the connected native workbench shell', async () => {
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace')
+  it('renders and operates the T3-style native workbench shell', async () => {
+    const workspace = createWorkspaceFixture()
+    const project = basename(workspace)
+    const controller = new WorkbenchController(new DemoTransport(), workspace)
     controllers.push(controller)
     const root = createTestRoot()
     root.render(<WorkbenchApp controller={controller} presenters={new Map()} />)
     await controller.start()
-    root.render(<WorkbenchApp controller={controller} presenters={new Map()} />)
+    await waitForDiff(controller)
     root.renderer.flush()
 
     const painted = root.renderer.getPaintedText()
-    expect(painted).toContain('Pi Workbench')
-    expect(painted).toContain('example-workspace')
+    expect(painted).toContain('Code')
+    expect(painted).toContain('Search')
+    expect(painted).toContain('All projects')
+    expect(painted).toContain(project)
     expect(painted).toContain('Demo session')
-    expect(painted).toContain('Ask Pi to work on this repository…')
-    expect(root.renderer.findByType('virtual-list')).toHaveLength(1)
+    expect(painted.some((line) => line.startsWith('What should we build in '))).toBe(true)
+    expect(painted).toContain('Ask anything, @tag files/folders, $use skills, or / for commands')
+    expect(painted).not.toContain('Build')
+    expect(painted).not.toContain('Pi tools')
+    expect(root.renderer.findByType('virtual-list')).toHaveLength(0)
     expect(root.renderer.findByType('textarea')).toHaveLength(1)
+    const icons = root.renderer.findByType('svg')
+    expect(icons.length).toBeGreaterThan(12)
+    expect(icons.every((icon) => String(icon.customProps?.src ?? '').startsWith('data:image/svg+xml,'))).toBe(true)
+
     const screenshotDirectory = resolve(import.meta.dir, '../screenshots')
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench.png')
@@ -40,19 +84,147 @@ describeNative('WorkbenchApp', () => {
     }
 
     await controller.submit('Inspect the repository')
-    await Bun.sleep(1_650)
-    root.render(<WorkbenchApp controller={controller} presenters={new Map()} />)
+    await waitForSettled(controller)
     root.renderer.flush()
     const conversation = root.renderer.getPaintedText()
+    expect(root.renderer.findByType('virtual-list')).toHaveLength(1)
     expect(conversation).toContain('Inspect the repository')
-    expect(conversation).toContain('bash')
+    expect(conversation.some((line) => line.startsWith('Worked for '))).toBe(true)
     expect(conversation.some((line) => line.includes('native GPUIX transcript'))).toBe(true)
-    expect(root.renderer.findByType('code').length).toBeGreaterThan(0)
+
+    const automation = await connectTest(root.renderer)
+    const sidebarBounds = await automation.getByTestId('sidebar').bounds()
+    const projectToggleBounds = await automation.getByTestId('sidebar-project-toggle').bounds()
+    const projectLabelBounds = await automation.getByTestId('sidebar-project-label').bounds()
+    const projectChevronBounds = await automation.getByTestId('sidebar-project-chevron').bounds()
+    const projectLeftInset = projectLabelBounds.x - projectToggleBounds.x
+    const projectRightInset = projectToggleBounds.x + projectToggleBounds.width - projectChevronBounds.x - projectChevronBounds.width
+    expect(Math.abs(projectLeftInset - projectRightInset)).toBeLessThanOrEqual(1)
+
+    const newThreadBounds = await automation.getByTestId('sidebar-new-thread').bounds()
+    const newProjectBounds = await automation.getByTestId('sidebar-new-project').bounds()
+    expect(Math.abs(newThreadBounds.x + newThreadBounds.width / 2 - newProjectBounds.x - newProjectBounds.width / 2)).toBeLessThanOrEqual(1)
+
+    const settingsBounds = await automation.getByTestId('sidebar-settings').bounds()
+    const connectionBounds = await automation.getByTestId('sidebar-connection-status').bounds()
+    const footerLeftInset = settingsBounds.x - sidebarBounds.x
+    const footerRightInset = sidebarBounds.x + sidebarBounds.width - connectionBounds.x - connectionBounds.width
+    expect(Math.abs(footerLeftInset - footerRightInset)).toBeLessThanOrEqual(1)
+
+    const composerSurfaceBounds = await automation.getByTestId('composer-surface').bounds()
+    const contextBarBounds = await automation.getByTestId('composer-context-bar').bounds()
+    const surfaceBottom = composerSurfaceBounds.y + composerSurfaceBounds.height
+    expect(contextBarBounds.y).toBeLessThan(surfaceBottom)
+    expect(contextBarBounds.y + contextBarBounds.height).toBeGreaterThan(surfaceBottom)
+    const contextMeterBounds = await automation.getByTestId('context-meter').bounds()
+    const sendBounds = await automation.getByTestId('send').bounds()
+    expect(sendBounds.x - contextMeterBounds.x - contextMeterBounds.width).toBeGreaterThanOrEqual(8)
+    expect(root.renderer.findByType('img')).toHaveLength(0)
+
+    await automation.getByTestId('add-action').click()
+    expect(root.renderer.getPaintedText()).toContain('Compact context')
+    expect(root.renderer.getPaintedText()).toContain('Export transcript')
+    await automation.getByTestId('add-action').click()
+    await automation.getByTestId('sidebar-project-toggle').click()
+    expect(await automation.getByTestId('sidebar-session-active').count()).toBe(0)
+    await automation.getByTestId('sidebar-project-toggle').click()
+    expect(await automation.getByTestId('sidebar-session-active').count()).toBe(1)
+    await automation.getByTestId('sidebar-search').fill('no such thread')
+    expect(root.renderer.getPaintedText()).toContain('No threads found')
+    await automation.getByTestId('sidebar-search').fill('')
+
+    expect(root.renderer.findByType('code')).toHaveLength(0)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-conversation.png')
       root.renderer.captureScreenshot(screenshot)
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
+    await automation.getByTestId('tool-row').click()
+    expect(root.renderer.getPaintedText()).toContain('Ran 1 command')
+    await automation.getByTestId('tool-detail-row').click()
+    root.renderer.flush()
+    expect(root.renderer.findByType('code').length).toBeGreaterThan(0)
+    await automation.getByTestId('tool-detail-row').click()
+    await automation.getByTestId('tool-row').click()
+
+    await automation.getByTestId('toggle-diff').click()
+    await Bun.sleep(40)
+    await waitForDiff(controller)
+    root.renderer.flush()
+    expect(await automation.getByTestId('diff-panel').count()).toBe(1)
+    expect(root.renderer.getPaintedText()).toContain('Working tree')
+    expect(root.renderer.getPaintedText()).toContain('README.md')
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-diff.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+    await automation.getByTestId('close-diff').click()
+
+    const sessionCardBeforeHover = await automation.getByTestId('sidebar-session-card-active').bounds()
+    await automation.call('mouseMove', { x: sessionCardBeforeHover.x + sessionCardBeforeHover.width / 2, y: sessionCardBeforeHover.y + 3 })
+    await Bun.sleep(30)
+    root.renderer.flush()
+    const sessionCardAfterHover = await automation.getByTestId('sidebar-session-card-active').bounds()
+    expect(sessionCardAfterHover).toEqual(sessionCardBeforeHover)
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-thread-hover.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+    await automation.getByTestId('sidebar-snooze').click()
+    expect(root.renderer.getPaintedText()).toContain('In 1 hour')
+    await automation.getByTestId('snooze-option-0').click()
+    expect(root.renderer.getPaintedText()).toContain('Snoozed (1)')
+    await Bun.sleep(40)
+    root.renderer.flush()
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-snoozed.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+    await automation.getByTestId('sidebar-wake').click()
+    const restoredBounds = await automation.getByTestId('sidebar-session-active').bounds()
+    await automation.call('mouseMove', { x: restoredBounds.x + restoredBounds.width / 2, y: restoredBounds.y + 3 })
+    await Bun.sleep(30)
+    root.renderer.flush()
+    await automation.getByTestId('sidebar-settle').click()
+    expect(root.renderer.getPaintedText()).toContain('Settled')
+    await Bun.sleep(40)
+    root.renderer.flush()
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-settled.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+    await automation.getByTestId('sidebar-wake').click()
+
+    await automation.getByTestId('sidebar-settings').click()
+    expect(root.renderer.getPaintedText()).toContain('Pi executable')
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-settings.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+
+    await automation.close()
     root.unmount()
-  })
+  }, 20_000)
 })
+
+function createWorkspaceFixture(): string {
+  const workspace = mkdtempSync(join(tmpdir(), 'example-workspace-'))
+  workspaces.push(workspace)
+  writeFileSync(join(workspace, 'README.md'), '# Workbench fixture\n')
+  run(workspace, ['git', 'init', '-q'])
+  run(workspace, ['git', 'add', '.'])
+  run(workspace, ['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'test: seed workbench'])
+  run(workspace, ['git', 'branch', '-M', 'main'])
+  writeFileSync(join(workspace, 'README.md'), '# Workbench fixture\n\nA changed line.\n')
+  return workspace
+}
+
+function run(cwd: string, command: string[]): void {
+  const result = Bun.spawnSync(command, { cwd, stdout: 'pipe', stderr: 'pipe' })
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+}
