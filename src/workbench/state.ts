@@ -14,6 +14,7 @@ export interface Notice {
 export interface ThreadLifecycle {
   settledAt?: number
   snoozedUntil?: number
+  unsettledAt?: number
 }
 
 export interface WorkspaceDiffFile {

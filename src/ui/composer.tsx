@@ -5,7 +5,8 @@ import type { ExtensionDialog, ExtensionWidget, WorkbenchState } from '../workbe
 import { Icon } from './icons.tsx'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
-import { readClipboardImage } from './clipboard-media.ts'
+import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
+import { ComposerNotificationStack } from './notifications.tsx'
 
 export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
   const [pastingImage, setPastingImage] = useState(false)
@@ -26,19 +27,23 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
     void controller.submit(value)
   }
 
-  const pasteClipboardImage = async () => {
+  const pasteClipboardImage = async (editorTextBeforePaste: string) => {
     if (pastingImage) return
     setPastingImage(true)
     try {
       const image = await readClipboardImage()
-      if (image) controller.addEditorImage(image)
+      if (!image) return
+      controller.addEditorImage(image)
+      const currentText = controller.getSnapshot().editorText
+      const restoredText = editorTextAfterImagePaste(editorTextBeforePaste, currentText)
+      if (restoredText !== currentText) controller.setEditorText(restoredText)
     } finally {
       setPastingImage(false)
     }
   }
 
   const handleComposerKeyDown = (event: { key?: string; modifiers?: { cmd?: boolean; ctrl?: boolean } }) => {
-    if (event.key?.toLowerCase() === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage()
+    if (event.key?.toLowerCase() === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
   }
 
   return (
@@ -57,26 +62,29 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
         overflow: 'visible',
       }}
     >
+      <ComposerNotificationStack notices={state.notices} />
       {state.dialog && <ExtensionDialogPanel key={state.dialog.id} dialog={state.dialog} controller={controller} />}
       {above.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
 
-      <div style={{ position: 'relative', width: '100%', maxWidth: 768, paddingBottom: 26, overflow: 'visible' }}>
+      <div style={{ position: 'relative', width: '100%', maxWidth: 768, paddingBottom: 32, overflow: 'visible' }}>
         <ComposerContextBar branch={state.workspaceDiff.branch || 'workspace'} />
         <div
           testId="composer-surface"
           style={{
+            position: 'relative',
             display: 'flex',
             flexDirection: 'column',
             width: '100%',
             borderRadius: 22,
             borderWidth: 1,
-            borderColor: state.session.isStreaming ? '#343D60' : colors.composerOutline,
+            borderColor: state.session.isStreaming ? '#343D60' : colors.composerFrame,
             backgroundColor: colors.composer,
             paddingTop: 14,
             paddingBottom: 12,
             overflow: 'visible',
           }}
         >
+        <div style={{ position: 'absolute', left: 1, right: 1, top: 1, bottom: 1, borderWidth: 1, borderColor: colors.composerHighlight, borderRadius: 21, pointerEvents: 'none' }} />
         {state.editorImages.length > 0 && <ComposerImages images={state.editorImages} onRemove={(id) => controller.removeEditorImage(id)} />}
         {pastingImage && <text style={{ color: colors.textFaint, fontSize: 10, paddingLeft: 16, paddingBottom: 6 }}>Reading image from clipboard…</text>}
         <textarea
@@ -110,7 +118,8 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
             icon="sparkles"
             value={currentModel}
             options={modelOptions}
-            width={245}
+            width={320}
+            searchable
             onChange={(value) => {
               const model = state.models.find((candidate) => modelKey(candidate) === value)
               if (model) void controller.setModel(model)
@@ -138,7 +147,9 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
             />
           </div>
         </div>
+        <div testId="composer-seam-mask" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 2, backgroundColor: colors.composer, pointerEvents: 'none' }} />
       </div>
+      <ComposerContextShadow />
       </div>
 
       {below.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
@@ -155,18 +166,35 @@ function ContextMeter({ percent }: { percent: number }) {
   return <div testId="context-meter" style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: rounded > 80 ? colors.warning : colors.borderStrong }} />
 }
 
+function ComposerContextShadow() {
+  return (
+    <div testId="composer-context-shadow" style={{ position: 'absolute', left: 14, right: 14, bottom: 26, height: 10, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
+      <div style={{ height: 1, backgroundColor: '#00000028' }} />
+      <div style={{ height: 1, backgroundColor: '#00000024' }} />
+      <div style={{ height: 1, backgroundColor: '#00000020' }} />
+      <div style={{ height: 1, backgroundColor: '#0000001C' }} />
+      <div style={{ height: 1, backgroundColor: '#00000018' }} />
+      <div style={{ height: 1, backgroundColor: '#00000014' }} />
+      <div style={{ height: 1, backgroundColor: '#00000010' }} />
+      <div style={{ height: 1, backgroundColor: '#0000000C' }} />
+      <div style={{ height: 1, backgroundColor: '#00000008' }} />
+      <div style={{ height: 1, backgroundColor: '#00000004' }} />
+    </div>
+  )
+}
+
 function ComposerContextBar({ branch }: { branch: string }) {
   return (
-    <div testId="composer-context-bar" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 8, paddingLeft: 13, paddingRight: 13, userSelect: 'none' }}>
+    <div testId="composer-context-bar" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 48, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 20, paddingBottom: 4, paddingLeft: 13, paddingRight: 13, userSelect: 'none' }}>
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderWidth: 1, borderColor: colors.composerOutline, borderRadius: 16, backgroundColor: colors.contextBar }} />
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 16, backgroundColor: colors.contextBar }} />
       <div style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 16, backgroundColor: colors.composerOutline }} />
       <div style={{ position: 'absolute', right: 0, top: 0, width: 1, height: 16, backgroundColor: colors.composerOutline }} />
-      <Icon name="folder" size={13} color={colors.textFaint} />
-      <text style={{ color: colors.textMuted, fontSize: 11 }}>Local checkout</text>
+      <Icon name="folder" size={13} color={colors.contextIcon} />
+      <text testId="composer-checkout-label" style={{ color: colors.contextText, fontSize: 12 }}>Local checkout</text>
       <div style={{ flexGrow: 1 }} />
-      <Icon name="gitBranch" size={12} color={colors.textFaint} />
-      <text style={{ color: colors.textMuted, fontSize: 11 }}>{branch}</text>
+      <Icon name="gitBranch" size={12} color={colors.contextIcon} />
+      <text testId="composer-branch-label" style={{ color: colors.contextText, fontSize: 12 }}>{branch}</text>
     </div>
   )
 }
@@ -228,12 +256,12 @@ function WidgetLine({ line }: { line: string }) {
 function ExtensionDialogPanel({ dialog, controller }: { dialog: ExtensionDialog; controller: WorkbenchController }) {
   const [value, setValue] = useState(dialog.prefill ?? '')
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, gap: 9, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.warning, backgroundColor: '#211D14' }}>
-      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <text style={{ color: colors.warning, fontSize: 10, fontWeight: 700 }}>PI EXTENSION</text>
-        <text style={{ color: colors.text, fontSize: 12, fontWeight: 600 }}>{dialog.title}</text>
+    <div testId="extension-dialog" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0, gap: 9, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.warning, backgroundColor: '#211D14', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', minWidth: 0, gap: 8 }}>
+        <text style={{ color: colors.warning, fontSize: 10, fontWeight: 700, flexShrink: 0 }}>PI EXTENSION</text>
+        <text testId="extension-dialog-title" style={{ color: colors.text, fontSize: 12, fontWeight: 600, lineHeight: 17, minWidth: 0, flexGrow: 1, whiteSpace: 'normal' }}>{dialog.title}</text>
       </div>
-      {dialog.message && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17 }}>{dialog.message}</text>}
+      {dialog.message && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, minWidth: 0, width: '100%', whiteSpace: 'normal' }}>{dialog.message}</text>}
       {dialog.method === 'select' && (
         <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
           {(dialog.options ?? []).map((option) => <Button key={option} label={option} onClick={() => controller.respondToDialog({ value: option })} />)}

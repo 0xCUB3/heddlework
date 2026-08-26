@@ -59,6 +59,7 @@ export const Transcript = memo(function Transcript({
   const renderer = useGpuixRequired()
   const listRef = useRef<NativeElementHandle | null>(null)
   const paging = useRef(false)
+  const upwardScrollDistance = useRef(0)
   const sessionKey = state.session.sessionFile ?? state.session.sessionId ?? state.workspacePath
   const [page, setPage] = useState({ sessionKey, count: TRANSCRIPT_PAGE_MESSAGES })
   const [tail, setTail] = useState({ sessionKey, following: true })
@@ -70,6 +71,7 @@ export const Transcript = memo(function Transcript({
   }, [page.sessionKey, sessionKey, tail.sessionKey])
   useEffect(() => {
     paging.current = false
+    upwardScrollDistance.current = 0
   }, [visibleCount])
 
   const windowed = useMemo(
@@ -88,6 +90,13 @@ export const Transcript = memo(function Transcript({
   }
   const handleScroll = (event: NativeScrollEvent) => {
     if (followTail) setTail({ sessionKey, following: false })
+    const delta = event.deltaY ?? 0
+    if (delta > 0) {
+      upwardScrollDistance.current += event.precise ? delta : delta * 32
+      if (upwardScrollDistance.current >= 320) loadEarlier()
+    } else if (delta < 0) {
+      upwardScrollDistance.current = 0
+    }
     queueMicrotask(() => {
       const offset = renderer.getScrollOffset?.(listRef.current?.id ?? event.elementId)
       const y = offset?.[1]
@@ -115,22 +124,10 @@ export const Transcript = memo(function Transcript({
         {state.session.isStreaming && <WorkingRow activity={state.activity} />}
         <ComposerSpacer />
       </NativeVirtualList>
-      {windowed.hasOlder && (
-        <div style={{ position: 'absolute', top: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center' }}>
-          <OlderMessagesButton onLoad={loadEarlier} />
-        </div>
-      )}
+
     </div>
   )
 })
-
-function OlderMessagesButton({ onLoad }: { onLoad(): void }) {
-  return (
-    <div testId="load-earlier-messages" tabIndex={0} style={{ height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 11, paddingRight: 11, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onLoad} onKeyDown={(event) => { if (event.key === 'enter') onLoad() }}>
-      <text style={{ color: colors.textFaint, fontSize: 10 }}>Load earlier messages</text>
-    </div>
-  )
-}
 
 function TimelineRow({ item, presenters, onOpenDiff, onRevert }: { item: DisplayTimelineItem; presenters: ReadonlyMap<string, ToolPresenter>; onOpenDiff(): void; onRevert(entryId: string): void }) {
   return (
@@ -428,19 +425,20 @@ function MessageFooter({
   onRevert(entryId: string): void
 }) {
   const [copied, setCopied] = useState(false)
+  const [footerHovered, setFooterHovered] = useState(false)
   const copy = async () => {
     if (!await copyTextToClipboard(copyText)) return
     setCopied(true)
     setTimeout(() => setCopied(false), 900)
   }
-  const actions = hovered ? (
+  const actions = hovered || footerHovered ? (
     <>
-      {revertEntryId && <InlineAction icon="undo" testId="revert-message" onClick={() => onRevert(revertEntryId)} />}
+      {revertEntryId && <InlineAction icon="gitBranch" testId="fork-message" onClick={() => onRevert(revertEntryId)} />}
       {copyText && <InlineAction icon={copied ? 'check' : 'copy'} testId="copy-message" onClick={() => void copy()} />}
     </>
   ) : null
   return (
-    <div style={{ minHeight: 22, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: align === 'end' ? 'flex-end' : 'flex-start', gap: 5 }}>
+    <div testId="message-footer" style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: align === 'end' ? 'flex-end' : 'flex-start', gap: 5 }} onMouseEnter={() => setFooterHovered(true)} onMouseLeave={() => setFooterHovered(false)}>
       {align === 'start' && actions}
       {timestamp && <Timestamp value={timestamp} />}
       {align === 'end' && actions}

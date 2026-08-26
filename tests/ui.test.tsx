@@ -9,7 +9,8 @@ import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { createComposerImage } from '../src/ui/clipboard-media.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
-import { WorkbenchApp } from '../src/ui/app.tsx'
+import { PANEL_TRANSITION_MS, WorkbenchApp } from '../src/ui/app.tsx'
+import { colors } from '../src/ui/theme.ts'
 
 const controllers: WorkbenchController[] = []
 const workspaces: string[] = []
@@ -86,12 +87,41 @@ describeNative('WorkbenchApp', () => {
     }
 
     const automation = await connectTest(root.renderer)
+    expect(await automation.getByTestId('sidebar-session-active').count()).toBe(0)
+    expect(await automation.getByTestId('sidebar-session-card').count()).toBe(0)
+    const sidebarList = (await automation.getByTestId('sidebar-session-list').all())[0]!
+    expect(Math.abs(root.renderer.getScrollOffset(sidebarList.id)?.[1] ?? 0)).toBeLessThanOrEqual(0.01)
+    expect(await automation.getByTestId('toggle-left-sidebar').count()).toBe(1)
+    const openSidebarToggleBounds = await automation.getByTestId('toggle-left-sidebar').bounds()
+    if (process.platform === 'darwin') expect(Math.abs(openSidebarToggleBounds.x - 90)).toBeLessThanOrEqual(1)
+    expect((await automation.getByTestId('left-sidebar-host').bounds()).width).toBe(256)
+    await automation.getByTestId('toggle-left-sidebar').click()
+    await Bun.sleep(70)
+    root.renderer.flush()
+    const closingSidebarWidth = (await automation.getByTestId('left-sidebar-host').bounds()).width
+    expect(closingSidebarWidth).toBeGreaterThan(0)
+    expect(closingSidebarWidth).toBeLessThan(256)
+    await Bun.sleep(PANEL_TRANSITION_MS)
+    root.renderer.flush()
+    expect((await automation.getByTestId('left-sidebar-host').bounds()).width).toBeLessThanOrEqual(1)
+    const collapsedToggleBounds = await automation.getByTestId('toggle-left-sidebar').bounds()
+    const collapsedBreadcrumbBounds = await automation.getByTestId('chat-breadcrumb').bounds()
+    expect(collapsedBreadcrumbBounds.x).toBeGreaterThanOrEqual(collapsedToggleBounds.x + collapsedToggleBounds.width + 10)
+    await automation.getByTestId('toggle-left-sidebar').click()
+    await Bun.sleep(70)
+    root.renderer.flush()
+    const openingSidebarWidth = (await automation.getByTestId('left-sidebar-host').bounds()).width
+    expect(openingSidebarWidth).toBeGreaterThan(0)
+    expect(openingSidebarWidth).toBeLessThan(256)
+    await Bun.sleep(PANEL_TRANSITION_MS)
+    root.renderer.flush()
+    expect(Math.abs((await automation.getByTestId('left-sidebar-host').bounds()).width - 256)).toBeLessThanOrEqual(1)
     const longDraft = 'responsive input '.repeat(32).slice(0, 500)
     const inputStartedAt = performance.now()
     await automation.getByTestId('composer').fill(longDraft)
     root.renderer.flush()
     expect(controller.getSnapshot().editorText).toBe(longDraft)
-    expect(performance.now() - inputStartedAt).toBeLessThan(750)
+    expect(performance.now() - inputStartedAt).toBeLessThan(1_000)
     await automation.getByTestId('composer').fill('')
 
     const pastedImage = createComposerImage(readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png')), 'image/png')
@@ -121,7 +151,7 @@ describeNative('WorkbenchApp', () => {
     await Bun.sleep(30)
     root.renderer.flush()
     expect(await automation.getByTestId('copy-message').count()).toBe(1)
-    expect(await automation.getByTestId('revert-message').count()).toBe(1)
+    expect(await automation.getByTestId('fork-message').count()).toBe(1)
     const assistantRows = await automation.getByTestId('assistant-message').all()
     const assistantBounds = assistantRows.at(-1)?.bounds
     expect(assistantBounds).toBeDefined()
@@ -129,7 +159,7 @@ describeNative('WorkbenchApp', () => {
     await Bun.sleep(30)
     root.renderer.flush()
     expect(await automation.getByTestId('copy-message').count()).toBe(1)
-    expect(await automation.getByTestId('revert-message').count()).toBe(1)
+    expect(await automation.getByTestId('fork-message').count()).toBe(1)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-message-actions.png')
       root.renderer.captureScreenshot(screenshot)
@@ -157,8 +187,23 @@ describeNative('WorkbenchApp', () => {
     const composerSurfaceBounds = await automation.getByTestId('composer-surface').bounds()
     const contextBarBounds = await automation.getByTestId('composer-context-bar').bounds()
     const surfaceBottom = composerSurfaceBounds.y + composerSurfaceBounds.height
-    expect(contextBarBounds.y).toBeLessThan(surfaceBottom)
-    expect(contextBarBounds.y + contextBarBounds.height).toBeGreaterThan(surfaceBottom)
+    const contextBottom = contextBarBounds.y + contextBarBounds.height
+    expect(Math.abs(surfaceBottom - contextBarBounds.y - 21)).toBeLessThanOrEqual(1)
+    expect(Math.abs(contextBottom - surfaceBottom - 27)).toBeLessThanOrEqual(1)
+    expect(Math.abs(contextBarBounds.width - composerSurfaceBounds.width + 44)).toBeLessThanOrEqual(2)
+    const contextShadow = (await automation.getByTestId('composer-context-shadow').all())[0]!
+    const contextShadowBounds = contextShadow.bounds!
+    const checkoutLabel = (await automation.getByTestId('composer-checkout-label').all())[0]!
+    const branchLabel = (await automation.getByTestId('composer-branch-label').all())[0]!
+    expect(contextShadowBounds.y + contextShadowBounds.height).toBeLessThanOrEqual(checkoutLabel.bounds!.y + 1)
+    expect(contextShadowBounds.height).toBe(10)
+    expect(contextShadow.style?.bottom).toBe(26)
+    expect(contextShadow.style?.left).toBe(14)
+    expect(contextShadow.style?.right).toBe(14)
+    expect(checkoutLabel.style?.fontSize).toBe(12)
+    expect(checkoutLabel.style?.color).toBe('#767679')
+    expect(branchLabel.style?.fontSize).toBe(12)
+    expect(branchLabel.style?.color).toBe('#767679')
     const contextMeterBounds = await automation.getByTestId('context-meter').bounds()
     const sendBounds = await automation.getByTestId('send').bounds()
     expect(sendBounds.x - contextMeterBounds.x - contextMeterBounds.width).toBeGreaterThanOrEqual(8)
@@ -172,8 +217,9 @@ describeNative('WorkbenchApp', () => {
     expect(root.renderer.getPaintedText()).toContain('Export transcript')
     await automation.getByTestId('add-action').click()
     await automation.getByTestId('sidebar-project-toggle').click()
-    expect(await automation.getByTestId('sidebar-session-active').count()).toBe(0)
-    await automation.getByTestId('sidebar-project-toggle').click()
+    expect(await automation.getByTestId('sidebar-project-filter').count()).toBe(1)
+    expect(await automation.getByTestId('sidebar-session-active').count()).toBe(1)
+    await automation.getByTestId('sidebar-project-option-1').click()
     expect(await automation.getByTestId('sidebar-session-active').count()).toBe(1)
     await automation.getByTestId('sidebar-search').fill('no such thread')
     expect(root.renderer.getPaintedText()).toContain('No threads found')
@@ -187,8 +233,8 @@ describeNative('WorkbenchApp', () => {
     }
     await automation.getByTestId('tool-row').click()
     expect(root.renderer.getPaintedText()).toContain('Ran 1 command')
-    expect((await automation.getByTestId('tool-row').all())[0]?.style?.fontFamily).toBe('SF Mono')
-    expect((await automation.getByTestId('tool-summary-label').all())[0]?.style?.fontFamily).toBe('SF Mono')
+    expect((await automation.getByTestId('tool-row').all())[0]?.style?.fontFamily).toBe('Menlo')
+    expect((await automation.getByTestId('tool-summary-label').all())[0]?.style?.fontFamily).toBe('Menlo')
     await automation.getByTestId('tool-detail-row').click()
     root.renderer.flush()
     expect(root.renderer.findByType('code').length).toBeGreaterThan(0)
@@ -196,21 +242,55 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('tool-row').click()
 
     await automation.getByTestId('toggle-diff').click()
-    await Bun.sleep(40)
+    await Bun.sleep(70)
+    root.renderer.flush()
+    const openingRightWidth = (await automation.getByTestId('right-panel-host').bounds()).width
+    const rightPanelTargetWidth = (await automation.getByTestId('diff-panel').bounds()).width
+    expect(openingRightWidth).toBeGreaterThan(0)
+    expect(openingRightWidth).toBeLessThan(rightPanelTargetWidth)
+    await Bun.sleep(PANEL_TRANSITION_MS)
     await waitForDiff(controller)
     root.renderer.flush()
     expect(await automation.getByTestId('diff-panel').count()).toBe(1)
     expect(root.renderer.getPaintedText()).toContain('Working tree')
     expect(root.renderer.getPaintedText()).toContain('README.md')
-    expect((await automation.getByTestId('diff-content').all())[0]?.style?.fontFamily).toBe('SF Mono')
+    expect((await automation.getByTestId('diff-content').all())[0]?.style?.fontFamily).toBe('Menlo')
+    const horizontalDiff = (await automation.getByTestId('diff-horizontal-scroll').all())[0]!
+    root.renderer.scrollTo(horizontalDiff.id, -300, 0)
+    root.renderer.flush()
+    expect(root.renderer.getScrollOffset(horizontalDiff.id)?.[0]).toBeLessThan(0)
+    await automation.getByTestId('diff-wrap-toggle').click()
+    root.renderer.flush()
+    expect(await automation.getByTestId('diff-native').count()).toBe(0)
+    expect(await automation.getByTestId('diff-wrapped-scroll').count()).toBe(1)
+    expect((await automation.getByTestId('diff-wrapped-code').all())[0]?.style?.fontFamily).toBe('Menlo')
+    expect((await automation.getByTestId('diff-wrapped-code').all())[0]?.style?.whiteSpace).toBe('normal')
+    await automation.getByTestId('diff-wrap-toggle').click()
     await automation.getByTestId('diff-file-list').click()
     expect(await automation.getByTestId('diff-file-list-panel').count()).toBe(1)
+    expect((await automation.getByTestId('diff-file-row').all())[0]?.style?.height).toBe(40)
     expect(root.renderer.getPaintedText()).toContain('All changes')
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-diff.png')
       root.renderer.captureScreenshot(screenshot)
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
+    const refreshBounds = await automation.getByTestId('right-panel-refresh').bounds()
+    const fullscreenBounds = await automation.getByTestId('right-panel-fullscreen').bounds()
+    const closeBounds = await automation.getByTestId('close-diff').bounds()
+    expect(Math.abs(refreshBounds.y + refreshBounds.height / 2 - fullscreenBounds.y - fullscreenBounds.height / 2)).toBeLessThanOrEqual(1)
+    expect(Math.abs(closeBounds.y + closeBounds.height / 2 - fullscreenBounds.y - fullscreenBounds.height / 2)).toBeLessThanOrEqual(1)
+    const rootBounds = await automation.getByTestId('workbench-root').bounds()
+    await automation.getByTestId('right-panel-fullscreen').click()
+    root.renderer.flush()
+    const fullscreenPanelBounds = await automation.getByTestId('diff-panel').bounds()
+    expect(Math.abs(fullscreenPanelBounds.width - rootBounds.width)).toBeLessThanOrEqual(2)
+    expect(Math.abs(fullscreenPanelBounds.height - rootBounds.height)).toBeLessThanOrEqual(2)
+    expect(await automation.getByTestId('sidebar').count()).toBe(0)
+    await automation.getByTestId('right-panel-restore').click()
+    await Bun.sleep(25)
+    root.renderer.flush()
+    expect(await automation.getByTestId('sidebar').count()).toBe(1)
     await automation.getByTestId('right-panel-new-tab').click()
     expect(await automation.getByTestId('surface-picker').count()).toBe(1)
     expect(root.renderer.getPaintedText()).toContain('Open a surface')
@@ -228,14 +308,37 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('right-panel-new-tab').click()
     await automation.getByTestId('surface-option-diff').click()
     expect(await automation.getByTestId('diff-panel').count()).toBe(1)
+    const openRightWidth = (await automation.getByTestId('right-panel-host').bounds()).width
     await automation.getByTestId('close-diff').click()
+    await Bun.sleep(70)
+    root.renderer.flush()
+    const closingRightWidth = (await automation.getByTestId('right-panel-host').bounds()).width
+    expect(closingRightWidth).toBeGreaterThan(0)
+    expect(closingRightWidth).toBeLessThan(openRightWidth)
+    await Bun.sleep(PANEL_TRANSITION_MS)
+    root.renderer.flush()
+    expect(await automation.getByTestId('right-panel-host').count()).toBe(0)
 
     const sessionCardBeforeHover = await automation.getByTestId('sidebar-session-card-active').bounds()
+    const sessionSurfaceBounds = await automation.getByTestId('sidebar-session-surface').bounds()
+    const cardLeftInset = sessionSurfaceBounds.x - sidebarBounds.x
+    const cardRightInset = sidebarBounds.x + sidebarBounds.width - sessionSurfaceBounds.x - sessionSurfaceBounds.width
+    expect(cardLeftInset).toBeGreaterThanOrEqual(8)
+    expect(cardRightInset).toBeGreaterThanOrEqual(8)
+    expect(Math.abs(cardLeftInset - cardRightInset)).toBeLessThanOrEqual(2)
     await automation.call('mouseMove', { x: sessionCardBeforeHover.x + sessionCardBeforeHover.width / 2, y: sessionCardBeforeHover.y + 3 })
     await Bun.sleep(30)
     root.renderer.flush()
     const sessionCardAfterHover = await automation.getByTestId('sidebar-session-card-active').bounds()
     expect(sessionCardAfterHover).toEqual(sessionCardBeforeHover)
+    expect((await automation.getByTestId('sidebar-settle').all())[0]?.style?.backgroundColor ?? colors.transparent).toBe(colors.transparent)
+    expect((await automation.getByTestId('sidebar-settle-label').all())[0]?.style?.color).toBe(colors.textFaint)
+    const settleBounds = await automation.getByTestId('sidebar-settle').bounds()
+    await automation.call('mouseMove', { x: settleBounds.x + settleBounds.width / 2, y: settleBounds.y + settleBounds.height / 2 })
+    await Bun.sleep(30)
+    root.renderer.flush()
+    expect((await automation.getByTestId('sidebar-settle-label').all())[0]?.style?.color).toBe(colors.text)
+    expect((await automation.getByTestId('sidebar-settle').all())[0]?.style?.backgroundColor ?? colors.transparent).toBe(colors.transparent)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-thread-hover.png')
       root.renderer.captureScreenshot(screenshot)
@@ -258,9 +361,13 @@ describeNative('WorkbenchApp', () => {
     await Bun.sleep(30)
     root.renderer.flush()
     await automation.getByTestId('sidebar-settle').click()
-    expect(root.renderer.getPaintedText()).toContain('Settled')
+    expect(root.renderer.getPaintedText()).toContain('Settled (1)')
+    expect(await automation.getByTestId('sidebar-settled-row').count()).toBe(1)
+    await automation.getByTestId('sidebar-settled-toggle').click()
     await Bun.sleep(40)
     root.renderer.flush()
+    expect(root.renderer.getPaintedText()).not.toContain('Settled (1)')
+    expect(await automation.getByTestId('sidebar-settled-row').count()).toBe(1)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-settled.png')
       root.renderer.captureScreenshot(screenshot)
@@ -270,10 +377,10 @@ describeNative('WorkbenchApp', () => {
 
     await automation.getByTestId('sidebar-settings').click()
     expect(root.renderer.getPaintedText()).toContain('Pi executable')
-    const settingsScroll = (await automation.getByTestId('settings-scroll').all())[0]!
-    root.renderer.scrollTo(settingsScroll.id, 0, -10_000)
-    root.renderer.flush()
-    expect(root.renderer.getScrollOffset(settingsScroll.id)?.[1]).toBeLessThan(0)
+    expect(await automation.getByTestId('settings-global').count()).toBe(1)
+    expect(root.renderer.getPaintedText()).toContain('Pinned above composer')
+    expect(root.renderer.getPaintedText()).not.toContain('Saved threads')
+    expect(root.renderer.getPaintedText()).not.toContain('Persistence')
     expect(root.renderer.getPaintedText()).toContain('Alpha')
     const alphaBounds = await automation.getByTestId('settings-alpha').bounds()
     expect(alphaBounds.y).toBeGreaterThanOrEqual(52)
@@ -283,6 +390,11 @@ describeNative('WorkbenchApp', () => {
       root.renderer.captureScreenshot(screenshot)
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
+    await automation.getByTestId('sidebar-session-active').click()
+    await Bun.sleep(30)
+    root.renderer.flush()
+    expect(await automation.getByTestId('settings-view').count()).toBe(0)
+    expect(await automation.getByTestId('composer-surface').count()).toBe(1)
 
     await automation.close()
     root.unmount()

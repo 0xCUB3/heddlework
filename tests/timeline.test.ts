@@ -53,6 +53,15 @@ describe('buildTimeline', () => {
     if (tool?.kind === 'tool') expect(tool.tool.output).toBe('const value = 1')
   })
 
+  it('mirrors Pi by omitting hidden custom messages while retaining displayable ones', () => {
+    const items = buildTimeline([
+      { role: 'custom', customType: 'hidden-retry', content: 'Retry the previous request.', display: false, timestamp: 1 },
+      { role: 'custom', customType: 'visible-status', content: 'Visible extension context', display: true, timestamp: 2 },
+    ], undefined, [])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: 'status', text: 'Visible extension context' })
+  })
+
   it('attaches image blocks and the nearest forkable prompt to every turn row', () => {
     const messages: PiMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'Inspect this' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png', previewPath: '/tmp/image.png' }], timestamp: 1 },

@@ -47,9 +47,13 @@ describeNative('reverse-infinite transcript', () => {
     expect(initialText).not.toContain('Prompt 0')
     const list = (await automation.getByTestId('transcript-list').all())[0]!
     expect(list.events).toContain('scroll')
-    expect(await automation.getByTestId('load-earlier-messages').count()).toBe(1)
+    expect(await automation.getByTestId('load-earlier-messages').count()).toBe(0)
+    expect(root.renderer.getAllText()).not.toContain('Load earlier messages')
 
-    await automation.getByTestId('load-earlier-messages').click()
+    const listBounds = await automation.getByTestId('transcript-scroll-surface').bounds()
+    root.renderer.scrollTo(list.id, 0, 0)
+    root.renderer.flush()
+    await automation.call('scrollWheel', { x: listBounds.x + listBounds.width / 2, y: listBounds.y + 8, deltaX: 0, deltaY: 10_000 })
     await Bun.sleep(25)
     root.renderer.flush()
     expect(root.renderer.getAllText()).toContain('Prompt 40')

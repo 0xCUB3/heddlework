@@ -1,8 +1,14 @@
+import React from 'react'
 import { describe, expect, it } from 'bun:test'
+import { mkdirSync, statSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { connectTest } from '@gpuix/react/automation'
+import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
+import { WorkbenchApp } from '../src/ui/app.tsx'
 
 class ManualTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
@@ -23,6 +29,8 @@ class ManualTransport implements AgentTransport {
     if (command.type === 'get_available_models') return { models: [] } as T
     if (command.type === 'get_available_thinking_levels') return { levels: ['off'] } as T
     if (command.type === 'get_session_stats') return { totalMessages: 0 } as T
+    if (command.type === 'get_fork_messages') return { messages: [] } as T
+    if (command.type === 'new_session') return { cancelled: false } as T
     return undefined as T
   }
 
@@ -90,7 +98,81 @@ describe('Pi extension UI projection', () => {
       controller.respondToDialog({ value: 'Allow' })
       expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'select-1', value: 'Allow' })
       expect(controller.getSnapshot().dialog).toBeUndefined()
+      expect(controller.getSnapshot().notices).toHaveLength(1)
     } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('cancels an active dialog when a new session begins', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', new PiSessionCatalog({ scope: 'cwd' }))
+    try {
+      await controller.start()
+      transport.emit({
+        type: 'extension_ui_request',
+        id: 'stale-dialog',
+        method: 'select',
+        title: 'Old session action',
+        options: ['Continue'],
+      })
+      transport.emit({ type: 'extension_ui_request', id: 'old-notice', method: 'notify', message: 'Old session notice' })
+      expect(controller.getSnapshot().dialog?.id).toBe('stale-dialog')
+      expect(controller.getSnapshot().notices).toHaveLength(1)
+
+      await controller.newSession()
+
+      expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'stale-dialog', cancelled: true })
+      expect(controller.getSnapshot().dialog).toBeUndefined()
+      expect(controller.getSnapshot().notices).toHaveLength(0)
+    } finally {
+      await controller.dispose()
+    }
+  })
+})
+
+const describeNative = hasNativeTestRenderer ? describe : describe.skip
+
+describeNative('Pi extension dialog layout', () => {
+  it('wraps a long title inside the composer panel', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', new PiSessionCatalog({ scope: 'cwd' }))
+    const root = createTestRoot()
+    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map() }))
+    await controller.start()
+    const automation = await connectTest(root.renderer)
+    try {
+      transport.emit({
+        type: 'extension_ui_request',
+        id: 'long-dialog',
+        method: 'select',
+        title: '⏱ Extend billable human time? Idle after the agent. Add a 20m pomodoro block? · 27m still provisioned — extending adds more.',
+        options: ['Extend +20m', 'Stop billing'],
+      })
+      await Bun.sleep(25)
+      root.renderer.flush()
+
+      const panelBounds = await automation.getByTestId('extension-dialog').bounds()
+      const titleBounds = await automation.getByTestId('extension-dialog-title').bounds()
+      expect(titleBounds.x + titleBounds.width).toBeLessThanOrEqual(panelBounds.x + panelBounds.width - 12)
+      expect(titleBounds.height).toBeGreaterThan(17)
+
+      if (process.platform === 'darwin') {
+        const screenshotDirectory = resolve(import.meta.dir, '../screenshots')
+        mkdirSync(screenshotDirectory, { recursive: true })
+        const screenshot = resolve(screenshotDirectory, 'workbench-extension-dialog.png')
+        root.renderer.captureScreenshot(screenshot)
+        expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+      }
+
+      await automation.getByTestId('sidebar-new-thread').click()
+      await Bun.sleep(25)
+      root.renderer.flush()
+      expect(await automation.getByTestId('extension-dialog').count()).toBe(0)
+      expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'long-dialog', cancelled: true })
+    } finally {
+      await automation.close()
+      root.unmount()
       await controller.dispose()
     }
   })

@@ -6,6 +6,7 @@ export type IconName =
   | 'folder'
   | 'folderPlus'
   | 'chevronDown'
+  | 'chevronUp'
   | 'chevronRight'
   | 'settings'
   | 'plus'
@@ -13,6 +14,8 @@ export type IconName =
   | 'download'
   | 'terminal'
   | 'panel'
+  | 'panelLeft'
+  | 'panelLeftClose'
   | 'refresh'
   | 'check'
   | 'circle'
@@ -33,6 +36,9 @@ export type IconName =
   | 'globe'
   | 'files'
   | 'bot'
+  | 'wrap'
+  | 'maximize'
+  | 'minimize'
 
 const ICONS: Record<IconName, string> = {
   search: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><path fill="#000" d="M23.957 41.77a18.02 18.02 0 0 0 10.477-3.376l11.109 11.11a2.66 2.66 0 0 0 1.898.773c1.524 0 2.625-1.172 2.625-2.672c0-.703-.234-1.359-.75-1.874L38.277 34.668c2.32-3.047 3.703-6.82 3.703-10.922c0-9.914-8.109-18.023-18.023-18.023c-9.937 0-18.023 8.109-18.023 18.023S14.02 41.77 23.957 41.77m0-3.891c-7.758 0-14.133-6.398-14.133-14.133S16.2 9.613 23.957 9.613c7.734 0 14.133 6.399 14.133 14.133c0 7.735-6.399 14.133-14.133 14.133"/></svg>',
@@ -40,6 +46,7 @@ const ICONS: Record<IconName, string> = {
   folder: svg('<path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>'),
   folderPlus: svg('<path d="M12 10v6m-3-3h6"/><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>'),
   chevronDown: svg('<path d="m6 9 6 6 6-6"/>'),
+  chevronUp: svg('<path d="m6 15 6-6 6 6"/>'),
   chevronRight: svg('<path d="m9 18 6-6-6-6"/>'),
   settings: svg('<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
@@ -47,6 +54,8 @@ const ICONS: Record<IconName, string> = {
   download: svg('<path d="M12 3v12m-5-5 5 5 5-5"/><path d="M5 21h14"/>'),
   terminal: svg('<path d="m5 7 4 4-4 4m6 0h8"/><rect x="2.5" y="4" width="19" height="16" rx="2"/>'),
   panel: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/>'),
+  panelLeft: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>'),
+  panelLeftClose: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m7 9-3 3 3 3"/>'),
   refresh: svg('<path d="M20 6v5h-5"/><path d="M19 11a7 7 0 1 0 1 5"/>'),
   check: svg('<path d="m5 12 4 4L19 6"/>'),
   circle: svg('<circle cx="12" cy="12" r="8"/>'),
@@ -67,6 +76,9 @@ const ICONS: Record<IconName, string> = {
   globe: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>'),
   files: svg('<path d="M15 2H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"/><path d="M9 22h9a2 2 0 0 0 2-2V7"/>'),
   bot: svg('<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M8 16h8"/>'),
+  wrap: svg('<path d="M4 7h11a4 4 0 0 1 0 8H9"/><path d="m12 12-3 3 3 3M4 12h5"/>'),
+  maximize: svg('<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>'),
+  minimize: svg('<path d="M8 8H3V3M16 8h5V3M8 16H3v5M16 16h5v5"/>'),
 }
 
 const ICON_SOURCES = Object.fromEntries(

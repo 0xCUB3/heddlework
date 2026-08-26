@@ -193,23 +193,34 @@ export class PiRpcTransport implements AgentTransport {
   }
 }
 
-export function resolvePiExecutable(): string {
-  const configured = process.env.PI_WORKBENCH_PI
+export interface PiExecutableResolutionOptions {
+  configured?: string | undefined
+  path?: string | undefined
+  home?: string | undefined
+  exists?(path: string): boolean
+}
+
+export function resolvePiExecutable(options: PiExecutableResolutionOptions = {}): string {
+  const configured = options.configured ?? process.env.PI_WORKBENCH_PI
   if (configured) return configured
 
-  const pathEntries = (process.env.PATH ?? '').split(delimiter)
+  const exists = options.exists ?? existsSync
+  const home = options.home ?? homedir()
+  const localtermShim = join(home, '.localterm', 'shims', process.platform === 'win32' ? 'pi.exe' : 'pi')
+  if (exists(localtermShim)) return localtermShim
+
+  const pathEntries = (options.path ?? process.env.PATH ?? '').split(delimiter)
   for (const entry of pathEntries) {
+    if (!entry) continue
     const candidate = join(entry, process.platform === 'win32' ? 'pi.exe' : 'pi')
-    if (existsSync(candidate)) return candidate
+    if (exists(candidate)) return candidate
   }
 
-  const home = homedir()
   const candidates = [
-    join(home, '.localterm', 'shims', 'pi'),
     join(home, '.local', 'bin', 'pi'),
     join(home, '.bun', 'bin', 'pi'),
     '/opt/homebrew/bin/pi',
     '/usr/local/bin/pi',
   ]
-  return candidates.find(existsSync) ?? 'pi'
+  return candidates.find(exists) ?? 'pi'
 }

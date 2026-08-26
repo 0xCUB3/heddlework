@@ -24,6 +24,7 @@ export function buildTimeline(
   let revertEntryId: string | undefined
 
   messages.forEach((message, messageIndex) => {
+    if (message.role === 'custom' && message.display !== true) return
     const base = `${message.timestamp ?? messageIndex}-${messageIndex}`
     if (message.role === 'user') {
       const forkMessage = forkMessages[userMessageIndex++]

@@ -75,6 +75,8 @@ export interface PiContentBlock {
 export interface PiMessage {
   role: string
   content?: string | PiContentBlock[]
+  customType?: string
+  display?: boolean
   timestamp?: number
   toolCallId?: string
   toolName?: string

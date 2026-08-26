@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'bun:test'
-import { resolve } from 'node:path'
-import { PiRpcTransport } from '../src/pi/rpc-transport.ts'
+import { delimiter, join, resolve } from 'node:path'
+import { PiRpcTransport, resolvePiExecutable } from '../src/pi/rpc-transport.ts'
 import type { RpcRecord } from '../src/pi/types.ts'
 
 describe('PiRpcTransport', () => {
+  it('prefers Localterm’s credential-injecting shim before generic PATH binaries', () => {
+    const home = '/fixture-home'
+    const shim = join(home, '.localterm', 'shims', process.platform === 'win32' ? 'pi.exe' : 'pi')
+    const generic = join('/generic-bin', process.platform === 'win32' ? 'pi.exe' : 'pi')
+    const existing = new Set([shim, generic])
+    expect(resolvePiExecutable({ home, path: ['/generic-bin'].join(delimiter), exists: (path) => existing.has(path) })).toBe(shim)
+    expect(resolvePiExecutable({ configured: '/explicit/pi', home, path: '', exists: () => false })).toBe('/explicit/pi')
+  })
+
   it('correlates responses while forwarding interleaved events', async () => {
     const events: RpcRecord[] = []
     const transport = new PiRpcTransport({

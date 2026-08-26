@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getPiSessionDirectory, listPiSessions } from '../src/pi/session-catalog.ts'
@@ -18,7 +18,8 @@ describe('PiSessionCatalog', () => {
     const directory = getPiSessionDirectory(cwd, agentDir)
     await mkdir(directory, { recursive: true })
 
-    await writeFile(join(directory, '2026-01-01_old.jsonl'), [
+    const oldPath = join(directory, '2026-01-01_old.jsonl')
+    await writeFile(oldPath, [
       JSON.stringify({ type: 'session', id: 'old', cwd, timestamp: '2026-01-01T00:00:00.000Z' }),
       JSON.stringify({ type: 'message', timestamp: '2026-01-01T00:01:00.000Z', message: { role: 'user', content: 'Explain this repository', timestamp: Date.parse('2026-01-01T00:01:00.000Z') } }),
       JSON.stringify({ type: 'message', timestamp: '2026-01-01T00:02:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Okay' }], timestamp: Date.parse('2026-01-01T00:02:00.000Z') } }),
@@ -26,14 +27,17 @@ describe('PiSessionCatalog', () => {
     await writeFile(join(directory, '2026-02-01_new.jsonl'), [
       JSON.stringify({ type: 'session', id: 'new', cwd, timestamp: '2026-02-01T00:00:00.000Z' }),
       JSON.stringify({ type: 'message', timestamp: '2026-02-01T00:01:00.000Z', message: { role: 'user', content: 'Initial title' } }),
+      JSON.stringify({ type: 'message', timestamp: '2026-02-01T00:02:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Newest response' }] } }),
       JSON.stringify({ type: 'session_info', name: 'Named thread' }),
     ].join('\n'))
     await writeFile(join(directory, 'broken.jsonl'), '{not json}\n')
+    const openedLater = new Date('2026-12-01T00:00:00.000Z')
+    await utimes(oldPath, openedLater, openedLater)
 
     const sessions = await listPiSessions(cwd, { agentDir })
     expect(sessions.map((session) => session.id)).toEqual(['new', 'old'])
-    expect(sessions[0]).toMatchObject({ title: 'Named thread', name: 'Named thread', messageCount: 1 })
-    expect(sessions[1]).toMatchObject({ title: 'Explain this repository', firstMessage: 'Explain this repository', messageCount: 2 })
+    expect(sessions[0]).toMatchObject({ title: 'Named thread', name: 'Named thread', messageCount: 2, modifiedAt: Date.parse('2026-02-01T00:02:00.000Z') })
+    expect(sessions[1]).toMatchObject({ title: 'Explain this repository', firstMessage: 'Explain this repository', messageCount: 2, modifiedAt: Date.parse('2026-01-01T00:02:00.000Z') })
   })
 
   it('loads every project and skips large message bodies after the first prompt', async () => {

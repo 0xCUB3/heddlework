@@ -1,24 +1,22 @@
 import React from 'react'
-import { basename } from 'node:path'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
-import { openPath } from './open-external.ts'
-import { colors } from './theme.ts'
+import { colors, nativeTheme } from './theme.ts'
 
 export function SettingsView({ state, controller, onClose }: { state: WorkbenchState; controller: WorkbenchController; onClose(): void }) {
   return (
-    <div style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
+    <div testId="settings-view" style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
       <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Settings</text>
         <div style={{ flexGrow: 1 }} />
         <Button label="Done" compact onClick={onClose} />
       </div>
       <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'scroll', display: 'flex', flexDirection: 'row', justifyContent: 'center', paddingTop: 28, paddingBottom: 52, paddingLeft: 28, paddingRight: 28 }}>
-        <div testId="settings-content" style={{ width: '100%', maxWidth: 720, minHeight: 970, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 24 }}>
-          <SettingsSection title="Connection" description="Pi runs as an isolated RPC sidecar for this native window.">
+        <div testId="settings-global" style={{ width: '100%', maxWidth: 720, minHeight: 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 24 }}>
+          <SettingsSection title="Runtime" description="Global Pi connection settings for this application.">
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
             <SettingsActions>
@@ -26,29 +24,16 @@ export function SettingsView({ state, controller, onClose }: { state: WorkbenchS
             </SettingsActions>
           </SettingsSection>
 
-          <SettingsSection title="Project" description="The agent process and all coding tools are scoped to this working directory.">
-            <SettingsRow icon="folder" label={basename(state.workspacePath) || state.workspacePath} value={state.workspacePath} />
-            <SettingsRow icon="terminal" label="Saved threads" value={`${state.sessions.length}${state.sessionsHasMore ? ' +' : ''}`} />
-            <SettingsActions>
-              <Button label="Open in Finder" compact icon="box" onClick={() => openPath(state.workspacePath)} />
-              <Button label="Refresh threads" compact icon="refresh" onClick={() => void controller.refreshSessions()} />
-            </SettingsActions>
+          <SettingsSection title="Interface" description="Application-wide presentation and navigation defaults.">
+            <SettingsRow icon="terminal" label="Code font" value={nativeTheme.fontMono} />
+            <SettingsRow icon="bell" label="Notifications" value="Pinned above composer" />
+            <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
           </SettingsSection>
 
-          <SettingsSection title="Session" description="Pi remains the authoritative source for transcript, model, compaction, and extension state.">
-            <SettingsRow icon="sparkles" label="Model" value={state.session.model ? `${state.session.model.provider}/${state.session.model.id}` : 'Not selected'} />
-            <SettingsRow icon="wrench" label="Thinking" value={state.session.thinkingLevel} />
-            <SettingsRow icon="download" label="Persistence" value={state.session.sessionFile ? 'On' : 'Not yet persisted'} />
-            <SettingsActions>
-              <Button label="Export HTML" compact icon="download" onClick={() => void controller.exportSession()} />
-              <Button label="Compact" compact disabled={state.session.isStreaming} onClick={() => void controller.compact()} />
-            </SettingsActions>
-          </SettingsSection>
-
-          <SettingsSection title="About" description="A native GPUIX control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
+          <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
             <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
           </SettingsSection>
-          <div testId="settings-bottom-spacer" style={{ height: 96, flexShrink: 0 }} />
+          <div testId="settings-bottom-spacer" style={{ height: 52, flexShrink: 0 }} />
         </div>
       </div>
     </div>

@@ -44,10 +44,11 @@ interface HeaderAccumulator {
   foundFirstUser: boolean
   messageCount: number
   createdAt: number
+  lastResponseAt: number
 }
 
 const READ_CHUNK_BYTES = 16 * 1024
-const RENAME_TAIL_BYTES = 32 * 1024
+const SESSION_TAIL_BYTES = 128 * 1024
 const FULL_SCAN_BYTES = 128 * 1024
 const DEFAULT_CONCURRENCY = 24
 const SESSION_META_CONCURRENCY = 64
@@ -79,12 +80,12 @@ async function listPiSessionsCached(
   const metas = (await mapConcurrent(paths, options.concurrency ?? SESSION_META_CONCURRENCY, sessionMeta))
     .filter((meta): meta is SessionFileMeta => meta !== null)
     .sort((left, right) => right.mtimeMs - left.mtimeMs)
-  const selected = options.limit === undefined ? metas : metas.slice(0, Math.max(0, options.limit))
   const livePaths = new Set(metas.map((meta) => meta.path))
   for (const path of cache.keys()) if (!livePaths.has(path)) cache.delete(path)
-  const sessions = (await mapConcurrent(selected, options.concurrency ?? DEFAULT_CONCURRENCY, (meta) => readPiSessionSummary(meta, cache)))
+  const sessions = (await mapConcurrent(metas, options.concurrency ?? DEFAULT_CONCURRENCY, (meta) => readPiSessionSummary(meta, cache)))
     .filter((session): session is PiSessionSummary => session !== null)
-  return sessions.sort((left, right) => right.modifiedAt - left.modifiedAt)
+    .sort((left, right) => right.modifiedAt - left.modifiedAt)
+  return options.limit === undefined ? sessions : sessions.slice(0, Math.max(0, options.limit))
 }
 
 async function listSessionPaths(cwd: string, options: SessionCatalogOptions): Promise<string[]> {
@@ -149,6 +150,7 @@ async function readPiSessionSummary(
     foundFirstUser: false,
     messageCount: 0,
     createdAt: meta.birthtimeMs || meta.mtimeMs,
+    lastResponseAt: 0,
   }
   const scanToEnd = meta.size <= FULL_SCAN_BYTES
   let reachedEnd = false
@@ -187,8 +189,9 @@ async function readPiSessionSummary(
 
   if (!accumulator.id) return null
   if (!reachedEnd) {
-    const tailName = await latestSessionName(meta)
-    if (tailName.found) accumulator.name = tailName.name
+    const tail = await latestSessionTail(meta)
+    if (tail.nameFound) accumulator.name = tail.name
+    accumulator.lastResponseAt = Math.max(accumulator.lastResponseAt, tail.lastResponseAt)
   }
   const fallback = accumulator.firstMessage || '(image or attachment)'
   const summary: PiSessionSummary = {
@@ -200,7 +203,7 @@ async function readPiSessionSummary(
     firstMessage: fallback,
     messageCount: accumulator.messageCount,
     createdAt: accumulator.createdAt,
-    modifiedAt: meta.mtimeMs,
+    modifiedAt: accumulator.lastResponseAt || accumulator.createdAt,
   }
   cache.set(meta.path, { mtimeMs: meta.mtimeMs, size: meta.size, summary })
   return summary
@@ -228,18 +231,22 @@ function consumeSessionLine(line: string, accumulator: HeaderAccumulator): boole
   if (entry.type !== 'message') return false
   accumulator.messageCount++
   const message = asRecord(entry.message)
+  if (message.role === 'assistant') {
+    const responseAt = timestampMs(message.timestamp) ?? timestampMs(entry.timestamp)
+    if (responseAt) accumulator.lastResponseAt = Math.max(accumulator.lastResponseAt, responseAt)
+  }
   if (message.role !== 'user' || accumulator.foundFirstUser) return false
   accumulator.foundFirstUser = true
   accumulator.firstMessage = contentText(message.content).trim()
   return true
 }
 
-async function latestSessionName(meta: SessionFileMeta): Promise<{ found: boolean; name?: string }> {
-  if (meta.size <= 0) return { found: false }
+async function latestSessionTail(meta: SessionFileMeta): Promise<{ nameFound: boolean; name?: string; lastResponseAt: number }> {
+  if (meta.size <= 0) return { nameFound: false, lastResponseAt: 0 }
   let handle
   try {
     handle = await open(meta.path, 'r')
-    const size = Math.min(RENAME_TAIL_BYTES, meta.size)
+    const size = Math.min(SESSION_TAIL_BYTES, meta.size)
     const offset = meta.size - size
     const buffer = Buffer.allocUnsafe(size)
     const result = await handle.read(buffer, 0, size, offset)
@@ -248,21 +255,29 @@ async function latestSessionName(meta: SessionFileMeta): Promise<{ found: boolea
       const newline = text.indexOf('\n')
       text = newline >= 0 ? text.slice(newline + 1) : ''
     }
-    let found = false
+    let nameFound = false
     let name: string | undefined
+    let lastResponseAt = 0
     for (const line of text.split('\n')) {
       try {
         const entry = JSON.parse(line) as Record<string, unknown>
-        if (entry.type !== 'session_info') continue
-        found = true
-        name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : undefined
+        if (entry.type === 'session_info') {
+          nameFound = true
+          name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : undefined
+          continue
+        }
+        if (entry.type !== 'message') continue
+        const message = asRecord(entry.message)
+        if (message.role !== 'assistant') continue
+        const responseAt = timestampMs(message.timestamp) ?? timestampMs(entry.timestamp)
+        if (responseAt) lastResponseAt = Math.max(lastResponseAt, responseAt)
       } catch {
         continue
       }
     }
-    return { found, ...(name ? { name } : {}) }
+    return { nameFound, ...(name ? { name } : {}), lastResponseAt }
   } catch {
-    return { found: false }
+    return { nameFound: false, lastResponseAt: 0 }
   } finally {
     await handle?.close().catch(() => undefined)
   }

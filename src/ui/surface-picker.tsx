@@ -1,7 +1,7 @@
 import React from 'react'
 import { Icon, type IconName } from './icons.tsx'
-import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'
+import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 
 export type SurfaceKind = 'browser' | 'terminal' | 'files' | 'diff' | 'agents'
 
@@ -20,9 +20,9 @@ const SURFACES: SurfaceDescriptor[] = [
   { kind: 'agents', title: 'Agents', description: 'Watch subagents and workflows run.', icon: 'bot' },
 ]
 
-export function SurfacePickerPanel({ onSelect, onClose }: { onSelect(surface: SurfaceKind): void; onClose(): void }) {
+export function SurfacePickerPanel({ fullscreen, panelWidth, onToggleFullscreen, onSelect, onClose }: { fullscreen: boolean; panelWidth?: number; onToggleFullscreen(): void; onSelect(surface: SurfaceKind): void; onClose(): void }) {
   return (
-    <PanelFrame testId="surface-picker" onClose={onClose}>
+    <PanelFrame testId="surface-picker" title="New surface" icon="plus" fullscreen={fullscreen} {...(panelWidth === undefined ? {} : { panelWidth })} onToggleFullscreen={onToggleFullscreen} onClose={onClose}>
       <div style={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 22 }}>
         <text style={{ color: colors.text, fontSize: 14, fontWeight: 550 }}>Open a surface</text>
         <text style={{ color: colors.textFaint, fontSize: 10, marginTop: 7 }}>Choose what to show in the right panel.</text>
@@ -36,19 +36,11 @@ export function SurfacePickerPanel({ onSelect, onClose }: { onSelect(surface: Su
   )
 }
 
-export function SurfacePlaceholderPanel({ surface, onNew, onClose }: { surface: Exclude<SurfaceKind, 'diff'>; onNew(): void; onClose(): void }) {
+export function SurfacePlaceholderPanel({ surface, fullscreen, panelWidth, onToggleFullscreen, onNew, onClose }: { surface: Exclude<SurfaceKind, 'diff'>; fullscreen: boolean; panelWidth?: number; onToggleFullscreen(): void; onNew(): void; onClose(): void }) {
   const descriptor = SURFACES.find((candidate) => candidate.kind === surface)!
   return (
-    <div testId="surface-placeholder" style={panelStyle()}>
-      <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 9 }}>
-        <div style={{ height: 28, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 9, paddingRight: 9, borderRadius: 8, backgroundColor: colors.raised }}>
-          <Icon name={descriptor.icon} size={13} color={colors.textMuted} />
-          <text style={{ color: colors.text, fontSize: 11, fontWeight: 600 }}>{descriptor.title}</text>
-        </div>
-        <IconButton icon="plus" label="Open a new surface" testId="right-panel-new-tab" onClick={onNew} />
-        <div style={{ flexGrow: 1 }} />
-        <IconButton icon="x" label={`Close ${descriptor.title} panel`} testId="close-surface" onClick={onClose} />
-      </div>
+    <div testId="surface-placeholder" style={rightPanelStyle(fullscreen, panelWidth)}>
+      <RightPanelHeader icon={descriptor.icon} title={descriptor.title} fullscreen={fullscreen} onNew={onNew} onToggleFullscreen={onToggleFullscreen} onClose={onClose} />
       <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 30 }}>
         <Icon name={descriptor.icon} size={22} color={colors.textFaint} />
         <text style={{ color: colors.textMuted, fontSize: 12 }}>{`${descriptor.title} surface`}</text>
@@ -58,16 +50,10 @@ export function SurfacePlaceholderPanel({ surface, onNew, onClose }: { surface: 
   )
 }
 
-function PanelFrame({ testId, onClose, children }: { testId: string; onClose(): void; children: React.ReactNode }) {
+function PanelFrame({ testId, title, icon, fullscreen, panelWidth, onToggleFullscreen, onClose, children }: { testId: string; title: string; icon: IconName; fullscreen: boolean; panelWidth?: number; onToggleFullscreen(): void; onClose(): void; children: React.ReactNode }) {
   return (
-    <div testId={testId} style={panelStyle()}>
-      <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 10, paddingRight: 9 }}>
-        <div style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: colors.raised }}>
-          <Icon name="plus" size={15} color={colors.textMuted} />
-        </div>
-        <div style={{ flexGrow: 1 }} />
-        <IconButton icon="x" label="Close surface picker" testId="close-surface-picker" onClick={onClose} />
-      </div>
+    <div testId={testId} style={rightPanelStyle(fullscreen, panelWidth)}>
+      <RightPanelHeader icon={icon} title={title} fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen} onClose={onClose} />
       {children}
     </div>
   )
@@ -81,8 +67,4 @@ function SurfaceCard({ surface, onClick }: { surface: SurfaceDescriptor; onClick
       <text style={{ color: colors.textFaint, fontSize: 9, lineHeight: 14 }}>{surface.description}</text>
     </div>
   )
-}
-
-function panelStyle() {
-  return { width: '44%', minWidth: 420, height: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }
 }

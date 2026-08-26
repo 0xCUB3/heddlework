@@ -12,18 +12,21 @@ export function ChatHeader({
   state,
   controller,
   diffOpen,
+  leftSidebarProgress,
   onToggleDiff,
 }: {
   state: WorkbenchState
   controller: WorkbenchController
   diffOpen: boolean
+  leftSidebarProgress: number
   onToggleDiff(): void
 }) {
   const projectName = basename(state.workspacePath) || state.workspacePath
   const title = activeThreadTitle(state)
+  const collapsedLeftInset = process.platform === 'darwin' ? 132 : 54
   return (
-    <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 20, paddingRight: 12, backgroundColor: colors.background, userSelect: 'none' }}>
-      <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+    <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: 12, backgroundColor: colors.background, userSelect: 'none' }}>
+      <div testId="chat-breadcrumb" style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <Icon name="folder" size={14} color={colors.textFaint} />
         <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 500, maxWidth: 160, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         <text style={{ color: colors.textFaint, fontSize: 12 }}>/</text>

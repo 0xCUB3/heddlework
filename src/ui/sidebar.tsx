@@ -1,12 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
-import { contentText, type WorkbenchState } from '../workbench/state.ts'
+import { contentText, type ThreadLifecycle, type WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { IconButton, NativeVirtualList, type NativeScrollEvent } from './primitives.tsx'
-import { launchWorkspaceWindow } from './open-external.ts'
+import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
+import { launchWorkspaceWindow, pickWorkspaceDirectory } from './open-external.ts'
 import { colors } from './theme.ts'
+
+const SIDEBAR_WIDTH = 256
+const SIDEBAR_BORDER_WIDTH = 1
+const SESSION_ROW_INSET = 8
+export const SESSION_SETTLED_AFTER_MS = 7 * 24 * 60 * 60 * 1_000
+const ALL_PROJECTS_SCOPE = '__all-projects__'
 
 export function WorkbenchSidebar({
   state,
@@ -14,6 +21,7 @@ export function WorkbenchSidebar({
   settingsActive,
   notificationsActive,
   unreadCount,
+  onSelectSession,
   onSettings,
   onNotifications,
 }: {
@@ -22,32 +30,66 @@ export function WorkbenchSidebar({
   settingsActive: boolean
   notificationsActive: boolean
   unreadCount: number
+  onSelectSession(): void
   onSettings(): void
   onNotifications(): void
 }) {
+  const renderer = useGpuixRequired()
   const [search, setSearch] = useState('')
-  const [projectExpanded, setProjectExpanded] = useState(true)
-  const [showProjectLauncher, setShowProjectLauncher] = useState(false)
+  const [projectScope, setProjectScope] = useState(ALL_PROJECTS_SCOPE)
+  const [pickingProject, setPickingProject] = useState(false)
   const [snoozeMenu, setSnoozeMenu] = useState<string | null>(null)
+  const [settledExpanded, setSettledExpanded] = useState(false)
   const [clock, setClock] = useState(Date.now())
   const sessionScrollDistance = useRef(0)
+  const sessionListRef = useRef<NativeElementHandle | null>(null)
+  const initialSessionScrollApplied = useRef(false)
   const activePath = state.session.sessionFile
+  const persistedSessions = useMemo(() => state.sessions.filter((session) => session.messageCount > 0), [state.sessions])
   const activeSummary = useMemo(
-    () => state.sessions.find((session) => session.path === activePath) ?? syntheticActiveSession(state),
-    [activePath, state],
+    () => persistedSessions.find((session) => session.path === activePath) ?? syntheticActiveSession(state),
+    [activePath, persistedSessions, state],
   )
   const normalizedSearch = search.trim().toLowerCase()
+  const projectOptions = useMemo(() => {
+    const projects = new Map<string, string>()
+    for (const session of [activeSummary, ...persistedSessions]) {
+      if (!session) continue
+      projects.set(resolve(session.cwd), sessionProjectName(session))
+    }
+    return [
+      { value: ALL_PROJECTS_SCOPE, label: 'All projects' },
+      ...[...projects].map(([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label)),
+    ]
+  }, [activeSummary, persistedSessions])
+  useEffect(() => {
+    if (!projectOptions.some((option) => option.value === projectScope)) setProjectScope(ALL_PROJECTS_SCOPE)
+  }, [projectOptions, projectScope])
   const matchingSessions = useMemo(() => {
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
-    for (const session of state.sessions) unique.set(session.path, session)
-    const sessions = [...unique.values()]
+    for (const session of persistedSessions) unique.set(session.path, session)
+    const sorted = [...unique.values()].sort((left, right) => right.modifiedAt - left.modifiedAt)
+    const scoped = projectScope === ALL_PROJECTS_SCOPE
+      ? sorted
+      : sorted.filter((session) => resolve(session.cwd) === projectScope)
     return normalizedSearch
-      ? sessions.filter((session) => `${session.title} ${session.firstMessage} ${sessionProjectName(session)} ${session.cwd}`.toLowerCase().includes(normalizedSearch))
-      : sessions
-  }, [activeSummary, normalizedSearch, state.sessions])
+      ? scoped.filter((session) => `${session.title} ${session.firstMessage} ${sessionProjectName(session)} ${session.cwd}`.toLowerCase().includes(normalizedSearch))
+      : scoped
+  }, [activeSummary, normalizedSearch, persistedSessions, projectScope])
   const visibleSessions = matchingSessions
   const now = clock
+  useEffect(() => {
+    if (initialSessionScrollApplied.current || state.sessionsLoading || visibleSessions.length === 0) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled || !sessionListRef.current) return
+      renderer.scrollTo?.(sessionListRef.current.id, 0, 0)
+      sessionScrollDistance.current = 0
+      initialSessionScrollApplied.current = true
+    })
+    return () => { cancelled = true }
+  }, [renderer, state.sessionsLoading, visibleSessions.length])
   useEffect(() => {
     const currentTime = Date.now()
     const nextWake = Object.values(state.threadLifecycle)
@@ -59,12 +101,12 @@ export function WorkbenchSidebar({
     const timer = setTimeout(() => setClock(Date.now()), Math.max(25, refreshAt - currentTime + 10))
     return () => clearTimeout(timer)
   }, [now, state.threadLifecycle])
-  const activeSessions = visibleSessions.filter((session) => {
-    const lifecycle = state.threadLifecycle[session.path]
-    return !lifecycle?.settledAt && !(lifecycle?.snoozedUntil && lifecycle.snoozedUntil > now)
-  })
-  const snoozedSessions = visibleSessions.filter((session) => (state.threadLifecycle[session.path]?.snoozedUntil ?? 0) > now)
-  const settledSessions = visibleSessions.filter((session) => Boolean(state.threadLifecycle[session.path]?.settledAt))
+  const activeSessions = visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'active')
+  const snoozedSessions = visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'snoozed')
+  const settledSessions = visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'settled')
+  const renderedSettledSessions = settledExpanded
+    ? settledSessions
+    : settledSessions.filter((session) => session.path === activePath || session.id === state.session.sessionId)
   const connectionColor = state.connection === 'connected'
     ? colors.success
     : state.connection === 'connecting'
@@ -85,7 +127,7 @@ export function WorkbenchSidebar({
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}
         snoozeOpen={snoozeMenu === session.path}
-        onClick={() => { void controller.switchSession(session) }}
+        onClick={() => { onSelectSession(); void controller.switchSession(session) }}
         onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}
         onWake={() => controller.wakeThread(session.path)}
         onSnooze={() => setSnoozeMenu((current) => current === session.path ? null : session.path)}
@@ -104,7 +146,7 @@ export function WorkbenchSidebar({
   }
 
   return (
-    <div testId="sidebar" style={{ position: 'relative', width: 256, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.sidebar, userSelect: 'none', overflow: 'visible' }}>
+    <div testId="sidebar" style={{ position: 'relative', width: SIDEBAR_WIDTH, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.sidebar, userSelect: 'none', overflow: 'visible' }}>
       <BrandHeader />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, paddingTop: 6 }}>
@@ -120,47 +162,38 @@ export function WorkbenchSidebar({
               onChange={(event) => setSearch(String(event.value ?? ''))}
             />
           </div>
-          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.session.isStreaming || state.connection !== 'connected'} onClick={() => void controller.newSession()} />
+          <IconButton testId="sidebar-new-thread" icon="squarePen" label="New thread" disabled={state.session.isStreaming || state.connection !== 'connected'} onClick={() => { onSelectSession(); void controller.newSession() }} />
         </div>
 
         <div style={{ alignSelf: 'stretch', height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <div
-            testId="sidebar-project-toggle"
-            tabIndex={0}
-            style={{ minWidth: 0, flexGrow: 1, height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 14, borderRadius: 8, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }}
-            onClick={() => setProjectExpanded((value) => !value)}
-          >
-            <Icon name="folder" size={15} color={colors.textFaint} />
-            <text testId="sidebar-project-label" style={{ color: colors.textMuted, fontSize: 12, fontWeight: 550 }}>All projects</text>
-            <div style={{ flexGrow: 1 }} />
-            <div testId="sidebar-project-chevron" style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <Icon name={projectExpanded ? 'chevronDown' : 'chevronRight'} size={12} color={colors.textFaint} />
-            </div>
-          </div>
-          <IconButton testId="sidebar-new-project" icon="folderPlus" label="New project" onClick={() => setShowProjectLauncher((value) => !value)} />
+          <ProjectFilter value={projectScope} options={projectOptions} onChange={setProjectScope} />
+          <IconButton
+            testId="sidebar-new-project"
+            icon="folderPlus"
+            label={pickingProject ? 'Choosing project…' : 'New project'}
+            disabled={pickingProject}
+            onClick={() => {
+              setPickingProject(true)
+              void pickWorkspaceDirectory().then((path) => {
+                if (path) launchWorkspaceWindow(path)
+              }).finally(() => setPickingProject(false))
+            }}
+          />
         </div>
-        {showProjectLauncher && <ProjectLauncher onClose={() => setShowProjectLauncher(false)} />}
       </div>
 
-      <NativeVirtualList testId="sidebar-session-list" alignment="top" estimatedItemHeight={78} overdraw={280} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%', paddingLeft: 8, paddingRight: 8 }}>
-        {projectExpanded && (
-          <>
-            {activeSessions.map((session) => renderSession(session, 'active'))}
-            {snoozedSessions.length > 0 && <SectionLabel label={`Snoozed (${snoozedSessions.length})`} tone="accent" />}
-            {snoozedSessions.map((session) => renderSession(session, 'snoozed'))}
-            {settledSessions.length > 0 && <SectionLabel label="Settled" />}
-            {settledSessions.map((session) => renderSession(session, 'settled'))}
-            {state.sessionsHasMore && !normalizedSearch && (
-              <div testId="sidebar-load-more" tabIndex={0} style={{ height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: state.sessionsLoading ? 'default' : 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => { if (!state.sessionsLoading) void controller.loadMoreSessions() }}>
-                <text style={{ color: colors.textFaint, fontSize: 10 }}>{state.sessionsLoading ? 'Loading threads…' : 'Load more threads'}</text>
-              </div>
-            )}
-            {visibleSessions.length === 0 && !state.sessionsLoading && (
-              <div style={{ paddingTop: 22, paddingLeft: 78 }}>
-                <text style={{ color: colors.textFaint, fontSize: 11 }}>{normalizedSearch ? 'No threads found' : 'No threads yet'}</text>
-              </div>
-            )}
-          </>
+      <NativeVirtualList testId="sidebar-session-list" elementRef={sessionListRef} alignment="top" estimatedItemHeight={78} overdraw={280} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
+        {activeSessions.map((session) => renderSession(session, 'active'))}
+        {snoozedSessions.length > 0 && <SectionLabel label={`Snoozed (${snoozedSessions.length})`} tone="accent" />}
+        {snoozedSessions.map((session) => renderSession(session, 'snoozed'))}
+        {settledSessions.length > 0 && (
+          <SettledShelfHeader count={settledSessions.length} expanded={settledExpanded} onToggle={() => setSettledExpanded((value) => !value)} />
+        )}
+        {renderedSettledSessions.map((session) => renderSession(session, 'settled'))}
+        {visibleSessions.length === 0 && !state.sessionsLoading && (
+          <div style={{ paddingTop: 22, paddingLeft: 78 }}>
+            <text style={{ color: colors.textFaint, fontSize: 11 }}>{normalizedSearch ? 'No threads found' : 'No threads in this project'}</text>
+          </div>
         )}
       </NativeVirtualList>
 
@@ -180,9 +213,54 @@ export function WorkbenchSidebar({
   )
 }
 
+function ProjectFilter({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange(value: string): void }) {
+  const selected = options.find((option) => option.value === value) ?? options[0]!
+  return (
+    <Select value={value} onValueChange={onChange} style={{ minWidth: 0, flexGrow: 1 }}>
+      <SelectTrigger
+        testId="sidebar-project-toggle"
+        style={(trigger: SelectTriggerState) => ({ minWidth: 0, width: '100%', height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 14, borderRadius: 8, backgroundColor: trigger.open ? colors.sidebarHover : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } })}
+      >
+        <Icon name="folder" size={15} color={colors.textFaint} />
+        <text testId="sidebar-project-label" style={{ color: colors.textMuted, fontSize: 12, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{selected.label}</text>
+        <div testId="sidebar-project-chevron" style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Icon name="chevronDown" size={12} color={colors.textFaint} />
+        </div>
+      </SelectTrigger>
+      <SelectContent testId="sidebar-project-filter" side="bottom" sideOffset={5} align="start" style={{ width: 238, maxHeight: 320, minHeight: 0, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll' }}>
+        {options.map((option, index) => (
+          <SelectItem
+            key={option.value}
+            testId={`sidebar-project-option-${index}`}
+            value={option.value}
+            textValue={option.label}
+            style={(item: SelectItemState) => ({ height: 34, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 7, backgroundColor: item.highlighted || item.selected ? colors.hover : colors.popover, cursor: 'pointer' })}
+          >
+            {(item: SelectItemState) => (
+              <>
+                <Icon name="folder" size={14} color={item.selected ? colors.text : colors.textFaint} />
+                <text style={{ minWidth: 0, flexGrow: 1, color: item.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: item.selected ? 650 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
+                {item.selected && <Icon name="check" size={12} color={colors.textMuted} />}
+              </>
+            )}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+export function sessionLifecycleBucket(session: PiSessionSummary, lifecycle: ThreadLifecycle | undefined, now: number): 'active' | 'snoozed' | 'settled' {
+  if ((lifecycle?.snoozedUntil ?? 0) > now) return 'snoozed'
+  if (lifecycle?.settledAt) return 'settled'
+  if ((lifecycle?.unsettledAt ?? 0) > session.modifiedAt) return 'active'
+  if (now - session.modifiedAt > SESSION_SETTLED_AFTER_MS) return 'settled'
+  return 'active'
+}
+
 function BrandHeader() {
   return (
-    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: colors.sidebar }}>
+    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingLeft: process.platform === 'darwin' ? 90 : 0, backgroundColor: colors.sidebar }}>
       <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 750 }}>π</text>
       <text style={{ color: colors.textMuted, fontSize: 13, fontWeight: 550 }}>Code</text>
     </div>
@@ -197,6 +275,21 @@ function SectionLabel({ label, tone = 'normal' }: { label: string; tone?: 'norma
       <Icon name="chevronDown" size={10} color={tone === 'accent' ? colors.info : colors.textFaint} />
     </div>
   )
+}
+
+function SettledShelfHeader({ count, expanded, onToggle }: { count: number; expanded: boolean; onToggle(): void }) {
+  return (
+    <div testId="sidebar-settled-toggle" tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 7, paddingLeft: 11, paddingRight: 9, cursor: 'pointer' }} onClick={onToggle}>
+      <text style={{ color: colors.settledText, fontSize: 10, fontWeight: 550, pointerEvents: 'none' }}>{expanded ? 'Settled' : `Settled (${count})`}</text>
+      <div style={{ height: 1, flexGrow: 1, backgroundColor: colors.settledDivider, pointerEvents: 'none' }} />
+      <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={10} color={colors.settledText} /></div>
+    </div>
+  )
+}
+
+function SessionRowInset({ height, children }: { height: number; children: React.ReactNode }) {
+  const width = SIDEBAR_WIDTH - 2 * SIDEBAR_BORDER_WIDTH
+  return <div testId="sidebar-session-inset" style={{ width, height, flexShrink: 0, paddingLeft: SESSION_ROW_INSET, paddingRight: SESSION_ROW_INSET }}>{children}</div>
 }
 
 function SessionRow({
@@ -231,35 +324,43 @@ function SessionRow({
   onSchedule(until: number): void
 }) {
   const [hovered, setHovered] = useState(false)
+  const [settleHovered, setSettleHovered] = useState(false)
   if (lifecycle !== 'active') {
     return (
-      <div style={{ height: 36, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 10, paddingRight: 6, borderRadius: 7, hover: { backgroundColor: colors.sidebarHover } }}>
-        <Icon name={lifecycle === 'snoozed' ? 'clock' : 'squarePen'} size={13} color={lifecycle === 'snoozed' ? colors.info : colors.textFaint} />
+      <SessionRowInset height={36}>
+      <div testId={lifecycle === 'settled' ? 'sidebar-settled-row' : 'sidebar-snoozed-row'} style={{ height: 36, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 10, paddingRight: 6, borderRadius: 7, hover: { backgroundColor: colors.sidebarHover } }}>
+        <Icon name={lifecycle === 'snoozed' ? 'clock' : 'squarePen'} size={13} color={lifecycle === 'snoozed' ? colors.info : colors.settledIcon} />
         <div tabIndex={disabled ? -1 : 0} style={{ minWidth: 0, flexGrow: 1, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
-          <text style={{ color: colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
+          <text {...(lifecycle === 'settled' ? { testId: 'sidebar-settled-title' } : {})} style={{ color: lifecycle === 'settled' ? colors.settledText : colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
         </div>
-        <text style={{ color: colors.textFaint, fontSize: 9 }}>{lifecycle === 'snoozed' && snoozedUntil ? new Date(snoozedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : relativeTime(session.modifiedAt)}</text>
+        <text style={{ color: lifecycle === 'settled' ? colors.settledMeta : colors.textFaint, fontSize: 9 }}>{lifecycle === 'snoozed' && snoozedUntil ? new Date(snoozedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : relativeTime(session.modifiedAt)}</text>
         <div testId="sidebar-wake" tabIndex={0} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={onWake}>
-          <Icon name="check" size={12} color={colors.textFaint} />
+          <Icon name="check" size={12} color={lifecycle === 'settled' ? colors.settledIcon : colors.textFaint} />
         </div>
       </div>
+      </SessionRowInset>
     )
   }
 
   return (
-    <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} style={{ position: 'relative', width: '100%', height: 78, minHeight: 78, maxHeight: 78, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 9, borderRadius: 8, backgroundColor: active ? colors.sidebarActive : colors.transparent, opacity: disabled ? 0.45 : 1, hover: { backgroundColor: colors.sidebarHover }, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <SessionRowInset height={78}>
+    <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} style={{ position: 'relative', height: 78, minHeight: 78, maxHeight: 78, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 9, borderRadius: 8, backgroundColor: colors.transparent, opacity: disabled ? 0.45 : 1, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => { setHovered(false); setSettleHovered(false) }}>
+      <div testId="sidebar-session-surface" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderRadius: 8, backgroundColor: active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.transparent, pointerEvents: 'none' }} />
       <div style={{ width: '100%', minWidth: 0, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
         <Icon name="folder" size={13} color={colors.textFaint} />
         <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         <div style={{ width: 70, height: 20, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
           {hovered || snoozeOpen ? (
             <>
-              <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={onSnooze}>
-                <Icon name="clock" size={12} color={colors.textFaint} />
+              <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
+                <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={onSnooze}>
+                  <Icon name="clock" size={12} color={colors.textFaint} />
+                </div>
+                {snoozeOpen && <SnoozeMenu onSchedule={onSchedule} onClose={onSnooze} />}
               </div>
-              <div testId="sidebar-settle" tabIndex={0} style={{ height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, paddingLeft: 3, paddingRight: 2, cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={onSettle}>
-                <Icon name="check" size={11} color={colors.textFaint} />
-                <text style={{ color: colors.textFaint, fontSize: 9 }}>Settle</text>
+              <div testId="sidebar-settle" tabIndex={0} style={{ height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, paddingLeft: 3, paddingRight: 0, cursor: 'pointer', backgroundColor: colors.transparent }} onMouseEnter={() => setSettleHovered(true)} onMouseLeave={() => setSettleHovered(false)} onClick={onSettle}>
+                <Icon name="check" size={11} color={settleHovered ? colors.text : colors.textFaint} />
+                <text testId="sidebar-settle-label" style={{ color: settleHovered ? colors.text : colors.textFaint, fontSize: 9 }}>Settle</text>
               </div>
             </>
           ) : (
@@ -277,12 +378,12 @@ function SessionRow({
           <text style={{ color: colors.textFaint, fontSize: 9 }}>{branch}</text>
         </div>
       </div>
-      {snoozeOpen && <SnoozeMenu onSchedule={onSchedule} />}
     </div>
+    </SessionRowInset>
   )
 }
 
-function SnoozeMenu({ onSchedule }: { onSchedule(until: number): void }) {
+function SnoozeMenu({ onSchedule, onClose }: { onSchedule(until: number): void; onClose(): void }) {
   const now = Date.now()
   const tomorrow = new Date(now)
   tomorrow.setDate(tomorrow.getDate() + 1)
@@ -297,47 +398,29 @@ function SnoozeMenu({ onSchedule }: { onSchedule(until: number): void }) {
     { label: 'Next week', value: nextWeek.getTime() },
   ]
   return (
-    <div testId="snooze-menu" style={{ position: 'absolute', top: 28, right: 3, width: 204, display: 'flex', flexDirection: 'column', padding: 5, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
-      {options.map((option, index) => (
-        <React.Fragment key={option.label}>
-          <div testId={`snooze-option-${index}`} tabIndex={0} style={{ height: 28, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onSchedule(option.value)}>
-            <text style={{ color: colors.textMuted, fontSize: 11 }}>{option.label}</text>
-            <div style={{ flexGrow: 1 }} />
-            <text style={{ color: colors.textFaint, fontSize: 9 }}>{new Date(option.value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</text>
-          </div>
-        </React.Fragment>
-      ))}
-    </div>
-  )
-}
-
-
-function ProjectLauncher({ onClose }: { onClose(): void }) {
-  const [path, setPath] = useState('')
-  const launch = () => {
-    const target = path.trim()
-    if (!target) return
-    launchWorkspaceWindow(target)
-    onClose()
-  }
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
-      <text style={{ color: colors.text, fontSize: 11, fontWeight: 600 }}>Open project in a new window</text>
-      <input value={path} placeholder="/absolute/path/to/project" autoFocus theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.input }} style={{ height: 30, width: '100%', paddingLeft: 8, paddingRight: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 6, backgroundColor: colors.input, color: colors.text, fontSize: 11 }} onChange={(event) => setPath(String(event.value ?? ''))} onSubmit={launch} />
-      <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
-        <SidebarTextAction label="Cancel" onClick={onClose} />
-        <SidebarTextAction label="Open" onClick={launch} />
+    <anchored side="bottom" align="end" gap={5} fit="snap" snapMargin={8} deferred priority={8} occlude>
+      <div testId="snooze-menu" tabIndex={0} onMouseDownOutside={onClose} style={{ width: 204, display: 'flex', flexDirection: 'column', padding: 5, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
+        {options.map((option, index) => (
+          <React.Fragment key={option.label}>
+            <div testId={`snooze-option-${index}`} tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onSchedule(option.value)}>
+              <text style={{ color: colors.textMuted, fontSize: 11 }}>{option.label}</text>
+              <div style={{ flexGrow: 1 }} />
+              <text style={{ color: colors.textFaint, fontSize: 9 }}>{new Date(option.value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</text>
+            </div>
+          </React.Fragment>
+        ))}
       </div>
-    </div>
+    </anchored>
   )
 }
+
 
 function SidebarTextAction({ label, onClick }: { label: string; onClick(): void }) {
   return <div tabIndex={0} style={{ height: 28, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick}><text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550 }}>{label}</text></div>
 }
 
 function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null {
-  if (!state.session.sessionId && state.messages.length === 0) return null
+  if (state.messages.length === 0) return null
   const firstUser = state.messages.find((message) => message.role === 'user')
   const firstMessage = firstUser ? contentText(firstUser.content).trim() : ''
   return {

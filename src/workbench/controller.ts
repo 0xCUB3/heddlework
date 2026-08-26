@@ -136,7 +136,8 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
-      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [] })
+      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
+      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [], notices: [], dialog: undefined })
       await this.#bootstrap(false)
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
@@ -160,6 +161,7 @@ export class WorkbenchController {
         return
       }
       const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
+      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
       this.#patch({
         workspacePath,
         messages: [],
@@ -168,6 +170,8 @@ export class WorkbenchController {
         liveTools: [],
         editorText: '',
         editorImages: [],
+        notices: [],
+        dialog: undefined,
         workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
       })
       await this.#bootstrap(false)
@@ -211,6 +215,7 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
       if (result.cancelled) return
+      this.#patch({ notices: [] })
       await this.#bootstrap(false)
       this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
     } catch (error) {
@@ -223,6 +228,7 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ text?: string; cancelled?: boolean }>({ type: 'fork', entryId })
       if (result.cancelled) return
+      this.#patch({ notices: [] })
       await this.#bootstrap(false)
       this.#patch({ editorText: result.text ?? '', editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Branched from the selected turn'))
@@ -325,8 +331,10 @@ export class WorkbenchController {
   }
 
   wakeThread(path: string): void {
-    const threadLifecycle = { ...this.#state.threadLifecycle }
-    delete threadLifecycle[path]
+    const threadLifecycle = {
+      ...this.#state.threadLifecycle,
+      [path]: { unsettledAt: Date.now() },
+    }
     this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread returned to Active'))
   }
 

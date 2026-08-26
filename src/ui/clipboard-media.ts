@@ -1,12 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import type { ComposerImage, PiContentBlock, PiMessage } from '../pi/types.ts'
 
 const IMAGE_CACHE_DIRECTORY = join(tmpdir(), 'pi-workbench-images-v1')
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024
+const APPLE_FILE_SCRIPT = `set clipboardFile to the clipboard as alias
+return POSIX path of clipboardFile
+`
 const APPLE_SCRIPT = `on run argv
   set targetPath to item 1 of argv
   set imageData to the clipboard as «class PNGf»
@@ -43,6 +46,22 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     if (result.ok) return true
   }
   return false
+}
+
+export function editorTextAfterImagePaste(previous: string, current: string): string {
+  if (previous === current) return current
+  let prefix = 0
+  while (prefix < previous.length && previous[prefix] === current[prefix]) prefix += 1
+  let suffix = 0
+  while (
+    suffix < previous.length - prefix
+    && previous[previous.length - suffix - 1] === current[current.length - suffix - 1]
+  ) suffix += 1
+  const inserted = current.slice(prefix, current.length - suffix).trim().replace(/^['"]|['"]$/g, '')
+  const normalized = inserted.toLowerCase()
+  const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.webp'].some((extension) => normalized.endsWith(extension))
+  const isPath = normalized.startsWith('file://') || normalized.includes('/') || normalized.includes('\\')
+  return isImage && isPath ? previous : current
 }
 
 export function createComposerImage(bytes: Uint8Array, mimeType?: string, fileName?: string): ComposerImage {
@@ -102,11 +121,19 @@ async function readMacClipboardImage(): Promise<ComposerImage | undefined> {
   ensureImageDirectory()
   const path = join(IMAGE_CACHE_DIRECTORY, `clipboard-${randomUUID()}.png`)
   const result = await runProcess('/usr/bin/osascript', ['-', path], Buffer.from(APPLE_SCRIPT))
-  if (!result.ok || !existsSync(path)) return undefined
-  const bytes = readFileSync(path)
-  rmSync(path, { force: true })
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_CLIPBOARD_IMAGE_BYTES) return undefined
-  return createComposerImage(bytes, 'image/png')
+  if (result.ok && existsSync(path)) {
+    const bytes = readFileSync(path)
+    rmSync(path, { force: true })
+    if (bytes.byteLength > 0 && bytes.byteLength <= MAX_CLIPBOARD_IMAGE_BYTES) return createComposerImage(bytes, 'image/png')
+  } else {
+    rmSync(path, { force: true })
+  }
+
+  const fileResult = await runProcess('/usr/bin/osascript', ['-e', APPLE_FILE_SCRIPT])
+  if (!fileResult.ok) return undefined
+  const filePath = fileResult.stdout.toString('utf8').trim()
+  if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) return undefined
+  return createComposerImage(readFileSync(filePath), undefined, basename(filePath))
 }
 
 async function readLinuxClipboardImage(): Promise<ComposerImage | undefined> {
