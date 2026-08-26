@@ -25,6 +25,7 @@ export const colors = {
   error: '#F87171',
   message: '#171818',
   composer: '#131414',
+  contextBar: '#181919',
   composerOutline: '#282929',
   code: '#111212',
   transparent: '#00000000',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
+import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 
 function waitForSettled(controller: WorkbenchController): Promise<void> {
@@ -20,7 +21,7 @@ function isFullySettled(controller: WorkbenchController): boolean {
 
 describe('WorkbenchController', () => {
   it('boots, streams a task, and rehydrates the authoritative transcript', async () => {
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace')
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace', new PiSessionCatalog({ scope: 'cwd' }))
     try {
       await controller.start()
       expect(controller.getSnapshot().connection).toBe('connected')
@@ -36,6 +37,10 @@ describe('WorkbenchController', () => {
       expect(state.messages.some((message) => message.role === 'toolResult')).toBe(true)
       expect(state.messages.at(-1)?.role).toBe('assistant')
       expect(state.liveTools).toEqual([])
+      expect(state.forkMessages).toHaveLength(1)
+      await controller.forkFrom(state.forkMessages[0]!.entryId)
+      expect(controller.getSnapshot().editorText).toBe('Inspect the repository')
+      expect(controller.getSnapshot().messages).toHaveLength(0)
     } finally {
       await controller.dispose()
     }

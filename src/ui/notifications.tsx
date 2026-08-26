@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
-import { Button } from './primitives.tsx'
+import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
 
 export const NOTIFICATION_TOAST_DURATION_MS = 2_000
 
-export function NotificationToast({ notices }: { notices: Notice[] }) {
+export function NotificationToast({ notices, rightInset = 16 }: { notices: Notice[]; rightInset?: number }) {
   const [active, setActive] = useState<Notice | undefined>()
   const seen = useRef(new Set<number>())
   const latest = notices.at(-1)
@@ -27,7 +27,7 @@ export function NotificationToast({ notices }: { notices: Notice[] }) {
   return (
     <div
       testId="notification-toast"
-      style={{ position: 'absolute', top: 62, right: 16, width: 344, minHeight: 76, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 13, paddingRight: 9, borderRadius: 11, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}
+      style={{ position: 'absolute', top: 62, right: rightInset, width: 344, minHeight: 76, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 13, paddingRight: 9, borderRadius: 11, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}
     >
       <div style={{ width: 20, height: 20, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: `${tone}22`, flexShrink: 0 }}>
         <Icon name={active.kind === 'error' ? 'x' : active.kind === 'warning' ? 'bell' : 'check'} size={12} color={tone} />
@@ -43,16 +43,17 @@ export function NotificationToast({ notices }: { notices: Notice[] }) {
   )
 }
 
-export function NotificationLedgerView({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+export function NotificationLedgerView({ state, controller, onClose }: { state: WorkbenchState; controller: WorkbenchController; onClose(): void }) {
   const notices = [...state.notices].reverse()
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background }}>
-      <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 20, paddingRight: 14 }}>
+    <div testId="notification-panel" style={{ width: 422, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
+      <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14, paddingRight: 12 }}>
         <Icon name="bell" size={15} color={colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Notifications</text>
         <div style={{ flexGrow: 1 }} />
         <text style={{ color: colors.textFaint, fontSize: 10 }}>{`${notices.length} saved`}</text>
         <Button label="Clear all" compact disabled={notices.length === 0} onClick={() => controller.clearNotices()} />
+        <IconButton icon="x" label="Close notifications" testId="close-notifications" onClick={onClose} />
       </div>
       <virtual-list alignment="top" estimatedItemHeight={78} overdraw={300} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {notices.length === 0 ? (
@@ -70,8 +71,8 @@ export function NotificationLedgerView({ state, controller }: { state: Workbench
 function LedgerRow({ notice, controller }: { notice: Notice; controller: WorkbenchController }) {
   const tone = noticeColor(notice.kind)
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingLeft: 20, paddingRight: 20, paddingTop: 5, paddingBottom: 5 }}>
-      <div style={{ width: '100%', maxWidth: 768, minHeight: 68, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 11, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
+    <div style={{ display: 'flex', flexDirection: 'row', width: '100%', paddingLeft: 14, paddingRight: 14, paddingTop: 5, paddingBottom: 5 }}>
+      <div style={{ width: '100%', minHeight: 68, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 11, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
         <div style={{ width: 8, height: 8, borderRadius: 4, marginTop: 5, backgroundColor: tone, flexShrink: 0 }} />
         <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>

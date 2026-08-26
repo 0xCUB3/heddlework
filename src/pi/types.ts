@@ -7,6 +7,7 @@ export interface PiModel {
   reasoning?: boolean
   contextWindow?: number
   maxTokens?: number
+  input?: string[]
   [key: string]: unknown
 }
 
@@ -38,6 +39,25 @@ export interface PiSessionStats {
     percent: number | null
   }
   [key: string]: unknown
+}
+
+export interface PiImageContent {
+  type: 'image'
+  data: string
+  mimeType: string
+  previewPath?: string
+  [key: string]: unknown
+}
+
+export interface ComposerImage extends PiImageContent {
+  id: string
+  fileName: string
+  size: number
+}
+
+export interface PiForkMessage {
+  entryId: string
+  text: string
 }
 
 export interface PiContentBlock {

@@ -1,12 +1,14 @@
 import React, { useState } from 'react'
-import type { PiModel, ThinkingLevel } from '../pi/types.ts'
+import type { ComposerImage, PiModel, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { ExtensionDialog, ExtensionWidget, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
+import { readClipboardImage } from './clipboard-media.ts'
 
 export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
+  const [pastingImage, setPastingImage] = useState(false)
   const connected = state.connection === 'connected'
   const modelOptions: SelectOption[] = state.models.map((model) => ({
     value: modelKey(model),
@@ -20,8 +22,23 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
   const contextPercent = state.stats?.contextUsage?.percent
 
   const send = (value: string) => {
-    if (!value.trim()) return
+    if (!value.trim() && state.editorImages.length === 0) return
     void controller.submit(value)
+  }
+
+  const pasteClipboardImage = async () => {
+    if (pastingImage) return
+    setPastingImage(true)
+    try {
+      const image = await readClipboardImage()
+      if (image) controller.addEditorImage(image)
+    } finally {
+      setPastingImage(false)
+    }
+  }
+
+  const handleComposerKeyDown = (event: { key?: string; modifiers?: { cmd?: boolean; ctrl?: boolean } }) => {
+    if (event.key?.toLowerCase() === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage()
   }
 
   return (
@@ -43,7 +60,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
       {state.dialog && <ExtensionDialogPanel key={state.dialog.id} dialog={state.dialog} controller={controller} />}
       {above.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
 
-      <div style={{ position: 'relative', width: '100%', maxWidth: 768, paddingBottom: 25, overflow: 'visible' }}>
+      <div style={{ position: 'relative', width: '100%', maxWidth: 768, paddingBottom: 26, overflow: 'visible' }}>
         <ComposerContextBar branch={state.workspaceDiff.branch || 'workspace'} />
         <div
           testId="composer-surface"
@@ -60,10 +77,12 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
             overflow: 'visible',
           }}
         >
+        {state.editorImages.length > 0 && <ComposerImages images={state.editorImages} onRemove={(id) => controller.removeEditorImage(id)} />}
+        {pastingImage && <text style={{ color: colors.textFaint, fontSize: 10, paddingLeft: 16, paddingBottom: 6 }}>Reading image from clipboard…</text>}
         <textarea
           testId="composer"
           value={state.editorText}
-          placeholder={connected ? 'Ask anything, @tag files/folders, $use skills, or / for commands' : 'Reconnect to Pi to begin'}
+          placeholder={connected ? (draft ? 'Ask anything, @tag files/folders, $use skills, or / for commands' : 'Ask for follow-up changes or attach images') : 'Reconnect to Pi to begin'}
           minRows={3}
           maxRows={7}
           autoFocus
@@ -81,6 +100,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
             backgroundColor: colors.transparent,
           }}
           onChange={(event) => controller.setEditorText(String(event.value ?? ''))}
+          onKeyDown={handleComposerKeyDown}
           onSubmit={(event) => send(String(event.value ?? state.editorText))}
         />
 
@@ -112,7 +132,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
             {typeof contextPercent === 'number' && <ContextMeter percent={contextPercent} />}
             <PrimaryAction
               running={state.session.isStreaming}
-              disabled={!connected || (!state.session.isStreaming && !state.editorText.trim())}
+              disabled={!connected || (!state.session.isStreaming && !state.editorText.trim() && state.editorImages.length === 0)}
               onSend={() => send(state.editorText)}
               onStop={() => void controller.abort()}
             />
@@ -137,12 +157,33 @@ function ContextMeter({ percent }: { percent: number }) {
 
 function ComposerContextBar({ branch }: { branch: string }) {
   return (
-    <div testId="composer-context-bar" style={{ position: 'absolute', left: 11, right: 11, bottom: 0, height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, paddingTop: 7, paddingLeft: 12, paddingRight: 12, borderWidth: 1, borderColor: colors.composerOutline, borderRadius: 12, backgroundColor: colors.composer, userSelect: 'none' }}>
-      <Icon name="folder" size={12} color={colors.textFaint} />
-      <text style={{ color: colors.textFaint, fontSize: 9 }}>Local checkout</text>
+    <div testId="composer-context-bar" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 8, paddingLeft: 13, paddingRight: 13, userSelect: 'none' }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderWidth: 1, borderColor: colors.composerOutline, borderRadius: 16, backgroundColor: colors.contextBar }} />
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 16, backgroundColor: colors.contextBar }} />
+      <div style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 16, backgroundColor: colors.composerOutline }} />
+      <div style={{ position: 'absolute', right: 0, top: 0, width: 1, height: 16, backgroundColor: colors.composerOutline }} />
+      <Icon name="folder" size={13} color={colors.textFaint} />
+      <text style={{ color: colors.textMuted, fontSize: 11 }}>Local checkout</text>
       <div style={{ flexGrow: 1 }} />
-      <Icon name="gitBranch" size={11} color={colors.textFaint} />
-      <text style={{ color: colors.textFaint, fontSize: 9 }}>{branch}</text>
+      <Icon name="gitBranch" size={12} color={colors.textFaint} />
+      <text style={{ color: colors.textMuted, fontSize: 11 }}>{branch}</text>
+    </div>
+  )
+}
+
+function ComposerImages({ images, onRemove }: { images: ComposerImage[]; onRemove(id: string): void }) {
+  return (
+    <div testId="composer-images" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 8, minHeight: 64, paddingLeft: 16, paddingRight: 16, paddingBottom: 8 }}>
+      {images.map((image) => (
+        <React.Fragment key={image.id}>
+        <div testId="composer-image-preview" style={{ position: 'relative', width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background, overflow: 'hidden', flexShrink: 0 }}>
+          {React.createElement('img', { src: image.previewPath, alt: image.fileName, objectFit: 'cover', style: { width: 64, height: 64 } } as never)}
+          <div testId={`remove-composer-image-${image.id}`} tabIndex={0} style={{ position: 'absolute', top: 4, right: 4, width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, backgroundColor: '#090A0ADD', cursor: 'pointer', hover: { backgroundColor: '#181919EE' } }} onClick={() => onRemove(image.id)}>
+            <Icon name="x" size={12} color={colors.textMuted} />
+          </div>
+        </div>
+        </React.Fragment>
+      ))}
     </div>
   )
 }

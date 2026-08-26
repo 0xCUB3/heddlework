@@ -1,5 +1,5 @@
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
-import type { PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, ThinkingLevel } from '../pi/types.ts'
+import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, ThinkingLevel } from '../pi/types.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 export type NoticeKind = 'info' | 'warning' | 'error'
@@ -79,6 +79,7 @@ export interface WorkbenchState {
   models: PiModel[]
   thinkingLevels: ThinkingLevel[]
   messages: PiMessage[]
+  forkMessages: PiForkMessage[]
   sessions: PiSessionSummary[]
   sessionsLoading: boolean
   liveAssistant: LiveAssistant | undefined
@@ -93,6 +94,7 @@ export interface WorkbenchState {
   widgets: Record<string, ExtensionWidget>
   dialog: ExtensionDialog | undefined
   editorText: string
+  editorImages: ComposerImage[]
   windowTitle: string
 }
 
@@ -107,6 +109,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     models: [],
     thinkingLevels: ['off'],
     messages: [],
+    forkMessages: [],
     sessions: [],
     sessionsLoading: false,
     liveAssistant: undefined,
@@ -121,6 +124,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     widgets: {},
     dialog: undefined,
     editorText: '',
+    editorImages: [],
     windowTitle: 'π Code',
   }
 }

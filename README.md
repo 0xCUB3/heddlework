@@ -7,12 +7,12 @@ The desktop experience closely adapts the MIT-licensed [T3 Code](https://github.
 ## Features
 
 - Native shell reproduced against a locally run T3 Code reference: neutral chrome, centered draft composer, top-aligned threads, and compact header actions
-- Searchable, clickable persisted Pi sessions discovered from Pi's JSONL session directory
-- Hover actions and functional Active, Snoozed, and Settled thread groups
+- Searchable, clickable persisted Pi sessions discovered across Pi's global JSONL session directory with bounded fast-path scans
+- Hover copy/revert actions, macOS clipboard-image prompts, and functional Active, Snoozed, and Settled thread groups
 - Streaming markdown, expandable reasoning, and collapsed “Worked for” tool summaries
-- Specialized `bash`, `read`, `edit`, and `write` tool details plus changed-file summaries with direct Diff access
+- Specialized `bash`, `read`, `edit`, and `write` tool details, rich nested `fabric_exec` audit disclosures, and changed-file summaries with direct Diff access
 - Functional split-pane Git working-tree review with native unified diff rendering
-- Opaque two-second notification toasts with an unread badge and complete in-app ledger
+- Opaque two-second notification toasts with an unread badge and a dedicated right-side notification ledger
 - Persistent Pi sessions through `pi --mode rpc`
 - New/switch/export session, prompt, steer, abort, model, thinking, and compaction controls
 - Open a second project in a separate native workbench process
@@ -81,7 +81,7 @@ The desktop shell follows a small subset of Cordis's design:
 - `src/core/kernel.ts` owns services, keyed contribution slots, plugin scopes, and reverse-order cleanup.
 - `src/pi/transport.ts` is the provider-neutral agent transport seam.
 - `src/pi/rpc-transport.ts` is the real Pi provider and implements strict LF-only JSONL framing.
-- `src/pi/session-catalog.ts` reads Pi's persisted session metadata for the clickable thread sidebar.
+- `src/pi/session-catalog.ts` performs bounded global scans of Pi's persisted session metadata for the clickable thread sidebar.
 - `src/workspace/git-diff.ts` loads tracked and untracked patches through argument-safe Git processes.
 - `src/workbench/controller.ts` projects RPC events into UI state, switches sessions, tracks thread lifecycle metadata, and rehydrates from Pi's authoritative transcript.
 - `src/ui/tool-presenters.ts` is a keyed, reversible UI contribution slot.

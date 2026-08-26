@@ -6,7 +6,7 @@ import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
-import { colors } from './theme.ts'
+import { colors, nativeTheme } from './theme.ts'
 
 export function ChatHeader({
   state,
@@ -51,7 +51,9 @@ export function ChatHeader({
 function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchController; compact: boolean }) {
   const options = [
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },
+    { value: 'clone', label: 'Clone thread', detail: 'Duplicate the current Pi branch' },
     { value: 'compact', label: 'Compact context', detail: 'Reduce the current context window' },
+    { value: 'refresh', label: 'Refresh sessions', detail: 'Rescan every saved Pi session' },
     { value: 'export', label: 'Export transcript', detail: 'Write this thread as HTML' },
   ]
   return (
@@ -59,7 +61,9 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       value=""
       onValueChange={(value) => {
         if (value === 'new') void controller.newSession()
+        if (value === 'clone') void controller.cloneSession()
         if (value === 'compact') void controller.compact()
+        if (value === 'refresh') void controller.refreshSessions()
         if (value === 'export') void controller.exportSession()
       }}
     >
@@ -70,9 +74,9 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
         <Icon name="plus" size={13} color={colors.text} />
         {!compact && <text style={{ color: colors.text, fontSize: 11, fontWeight: 550 }}>Add action</text>}
       </SelectTrigger>
-      <SelectContent side="bottom" sideOffset={7} align="end" style={{ width: 226, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
+      <SelectContent side="bottom" sideOffset={7} align="end" style={{ width: 254, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
         {options.map((option) => {
-          const disabled = state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
+          const disabled = option.value === 'refresh' ? false : state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
           return (
             <SelectItem
               key={option.value}
@@ -81,8 +85,8 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
               disabled={disabled}
               style={(item: SelectItemState) => ({ display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 7, paddingBottom: 7, paddingLeft: 9, paddingRight: 9, borderRadius: 7, opacity: disabled ? 0.4 : 1, backgroundColor: item.highlighted ? colors.hover : colors.popover, cursor: disabled ? 'default' : 'pointer' })}
             >
-              <text style={{ color: colors.text, fontSize: 11, fontWeight: 600 }}>{option.label}</text>
-              <text style={{ color: colors.textFaint, fontSize: 9 }}>{option.detail}</text>
+              <text style={{ color: colors.text, fontSize: 11, lineHeight: 16, fontWeight: 600, fontFamily: nativeTheme.fontMono }}>{option.label}</text>
+              <text style={{ color: colors.textFaint, fontSize: 10, lineHeight: 15, fontFamily: nativeTheme.fontMono }}>{option.detail}</text>
             </SelectItem>
           )
         })}

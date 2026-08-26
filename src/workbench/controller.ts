@@ -1,10 +1,13 @@
 import { PiSessionCatalog, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
 import { loadWorkspaceDiff } from '../workspace/git-diff.ts'
+import { hydrateMessageImages } from '../ui/clipboard-media.ts'
 import {
   errorMessage,
   isExtensionUiRequest,
+  type ComposerImage,
   type ExtensionUiRequest,
+  type PiForkMessage,
   type PiMessage,
   type PiModel,
   type PiSessionState,
@@ -75,13 +78,21 @@ export class WorkbenchController {
 
   async submit(text: string): Promise<void> {
     const message = text.trim()
-    if (!message || this.#state.connection !== 'connected') return
+    const editorImages = this.#state.editorImages
+    if ((!message && editorImages.length === 0) || this.#state.connection !== 'connected') return
     const wasStreaming = this.#state.session.isStreaming
-    this.#patch({ editorText: '' })
+    const rpcImages = editorImages.map(({ data, mimeType }) => ({ type: 'image' as const, data, mimeType }))
+    const optimisticContent = editorImages.length > 0
+      ? [
+          ...(message ? [{ type: 'text', text: message }] : []),
+          ...editorImages.map(({ data, mimeType, previewPath }) => ({ type: 'image', data, mimeType, previewPath })),
+        ]
+      : message
+    this.#patch({ editorText: '', editorImages: [] })
     if (!wasStreaming) {
       const optimistic: PiMessage = {
         role: 'user',
-        content: message,
+        content: optimisticContent,
         timestamp: Date.now(),
         workbenchOptimistic: true,
       }
@@ -95,11 +106,12 @@ export class WorkbenchController {
       await this.#transport.request({
         type: 'prompt',
         message,
+        ...(rpcImages.length > 0 ? { images: rpcImages } : {}),
         ...(wasStreaming ? { streamingBehavior: 'steer' } : {}),
       })
       if (wasStreaming) this.#setState((state) => addNotice(state, 'info', 'Steering message queued'))
     } catch (error) {
-      this.#patch({ editorText: message })
+      this.#patch({ editorText: message, editorImages })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
       this.#scheduleRefresh(true)
     }
@@ -119,7 +131,7 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
-      this.#patch({ messages: [], liveAssistant: undefined, liveTools: [], editorText: '' })
+      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [] })
       await this.#bootstrap(false)
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
@@ -142,7 +154,7 @@ export class WorkbenchController {
         this.#patch({ activity: 'Ready' })
         return
       }
-      this.#patch({ messages: [], liveAssistant: undefined, liveTools: [], editorText: '' })
+      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [] })
       await this.#bootstrap(false)
     } catch (error) {
       this.#patch({ activity: 'Ready' })
@@ -158,6 +170,31 @@ export class WorkbenchController {
     } catch (error) {
       this.#patch({ sessionsLoading: false })
       this.#setState((state) => addNotice(state, 'warning', `Could not list sessions: ${errorMessage(error)}`))
+    }
+  }
+
+  async cloneSession(): Promise<void> {
+    if (this.#state.session.isStreaming) return
+    try {
+      const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
+      if (result.cancelled) return
+      await this.#bootstrap(false)
+      this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
+  async forkFrom(entryId: string): Promise<void> {
+    if (!entryId || this.#state.session.isStreaming) return
+    try {
+      const result = await this.#transport.request<{ text?: string; cancelled?: boolean }>({ type: 'fork', entryId })
+      if (result.cancelled) return
+      await this.#bootstrap(false)
+      this.#patch({ editorText: result.text ?? '', editorImages: [] })
+      this.#setState((state) => addNotice(state, 'info', 'Branched from the selected turn'))
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     }
   }
 
@@ -209,6 +246,24 @@ export class WorkbenchController {
 
   setEditorText(text: string): void {
     this.#patch({ editorText: text })
+  }
+
+  addEditorImage(image: ComposerImage): void {
+    const acceptedInputs = this.#state.session.model?.input
+    if (acceptedInputs && !acceptedInputs.includes('image')) {
+      this.#setState((state) => addNotice(state, 'warning', 'The selected model does not accept images'))
+      return
+    }
+    if (this.#state.editorImages.some((candidate) => candidate.data === image.data)) return
+    if (this.#state.editorImages.length >= 8) {
+      this.#setState((state) => addNotice(state, 'warning', 'A prompt can include at most 8 images'))
+      return
+    }
+    this.#patch({ editorImages: [...this.#state.editorImages, image] })
+  }
+
+  removeEditorImage(id: string): void {
+    this.#patch({ editorImages: this.#state.editorImages.filter((image) => image.id !== id) })
   }
 
   dismissNotice(id: number): void {
@@ -287,13 +342,15 @@ export class WorkbenchController {
       this.#getThinkingLevels(),
       this.#transport.request<PiSessionStats>({ type: 'get_session_stats' }),
       this.#sessionCatalog.list(this.#state.workspacePath),
+      this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
     ])
-    const [messagesResult, modelsResult, levelsResult, statsResult, sessionsResult] = tasks
+    const [messagesResult, modelsResult, levelsResult, statsResult, sessionsResult, forkMessagesResult] = tasks
     this.#patch({
       connection: 'connected',
       connectionMessage: 'Connected',
       session,
-      messages: messagesResult.status === 'fulfilled' ? messagesResult.value.messages : this.#state.messages,
+      messages: messagesResult.status === 'fulfilled' ? hydrateMessageImages(messagesResult.value.messages) : this.#state.messages,
+      forkMessages: forkMessagesResult.status === 'fulfilled' ? forkMessagesFrom(forkMessagesResult.value) : this.#state.forkMessages,
       models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
       thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
       stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
@@ -313,8 +370,11 @@ export class WorkbenchController {
 
   async #refreshMessages(): Promise<void> {
     try {
-      const data = await this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
-      this.#patch({ messages: data.messages, liveAssistant: undefined, liveTools: [] })
+      const [messages, forkMessages] = await Promise.all([
+        this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' }),
+        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
+      ])
+      this.#patch({ messages: hydrateMessageImages(messages.messages), forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
     } catch (error) {
       this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
     }
@@ -434,4 +494,16 @@ export class WorkbenchController {
     this.#state = next
     for (const listener of this.#listeners) listener()
   }
+}
+
+function forkMessagesFrom(value: unknown): PiForkMessage[] {
+  if (!value || typeof value !== 'object') return []
+  const messages = (value as { messages?: unknown }).messages
+  if (!Array.isArray(messages)) return []
+  return messages.filter((message): message is PiForkMessage => (
+    Boolean(message)
+    && typeof message === 'object'
+    && typeof (message as { entryId?: unknown }).entryId === 'string'
+    && typeof (message as { text?: unknown }).text === 'string'
+  ))
 }

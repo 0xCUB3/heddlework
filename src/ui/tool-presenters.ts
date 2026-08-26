@@ -1,12 +1,32 @@
 import { slotToken, type WorkbenchPlugin } from '../core/kernel.ts'
 import type { ToolRun } from '../workbench/state.ts'
 
+export interface FabricAuditPresentation {
+  ref: string
+  tool?: string
+  provider?: string
+  success?: boolean
+  args?: Record<string, unknown>
+  result?: unknown
+  error?: string
+  durationMs?: number
+}
+
+export interface FabricToolPresentation {
+  name: string
+  description?: string
+  code: string
+  audits: FabricAuditPresentation[]
+  outputLanguage?: string
+}
+
 export interface ToolPresentation {
   title?: string | undefined
   kind: 'code' | 'diff' | 'text'
   content: string
   language?: string | undefined
   path?: string | undefined
+  fabric?: FabricToolPresentation | undefined
 }
 
 export interface ToolPresenter {
@@ -18,6 +38,28 @@ export const toolPresenterSlot = slotToken<ToolPresenter>('workbench.tool-presen
 export const coreToolPresentersPlugin: WorkbenchPlugin = {
   id: 'core-tool-presenters',
   activate(ctx) {
+    ctx.contribute(toolPresenterSlot, 'fabric_exec', {
+      present(tool) {
+        const args = asRecord(tool.args)
+        const details = asRecord(tool.details)
+        const display = runDisplay(args.display)
+        const outputFormat = details.outputFormat === 'json' || details.outputFormat === 'yaml' ? details.outputFormat : undefined
+        const fabric: FabricToolPresentation = {
+          name: display.name || 'Fabric execution',
+          ...(display.description ? { description: display.description } : {}),
+          code: typeof args.code === 'string' ? args.code : '',
+          audits: fabricAudits(details),
+          ...(outputFormat ? { outputLanguage: outputFormat } : {}),
+        }
+        return {
+          title: fabric.name,
+          kind: 'code',
+          content: tool.output ?? '',
+          language: outputFormat ?? 'text',
+          fabric,
+        }
+      },
+    })
     ctx.contribute(toolPresenterSlot, 'bash', {
       present(tool) {
         const command = stringProperty(tool.args, 'command')
@@ -60,6 +102,50 @@ export function resolveToolPresentation(tool: ToolRun, presenters: ReadonlyMap<s
   const diff = findStringProperty(tool.details, 'diff') ?? findDiff(tool.output)
   if (diff) return { kind: 'diff', content: diff }
   return { kind: 'code', content: tool.output ?? '', language: tool.name === 'grep' ? 'text' : undefined }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function runDisplay(value: unknown): { name: string; description?: string } {
+  if (typeof value === 'string') {
+    try {
+      return runDisplay(JSON.parse(value))
+    } catch {
+      return { name: value.trim() }
+    }
+  }
+  const display = asRecord(value)
+  const name = typeof display.name === 'string' ? display.name.trim() : ''
+  const description = typeof display.description === 'string' ? display.description.trim() : ''
+  return { name, ...(description ? { description } : {}) }
+}
+
+function fabricAudits(details: Record<string, unknown>): FabricAuditPresentation[] {
+  const audits = Array.isArray(details.audits)
+    ? details.audits
+    : Array.isArray(asRecord(details.trace).operations)
+      ? asRecord(details.trace).operations as unknown[]
+      : []
+  return audits.flatMap((value) => {
+    const audit = asRecord(value)
+    if (typeof audit.ref !== 'string') return []
+    const startedAt = typeof audit.startedAt === 'number' ? audit.startedAt : undefined
+    const endedAt = typeof audit.endedAt === 'number' ? audit.endedAt : undefined
+    const presentation: FabricAuditPresentation = {
+      ref: audit.ref,
+      ...(typeof audit.tool === 'string' ? { tool: audit.tool } : typeof audit.action === 'string' ? { tool: audit.action } : {}),
+      ...(typeof audit.provider === 'string' ? { provider: audit.provider } : {}),
+      ...(typeof audit.success === 'boolean' ? { success: audit.success } : {}),
+      ...(typeof audit.outcome === 'string' ? { success: audit.outcome === 'succeeded' } : {}),
+      ...(Object.keys(asRecord(audit.args)).length > 0 ? { args: asRecord(audit.args) } : {}),
+      ...(audit.result !== undefined ? { result: audit.result } : {}),
+      ...(typeof audit.error === 'string' ? { error: audit.error } : {}),
+      ...(startedAt !== undefined && endedAt !== undefined ? { durationMs: Math.max(0, endedAt - startedAt) } : {}),
+    }
+    return [presentation]
+  })
 }
 
 function stringProperty(value: unknown, key: string): string {

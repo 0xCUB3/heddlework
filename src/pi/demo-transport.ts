@@ -1,8 +1,8 @@
 import type { AgentTransport, TransportStatus } from './transport.ts'
-import type { PiMessage, PiModel, PiSessionState, RpcCommand, RpcRecord, ThinkingLevel } from './types.ts'
+import type { PiForkMessage, PiImageContent, PiMessage, PiModel, PiSessionState, RpcCommand, RpcRecord, ThinkingLevel } from './types.ts'
 
 const models: PiModel[] = [
-  { provider: 'demo', id: 'pi-workbench', name: 'Pi Workbench Demo', reasoning: true, contextWindow: 200_000 },
+  { provider: 'demo', id: 'pi-workbench', name: 'Pi Workbench Demo', reasoning: true, contextWindow: 200_000, input: ['text', 'image'] },
   { provider: 'demo', id: 'fast', name: 'Demo Fast', reasoning: false, contextWindow: 128_000 },
 ]
 
@@ -11,6 +11,7 @@ export class DemoTransport implements AgentTransport {
   readonly #statuses = new Set<(status: TransportStatus) => void>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
   #messages: PiMessage[] = []
+  #forkMessages: PiForkMessage[] = []
   #model = models[0]!
   #thinking: ThinkingLevel = 'medium'
   #running = false
@@ -50,6 +51,8 @@ export class DemoTransport implements AgentTransport {
         return this.#state() as T
       case 'get_messages':
         return { messages: this.#messages } as T
+      case 'get_fork_messages':
+        return { messages: this.#forkMessages } as T
       case 'get_available_models':
         return { models } as T
       case 'get_available_thinking_levels':
@@ -63,7 +66,7 @@ export class DemoTransport implements AgentTransport {
           contextUsage: { tokens: this.#messages.length * 420, contextWindow: 200_000, percent: Math.min(99, this.#messages.length * 0.21) },
         } as T
       case 'prompt':
-        this.#run(String(command.message ?? ''))
+        this.#run(String(command.message ?? ''), imageCommands(command.images))
         return undefined as T
       case 'abort':
         this.#cancelTimers()
@@ -73,8 +76,21 @@ export class DemoTransport implements AgentTransport {
       case 'new_session':
         this.#cancelTimers()
         this.#messages = []
+        this.#forkMessages = []
         this.#sessionId = crypto.randomUUID()
         return { cancelled: false } as T
+      case 'clone':
+        this.#sessionId = crypto.randomUUID()
+        return { cancelled: false } as T
+      case 'fork': {
+        const selected = this.#forkMessages.find((message) => message.entryId === command.entryId)
+        if (!selected) throw new Error('Fork message not found')
+        const userIndex = this.#messages.findIndex((message) => message.role === 'user' && messageText(message) === selected.text)
+        this.#messages = userIndex > 0 ? this.#messages.slice(0, userIndex) : []
+        this.#forkMessages = this.#forkMessages.slice(0, Math.max(0, this.#forkMessages.indexOf(selected)))
+        this.#sessionId = crypto.randomUUID()
+        return { text: selected.text, cancelled: false } as T
+      }
       case 'set_model':
         this.#model = models.find((model) => model.provider === command.provider && model.id === command.modelId) ?? this.#model
         if (!this.#model.reasoning) this.#thinking = 'off'
@@ -101,11 +117,17 @@ export class DemoTransport implements AgentTransport {
     }
   }
 
-  #run(prompt: string): void {
+  #run(prompt: string, images: PiImageContent[]): void {
     if (this.#running) return
     this.#running = true
     const now = Date.now()
-    this.#messages.push({ role: 'user', content: prompt, timestamp: now })
+    const entryId = `demo-entry-${now}`
+    this.#forkMessages.push({ entryId, text: prompt })
+    this.#messages.push({
+      role: 'user',
+      content: images.length > 0 ? [...(prompt ? [{ type: 'text' as const, text: prompt }] : []), ...images] : prompt,
+      timestamp: now,
+    })
     const callId = `demo-${now}`
     const intro = 'I’ll inspect the workspace and report back.'
     const answer = 'The workbench transport, event reducer, and native GPUIX transcript are connected. Replace demo mode with the real `pi --mode rpc` process to work on this repository.'
@@ -185,4 +207,21 @@ export class DemoTransport implements AgentTransport {
   #emitStatus(status: TransportStatus): void {
     for (const listener of this.#statuses) listener(status)
   }
+}
+
+function imageCommands(value: unknown): PiImageContent[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((image): image is PiImageContent => (
+    Boolean(image)
+    && typeof image === 'object'
+    && (image as { type?: unknown }).type === 'image'
+    && typeof (image as { data?: unknown }).data === 'string'
+    && typeof (image as { mimeType?: unknown }).mimeType === 'string'
+  ))
+}
+
+function messageText(message: PiMessage): string {
+  if (typeof message.content === 'string') return message.content
+  if (!Array.isArray(message.content)) return ''
+  return message.content.map((block) => block.type === 'text' ? block.text ?? '' : '').join('\n').trim()
 }

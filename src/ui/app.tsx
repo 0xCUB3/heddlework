@@ -11,7 +11,8 @@ import { Transcript } from './transcript.tsx'
 import type { ToolPresenter } from './tool-presenters.ts'
 import { colors } from './theme.ts'
 
-type Surface = 'chat' | 'settings' | 'notifications'
+type Surface = 'chat' | 'settings'
+type RightPanel = 'diff' | 'notifications'
 
 export function WorkbenchApp({
   controller,
@@ -23,7 +24,9 @@ export function WorkbenchApp({
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const renderer = useGpuixRequired()
   const [surface, setSurface] = useState<Surface>('chat')
-  const [diffOpen, setDiffOpen] = useState(false)
+  const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
+  const diffOpen = rightPanel === 'diff'
+  const notificationsOpen = rightPanel === 'notifications'
   const [lastSeenNoticeId, setLastSeenNoticeId] = useState(0)
   const latestNoticeId = state.notices.at(-1)?.id ?? 0
   const unreadCount = state.notices.filter((notice) => notice.id > lastSeenNoticeId).length
@@ -35,12 +38,13 @@ export function WorkbenchApp({
   }, [renderer, state.windowTitle])
 
   useEffect(() => {
-    if (surface === 'notifications') setLastSeenNoticeId(latestNoticeId)
-  }, [latestNoticeId, surface])
+    if (notificationsOpen) setLastSeenNoticeId(latestNoticeId)
+  }, [latestNoticeId, notificationsOpen])
 
   const toggleNotifications = () => {
-    setSurface((current) => {
-      if (current === 'notifications') return 'chat'
+    setSurface('chat')
+    setRightPanel((current) => {
+      if (current === 'notifications') return undefined
       setLastSeenNoticeId(latestNoticeId)
       return 'notifications'
     })
@@ -48,11 +52,12 @@ export function WorkbenchApp({
 
   const openDiff = () => {
     if (!diffOpen) void controller.refreshWorkspaceDiff()
-    setDiffOpen(true)
+    setSurface('chat')
+    setRightPanel('diff')
   }
 
   const toggleDiff = () => {
-    if (diffOpen) setDiffOpen(false)
+    if (diffOpen) setRightPanel(undefined)
     else openDiff()
   }
 
@@ -62,15 +67,13 @@ export function WorkbenchApp({
         state={state}
         controller={controller}
         settingsActive={surface === 'settings'}
-        notificationsActive={surface === 'notifications'}
+        notificationsActive={notificationsOpen}
         unreadCount={unreadCount}
-        onSettings={() => setSurface((current) => current === 'settings' ? 'chat' : 'settings')}
+        onSettings={() => { setRightPanel(undefined); setSurface((current) => current === 'settings' ? 'chat' : 'settings') }}
         onNotifications={toggleNotifications}
       />
       {surface === 'settings' ? (
         <SettingsView state={state} controller={controller} onClose={() => setSurface('chat')} />
-      ) : surface === 'notifications' ? (
-        <NotificationLedgerView state={state} controller={controller} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background }}>
           <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minWidth: 0, height: '100%' }}>
@@ -83,16 +86,31 @@ export function WorkbenchApp({
                 </div>
               ) : (
                 <>
-                  <Transcript state={state} presenters={presenters} onOpenDiff={openDiff} />
+                  <Transcript state={state} presenters={presenters} onOpenDiff={openDiff} onRevert={(entryId) => void controller.forkFrom(entryId)} />
+                  <TranscriptFade />
                   <Composer state={state} controller={controller} />
                 </>
               )}
             </div>
           </div>
-          {diffOpen && <DiffPanel diff={state.workspaceDiff} controller={controller} onClose={() => setDiffOpen(false)} />}
+          {rightPanel === 'diff' && <DiffPanel diff={state.workspaceDiff} controller={controller} onClose={() => setRightPanel(undefined)} />}
+          {rightPanel === 'notifications' && <NotificationLedgerView state={state} controller={controller} onClose={() => setRightPanel(undefined)} />}
         </div>
       )}
-      <NotificationToast notices={state.notices} />
+      <NotificationToast notices={state.notices} rightInset={rightPanel ? 436 : 16} />
+    </div>
+  )
+}
+
+function TranscriptFade() {
+  const layers = ['08', '18', '2C', '45', '65', '88', 'AC', 'CE', 'E8', 'F8']
+  return (
+    <div testId="transcript-bottom-fade" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 240, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
+      {layers.map((alpha) => (
+        <React.Fragment key={alpha}>
+          <div style={{ height: 24, flexShrink: 0, backgroundColor: `${colors.background}${alpha}` }} />
+        </React.Fragment>
+      ))}
     </div>
   )
 }

@@ -35,4 +35,37 @@ describe('PiSessionCatalog', () => {
     expect(sessions[0]).toMatchObject({ title: 'Named thread', name: 'Named thread', messageCount: 1 })
     expect(sessions[1]).toMatchObject({ title: 'Explain this repository', firstMessage: 'Explain this repository', messageCount: 2 })
   })
+
+  it('loads every project and skips large message bodies after the first prompt', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-workbench-catalog-all-'))
+    roots.push(root)
+    const agentDir = join(root, 'agent')
+    const currentCwd = join(root, 'project-a')
+    const otherCwd = join(root, 'project-b')
+    const currentDirectory = getPiSessionDirectory(currentCwd, agentDir)
+    const otherDirectory = getPiSessionDirectory(otherCwd, agentDir)
+    await Promise.all([mkdir(currentDirectory, { recursive: true }), mkdir(otherDirectory, { recursive: true })])
+
+    await Promise.all(Array.from({ length: 105 }, (_, index) => {
+      const cwd = index % 2 === 0 ? currentCwd : otherCwd
+      const directory = index % 2 === 0 ? currentDirectory : otherDirectory
+      return writeFile(join(directory, `${String(index).padStart(3, '0')}.jsonl`), [
+        JSON.stringify({ type: 'session', id: `session-${index}`, cwd, timestamp: '2026-01-01T00:00:00.000Z' }),
+        JSON.stringify({ type: 'message', message: { role: 'user', content: `Prompt ${index}` } }),
+      ].join('\n'))
+    }))
+    await writeFile(join(otherDirectory, 'large.jsonl'), [
+      JSON.stringify({ type: 'session', id: 'large', cwd: otherCwd, timestamp: '2026-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'message', message: { role: 'user', content: 'Large session prompt' } }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(2_000_000) }] } }),
+      JSON.stringify({ type: 'session_info', name: 'Tail rename' }),
+    ].join('\n'))
+
+    const startedAt = performance.now()
+    const sessions = await listPiSessions(currentCwd, { agentDir })
+    expect(sessions).toHaveLength(106)
+    expect(new Set(sessions.map((session) => session.cwd))).toEqual(new Set([currentCwd, otherCwd]))
+    expect(sessions.find((session) => session.id === 'large')).toMatchObject({ title: 'Tail rename', firstMessage: 'Large session prompt', messageCount: 1 })
+    expect(performance.now() - startedAt).toBeLessThan(2_500)
+  })
 })

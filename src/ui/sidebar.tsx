@@ -1,14 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { basename } from 'node:path'
-import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import { resolve } from 'node:path'
+import { sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton } from './primitives.tsx'
 import { launchWorkspaceWindow } from './open-external.ts'
 import { colors } from './theme.ts'
-
-const INITIAL_SESSION_COUNT = 14
 
 export function WorkbenchSidebar({
   state,
@@ -29,11 +27,9 @@ export function WorkbenchSidebar({
 }) {
   const [search, setSearch] = useState('')
   const [projectExpanded, setProjectExpanded] = useState(true)
-  const [sessionLimit, setSessionLimit] = useState(INITIAL_SESSION_COUNT)
   const [showProjectLauncher, setShowProjectLauncher] = useState(false)
   const [snoozeMenu, setSnoozeMenu] = useState<string | null>(null)
   const [clock, setClock] = useState(Date.now())
-  const projectName = basename(state.workspacePath) || state.workspacePath
   const activePath = state.session.sessionFile
   const activeSummary = useMemo(
     () => state.sessions.find((session) => session.path === activePath) ?? syntheticActiveSession(state),
@@ -46,10 +42,10 @@ export function WorkbenchSidebar({
     for (const session of state.sessions) unique.set(session.path, session)
     const sessions = [...unique.values()]
     return normalizedSearch
-      ? sessions.filter((session) => `${session.title} ${session.firstMessage} ${projectName}`.toLowerCase().includes(normalizedSearch))
+      ? sessions.filter((session) => `${session.title} ${session.firstMessage} ${sessionProjectName(session)} ${session.cwd}`.toLowerCase().includes(normalizedSearch))
       : sessions
-  }, [activeSummary, normalizedSearch, projectName, state.sessions])
-  const visibleSessions = matchingSessions.slice(0, normalizedSearch ? matchingSessions.length : sessionLimit)
+  }, [activeSummary, normalizedSearch, state.sessions])
+  const visibleSessions = matchingSessions
   const now = clock
   useEffect(() => {
     const currentTime = Date.now()
@@ -80,15 +76,18 @@ export function WorkbenchSidebar({
       <SessionRow
         key={session.path}
         session={session}
-        projectName={projectName}
+        projectName={sessionProjectName(session)}
         active={active}
         running={active && state.session.isStreaming}
         disabled={state.session.isStreaming && !active}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
-        branch={state.workspaceDiff.branch || 'main'}
+        branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}
         snoozeOpen={snoozeMenu === session.path}
-        onClick={() => void controller.switchSession(session)}
+        onClick={() => {
+          if (resolve(session.cwd) === resolve(state.workspacePath)) void controller.switchSession(session)
+          else launchWorkspaceWindow(session.cwd, session.path)
+        }}
         onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}
         onWake={() => controller.wakeThread(session.path)}
         onSnooze={() => setSnoozeMenu((current) => current === session.path ? null : session.path)}
@@ -136,7 +135,7 @@ export function WorkbenchSidebar({
         {showProjectLauncher && <ProjectLauncher onClose={() => setShowProjectLauncher(false)} />}
       </div>
 
-      <div style={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 8, paddingRight: 8, overflow: 'visible' }}>
+      <virtual-list alignment="top" estimatedItemHeight={78} overdraw={280} style={{ flexGrow: 1, minHeight: 0, width: '100%', paddingLeft: 8, paddingRight: 8 }}>
         {projectExpanded && (
           <>
             {activeSessions.map((session) => renderSession(session, 'active'))}
@@ -149,12 +148,9 @@ export function WorkbenchSidebar({
                 <text style={{ color: colors.textFaint, fontSize: 11 }}>{normalizedSearch ? 'No threads found' : 'No threads yet'}</text>
               </div>
             )}
-            {!normalizedSearch && matchingSessions.length > sessionLimit && (
-              <SidebarTextAction label={`Show ${Math.min(25, matchingSessions.length - sessionLimit)} more`} onClick={() => setSessionLimit((value) => value + 25)} />
-            )}
           </>
         )}
-      </div>
+      </virtual-list>
 
       <div style={{ height: 46, paddingLeft: 8, paddingRight: 8, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         <IconButton icon="settings" label="Settings" testId="sidebar-settings" active={settingsActive} onClick={onSettings} />

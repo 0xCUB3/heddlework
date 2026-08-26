@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
+import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { NOTIFICATION_TOAST_DURATION_MS } from '../src/ui/notifications.tsx'
@@ -18,7 +19,7 @@ const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('notification surfaces', () => {
   it('hides the toast after two seconds but retains the event in the ledger', async () => {
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp/notification-workspace')
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/notification-workspace', new PiSessionCatalog({ scope: 'cwd' }))
     controllers.push(controller)
     const root = createTestRoot()
     root.render(<WorkbenchApp controller={controller} presenters={new Map()} />)
@@ -44,6 +45,8 @@ describeNative('notification surfaces', () => {
     expect(controller.getSnapshot().notices).toHaveLength(1)
 
     await automation.getByTestId('sidebar-notifications').click()
+    expect(await automation.getByTestId('notification-panel').count()).toBe(1)
+    expect((await automation.getByTestId('notification-panel').bounds()).width).toBe(420)
     expect(root.renderer.getPaintedText()).toContain('Notifications')
     expect(root.renderer.getPaintedText()).toContain('Thread moved to Settled')
     if (process.platform === 'darwin') {

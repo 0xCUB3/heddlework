@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
+import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 
@@ -55,7 +56,7 @@ class ManualTransport implements AgentTransport {
 describe('Pi extension UI projection', () => {
   it('projects fire-and-forget surfaces and responds to dialogs', async () => {
     const transport = new ManualTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace')
+    const controller = new WorkbenchController(transport, '/tmp/workspace', new PiSessionCatalog({ scope: 'cwd' }))
     try {
       await controller.start()
       transport.emit({ type: 'extension_ui_request', id: 'notify-1', method: 'notify', message: 'Heads up', notifyType: 'warning' })

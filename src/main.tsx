@@ -73,6 +73,7 @@ function piArgumentsFromEnvironment(): string[] {
   const args: string[] = []
   if (process.env.PI_WORKBENCH_PROVIDER) args.push('--provider', process.env.PI_WORKBENCH_PROVIDER)
   if (process.env.PI_WORKBENCH_MODEL) args.push('--model', process.env.PI_WORKBENCH_MODEL)
+  if (process.env.PI_WORKBENCH_SESSION) args.push('--session', process.env.PI_WORKBENCH_SESSION)
   if (process.env.PI_WORKBENCH_NO_SESSION === '1') args.push('--no-session')
   return args
 }

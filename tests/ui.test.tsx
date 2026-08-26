@@ -1,11 +1,13 @@
 import React from 'react'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
+import { createComposerImage } from '../src/ui/clipboard-media.ts'
+import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 
@@ -51,7 +53,7 @@ describeNative('WorkbenchApp', () => {
   it('renders and operates the T3-style native workbench shell', async () => {
     const workspace = createWorkspaceFixture()
     const project = basename(workspace)
-    const controller = new WorkbenchController(new DemoTransport(), workspace)
+    const controller = new WorkbenchController(new DemoTransport(), workspace, new PiSessionCatalog({ scope: 'cwd' }))
     controllers.push(controller)
     const root = createTestRoot()
     root.render(<WorkbenchApp controller={controller} presenters={new Map()} />)
@@ -69,7 +71,7 @@ describeNative('WorkbenchApp', () => {
     expect(painted).toContain('Ask anything, @tag files/folders, $use skills, or / for commands')
     expect(painted).not.toContain('Build')
     expect(painted).not.toContain('Pi tools')
-    expect(root.renderer.findByType('virtual-list')).toHaveLength(0)
+    expect(root.renderer.findByType('virtual-list')).toHaveLength(1)
     expect(root.renderer.findByType('textarea')).toHaveLength(1)
     const icons = root.renderer.findByType('svg')
     expect(icons.length).toBeGreaterThan(12)
@@ -83,16 +85,49 @@ describeNative('WorkbenchApp', () => {
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
 
+    const automation = await connectTest(root.renderer)
+    const pastedImage = createComposerImage(readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png')), 'image/png')
+    controller.addEditorImage(pastedImage)
+    expect(controller.getSnapshot().editorImages).toHaveLength(1)
+    await Bun.sleep(35)
+    root.renderer.flush()
+    expect(await automation.getByTestId('composer-image-preview').count()).toBe(1)
+    expect(root.renderer.findByType('img')).toHaveLength(1)
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-image-paste.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+
     await controller.submit('Inspect the repository')
     await waitForSettled(controller)
     root.renderer.flush()
     const conversation = root.renderer.getPaintedText()
-    expect(root.renderer.findByType('virtual-list')).toHaveLength(1)
+    expect(root.renderer.findByType('virtual-list')).toHaveLength(2)
     expect(conversation).toContain('Inspect the repository')
     expect(conversation.some((line) => line.startsWith('Worked for '))).toBe(true)
     expect(conversation.some((line) => line.includes('native GPUIX transcript'))).toBe(true)
 
-    const automation = await connectTest(root.renderer)
+    const userBounds = await automation.getByTestId('user-message').bounds()
+    await automation.call('mouseMove', { x: userBounds.x + userBounds.width - 4, y: userBounds.y + userBounds.height - 3 })
+    await Bun.sleep(30)
+    root.renderer.flush()
+    expect(await automation.getByTestId('copy-message').count()).toBe(1)
+    expect(await automation.getByTestId('revert-message').count()).toBe(1)
+    const assistantRows = await automation.getByTestId('assistant-message').all()
+    const assistantBounds = assistantRows.at(-1)?.bounds
+    expect(assistantBounds).toBeDefined()
+    await automation.call('mouseMove', { x: assistantBounds!.x + 5, y: assistantBounds!.y + assistantBounds!.height - 3 })
+    await Bun.sleep(30)
+    root.renderer.flush()
+    expect(await automation.getByTestId('copy-message').count()).toBe(1)
+    expect(await automation.getByTestId('revert-message').count()).toBe(1)
+    if (process.platform === 'darwin') {
+      const screenshot = resolve(screenshotDirectory, 'workbench-message-actions.png')
+      root.renderer.captureScreenshot(screenshot)
+      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
+    }
+
     const sidebarBounds = await automation.getByTestId('sidebar').bounds()
     const projectToggleBounds = await automation.getByTestId('sidebar-project-toggle').bounds()
     const projectLabelBounds = await automation.getByTestId('sidebar-project-label').bounds()
@@ -119,10 +154,13 @@ describeNative('WorkbenchApp', () => {
     const contextMeterBounds = await automation.getByTestId('context-meter').bounds()
     const sendBounds = await automation.getByTestId('send').bounds()
     expect(sendBounds.x - contextMeterBounds.x - contextMeterBounds.width).toBeGreaterThanOrEqual(8)
-    expect(root.renderer.findByType('img')).toHaveLength(0)
+    expect(root.renderer.findByType('img').length).toBeGreaterThan(0)
+    expect(await automation.getByTestId('transcript-bottom-fade').count()).toBe(1)
 
     await automation.getByTestId('add-action').click()
+    expect(root.renderer.getPaintedText()).toContain('Clone thread')
     expect(root.renderer.getPaintedText()).toContain('Compact context')
+    expect(root.renderer.getPaintedText()).toContain('Refresh sessions')
     expect(root.renderer.getPaintedText()).toContain('Export transcript')
     await automation.getByTestId('add-action').click()
     await automation.getByTestId('sidebar-project-toggle').click()

@@ -52,4 +52,20 @@ describe('buildTimeline', () => {
     expect(tool?.kind).toBe('tool')
     if (tool?.kind === 'tool') expect(tool.tool.output).toBe('const value = 1')
   })
+
+  it('attaches image blocks and the nearest forkable prompt to every turn row', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'Inspect this' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png', previewPath: '/tmp/image.png' }], timestamp: 1 },
+      { role: 'assistant', content: [{ type: 'text', text: 'I can see it.' }, { type: 'toolCall', id: 'tool', name: 'read', arguments: { path: 'a.ts' } }], timestamp: 2 },
+      { role: 'toolResult', toolCallId: 'tool', toolName: 'read', content: [{ type: 'text', text: 'value' }], timestamp: 3 },
+    ]
+    const items = buildTimeline(messages, undefined, [], [{ entryId: 'entry-user', text: 'Inspect this' }])
+    const user = items.find((item) => item.kind === 'user')
+    const assistant = items.find((item) => item.kind === 'assistant')
+    const tool = items.find((item) => item.kind === 'tool')
+    expect(user).toMatchObject({ kind: 'user', text: 'Inspect this', revertEntryId: 'entry-user' })
+    if (user?.kind === 'user') expect(user.images).toHaveLength(1)
+    expect(assistant).toMatchObject({ kind: 'assistant', revertEntryId: 'entry-user' })
+    expect(tool).toMatchObject({ kind: 'tool', revertEntryId: 'entry-user' })
+  })
 })
