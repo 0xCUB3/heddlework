@@ -72,12 +72,13 @@ describeNative('queue dock', () => {
 
     try {
       expect(queueDockReserveHeight(createQueueState())).toBe(0)
-      expect(queueDockReserveHeight(controller.getSnapshot().queue)).toBe(33)
+      expect(queueDockReserveHeight(controller.getSnapshot().queue)).toBe(40)
       expect(root.renderer.getPaintedText()).toContain('20 queued')
       const collapsed = await automation.getByTestId('queue-dock').bounds()
       const collapsedHeader = await automation.getByTestId('queue-header').bounds()
       const collapsedPanel = await automation.getByTestId('queue-panel').bounds()
-      expect(collapsed.height).toBeLessThanOrEqual(41)
+      expect(collapsed.height).toBeLessThanOrEqual(48)
+      expect(collapsed.height - collapsedHeader.height).toBe(7)
       expect(collapsedHeader.width).toBe(collapsed.width - 44)
       expect(collapsedPanel.x - collapsed.x).toBeGreaterThanOrEqual(22)
       expect(collapsedPanel.x - collapsed.x).toBeLessThanOrEqual(23)
@@ -89,13 +90,13 @@ describeNative('queue dock', () => {
       root.renderer.flush()
       const opening = await automation.getByTestId('queue-dock').bounds()
       expect(opening.height).toBeGreaterThan(collapsed.height)
-      expect(opening.height).toBeLessThan(305)
+      expect(opening.height).toBeLessThan(312)
       expect(Math.abs(opening.y + opening.height - anchoredBottom)).toBeLessThanOrEqual(1)
 
       await Bun.sleep(SPRING_SETTLE_MS)
       root.renderer.flush()
       const expanded = await automation.getByTestId('queue-dock').bounds()
-      expect(expanded.height).toBeGreaterThanOrEqual(303)
+      expect(expanded.height).toBeGreaterThanOrEqual(310)
       expect(Math.abs(expanded.y + expanded.height - anchoredBottom)).toBeLessThanOrEqual(1)
       const scroll = (await automation.getByTestId('queue-scroll').all())[0]!
       expect(root.renderer.getScrollOffset(scroll.id)).not.toBeNull()
@@ -134,7 +135,7 @@ describeNative('queue dock', () => {
       expect(closing.height).toBeLessThan(expanded.height)
       await Bun.sleep(SPRING_SETTLE_MS)
       root.renderer.flush()
-      expect((await automation.getByTestId('queue-dock').bounds()).height).toBeLessThanOrEqual(41)
+      expect((await automation.getByTestId('queue-dock').bounds()).height).toBeLessThanOrEqual(48)
     } finally {
       await automation.close()
       root.unmount()

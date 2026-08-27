@@ -7,8 +7,8 @@ import { useSpringProgress } from './motion.ts'
 import { colors, nativeTheme } from './theme.ts'
 
 const HEADER_HEIGHT = 40
-const COLLAPSED_HEIGHT = 40
 const COMPOSER_OVERLAP = 7
+const COLLAPSED_HEIGHT = HEADER_HEIGHT + COMPOSER_OVERLAP
 const DOCK_INSET = 22
 const ROW_HEIGHT = 44
 const MAX_LIST_HEIGHT = 264
@@ -144,7 +144,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         })}
       </div>
 
-      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
+      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: COMPOSER_OVERLAP, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
         <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{first.text || 'Image attachment'}</text>
