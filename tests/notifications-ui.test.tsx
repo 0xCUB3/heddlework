@@ -151,6 +151,17 @@ describeNative('notification surfaces', () => {
     const exitMotion = (exiting.customProps?.motion as { animate: { opacity: number; top: number; left?: number } }).animate
     expect(exitMotion).toEqual({ opacity: 0, top: 18 })
     expect(exitMotion.left).toBeUndefined()
+    const promotedDismiss = root.renderer.findByTestId('dismiss-notification:3')!
+    const promotedActions = root.renderer.getElement(promotedDismiss.parentId!)!
+    const promoted = root.renderer.getElement(promotedActions.parentId!)!
+    const promotionMotion = (promoted.customProps?.motion as { animate: { opacity: number; top: number; left?: number } }).animate
+    expect(promotionMotion).toEqual({ opacity: 1, top: 18 })
+    expect(promotionMotion.left).toBeUndefined()
+    const olderDismiss = root.renderer.findByTestId('dismiss-notification:2')!
+    const olderActions = root.renderer.getElement(olderDismiss.parentId!)!
+    const olderPromoted = root.renderer.getElement(olderActions.parentId!)!
+    const olderMotion = (olderPromoted.customProps?.motion as { animate: { opacity: number; top: number } }).animate
+    expect(olderMotion).toEqual({ opacity: 0.55, top: 18 })
     expect(root.renderer.getPaintedText()).not.toContain('Notification 1')
     await Bun.sleep(220)
     root.renderer.flush()

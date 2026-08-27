@@ -9,6 +9,7 @@ import { openExternal } from './open-external.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
 import { composerNotificationStackHeight } from './notifications.tsx'
+import { queueDockReserveHeight } from './queue-dock.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
 
 const MAX_TOOL_OUTPUT = 24_000
@@ -145,7 +146,7 @@ export const Transcript = memo(function Transcript({
           <TimelineRow key={item.id} item={item} presenters={presenters} onOpenDiff={onOpenDiff} onRevert={onRevert} />
         ))}
         {state.session.isStreaming && <WorkingRow activity={state.activity} />}
-        <ComposerSpacer noticeCount={state.notices.length} />
+        <ComposerSpacer noticeCount={state.notices.length} queue={state.queue} />
       </NativeVirtualList>
 
     </div>
@@ -160,7 +161,8 @@ export const Transcript = memo(function Transcript({
   && previous.state.session.sessionFile === next.state.session.sessionFile
   && previous.state.session.sessionId === next.state.session.sessionId
   && previous.state.session.isStreaming === next.state.session.isStreaming
-  && previous.state.notices.length === next.state.notices.length)
+  && previous.state.notices.length === next.state.notices.length
+  && previous.state.queue === next.state.queue)
 
 function TimelineRow({ item, presenters, onOpenDiff, onRevert }: { item: DisplayTimelineItem; presenters: ReadonlyMap<string, ToolPresenter>; onOpenDiff(): void; onRevert(entryId: string): void }) {
   return (
@@ -520,8 +522,8 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   )
 }
 
-function ComposerSpacer({ noticeCount }: { noticeCount: number }) {
-  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) }} />
+function ComposerSpacer({ noticeCount, queue }: { noticeCount: number; queue: WorkbenchState['queue'] }) {
+  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) + queueDockReserveHeight(queue) }} />
 }
 
 function Timestamp({ value }: { value: number }) {

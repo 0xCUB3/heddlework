@@ -1,5 +1,6 @@
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, ThinkingLevel } from '../pi/types.ts'
+import { createQueueState, type WorkbenchQueueState } from './queue.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 export type NoticeKind = 'info' | 'warning' | 'error'
@@ -87,7 +88,7 @@ export interface WorkbenchState {
   liveAssistant: LiveAssistant | undefined
   liveTools: ToolRun[]
   activity: string
-  queue: { steering: string[]; followUp: string[] }
+  queue: WorkbenchQueueState
   stats: PiSessionStats | undefined
   notices: Notice[]
   threadLifecycle: Record<string, ThreadLifecycle>
@@ -118,7 +119,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     liveAssistant: undefined,
     liveTools: [],
     activity: 'Ready',
-    queue: { steering: [], followUp: [] },
+    queue: createQueueState(),
     notices: [],
     threadLifecycle: {},
     workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
@@ -184,6 +185,7 @@ export function applyRpcEvent(state: WorkbenchState, event: RpcRecord): Workbenc
       return {
         ...state,
         queue: {
+          ...state.queue,
           steering: stringArray(event.steering),
           followUp: stringArray(event.followUp),
         },

@@ -14,14 +14,41 @@ const NOTIFICATION_EXIT_MS = 180
 
 export function ComposerNotificationStack({ notices, onDismiss, onClear }: { notices: Notice[]; onDismiss(id: number): void; onClear(): void }) {
   const [exitingIds, setExitingIds] = useState<Set<number>>(() => new Set())
+  const [promotions, setPromotions] = useState<Map<number, { opacity: number; top: number }>>(() => new Map())
+  const [settlingIds, setSettlingIds] = useState<Set<number>>(() => new Set())
   const dismissTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
+  const settleTimers = useRef(new Set<ReturnType<typeof setTimeout>>())
   useEffect(() => () => {
     for (const timer of dismissTimers.current.values()) clearTimeout(timer)
+    for (const timer of settleTimers.current) clearTimeout(timer)
     dismissTimers.current.clear()
+    settleTimers.current.clear()
   }, [])
+  const visible = notices.slice(-3)
   const dismiss = (id: number) => {
     if (dismissTimers.current.has(id)) return
+    const index = visible.findIndex((notice) => notice.id === id)
+    const nextMotions = new Map<number, { opacity: number; top: number }>()
+    if (index >= 0 && notices.length > visible.length) {
+      for (let candidate = 0; candidate < index; candidate += 1) {
+        const notice = visible[candidate]
+        if (notice) nextMotions.set(notice.id, { opacity: stackOpacity(visible.length - candidate - 2), top: 18 })
+      }
+    } else if (index >= 0) {
+      for (let candidate = index + 1; candidate < visible.length; candidate += 1) {
+        const notice = visible[candidate]
+        if (notice) nextMotions.set(notice.id, { opacity: stackOpacity(visible.length - candidate - 1), top: -18 })
+      }
+    }
+    const movingIds = [...nextMotions.keys()]
     setExitingIds((current) => new Set(current).add(id))
+    if (movingIds.length > 0) {
+      setPromotions((current) => {
+        const next = new Map(current)
+        for (const [noticeId, motion] of nextMotions) next.set(noticeId, motion)
+        return next
+      })
+    }
     const timer = setTimeout(() => {
       dismissTimers.current.delete(id)
       onDismiss(id)
@@ -30,10 +57,30 @@ export function ComposerNotificationStack({ notices, onDismiss, onClear }: { not
         next.delete(id)
         return next
       })
+      if (movingIds.length > 0) {
+        setPromotions((current) => {
+          const next = new Map(current)
+          for (const noticeId of movingIds) next.delete(noticeId)
+          return next
+        })
+        setSettlingIds((current) => {
+          const next = new Set(current)
+          for (const noticeId of movingIds) next.add(noticeId)
+          return next
+        })
+        const settleTimer = setTimeout(() => {
+          settleTimers.current.delete(settleTimer)
+          setSettlingIds((current) => {
+            const next = new Set(current)
+            for (const noticeId of movingIds) next.delete(noticeId)
+            return next
+          })
+        }, 0)
+        settleTimers.current.add(settleTimer)
+      }
     }, NOTIFICATION_EXIT_MS)
     dismissTimers.current.set(id, timer)
   }
-  const visible = notices.slice(-3)
   if (visible.length === 0) return null
 
   return (
@@ -49,6 +96,8 @@ export function ComposerNotificationStack({ notices, onDismiss, onClear }: { not
             depth={depth}
             stacked={index > 0}
             exiting={exitingIds.has(notice.id)}
+            promotion={promotions.get(notice.id)}
+            settling={settlingIds.has(notice.id)}
             onDismiss={() => dismiss(notice.id)}
             onClear={onClear}
           />
@@ -58,15 +107,15 @@ export function ComposerNotificationStack({ notices, onDismiss, onClear }: { not
   )
 }
 
-function NotificationCard({ notice, newest, depth, stacked, exiting, onDismiss, onClear }: { notice: Notice; newest: boolean; depth: number; stacked: boolean; exiting: boolean; onDismiss(): void; onClear(): void }) {
+function NotificationCard({ notice, newest, depth, stacked, exiting, promotion, settling, onDismiss, onClear }: { notice: Notice; newest: boolean; depth: number; stacked: boolean; exiting: boolean; promotion: { opacity: number; top: number } | undefined; settling: boolean; onDismiss(): void; onClear(): void }) {
   const tone = noticeColor(notice.kind)
-  const baseOpacity = newest ? 1 : depth === 1 ? 0.55 : 0.28
+  const baseOpacity = promotion?.opacity ?? stackOpacity(newest ? 0 : depth)
   return (
     <MotionDiv
       testId={newest ? 'notification-toast' : 'notification-stack-item'}
       initial={{ opacity: 0, top: 10 }}
-      animate={{ opacity: exiting ? 0 : baseOpacity, top: exiting ? 18 : 0 }}
-      transition={{ duration: NOTIFICATION_EXIT_MS / 1_000, ease: 'easeOut' }}
+      animate={{ opacity: exiting ? 0 : baseOpacity, top: exiting ? 18 : promotion?.top ?? 0 }}
+      transition={{ duration: settling ? 0 : NOTIFICATION_EXIT_MS / 1_000, ease: 'easeOut' }}
       style={{
         position: 'relative',
         height: 40,
@@ -154,6 +203,10 @@ function AutoScrollingNoticeText({ message, testId, scrollTestId }: { message: s
       <text {...(testId ? { testId } : {})} style={{ minWidth: 0, color: colors.textMuted, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontSans }}>{message}</text>
     </div>
   )
+}
+
+function stackOpacity(depth: number): number {
+  return depth === 0 ? 1 : depth === 1 ? 0.55 : 0.28
 }
 
 function noticeColor(kind: NoticeKind): string {

@@ -1,0 +1,164 @@
+import React, { useEffect, useMemo, useState } from 'react'
+import type { WorkbenchController } from '../workbench/controller.ts'
+import { parseQueuedControl, queueSize, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
+import type { WorkbenchState } from '../workbench/state.ts'
+import { Icon } from './icons.tsx'
+import { useSpringProgress } from './motion.ts'
+import { colors, nativeTheme } from './theme.ts'
+
+const HEADER_HEIGHT = 36
+const COLLAPSED_HEIGHT = 44
+const ROW_HEIGHT = 44
+const MAX_LIST_HEIGHT = 264
+
+interface MouseEventLike {
+  button?: number
+  pressedButton?: number
+}
+
+interface QueueRowView {
+  id: string
+  text: string
+  placement: 'queued' | 'steering' | 'follow-up'
+  item?: QueuedInput
+}
+
+export function queueDockReserveHeight(queue: WorkbenchQueueState): number {
+  return queueSize(queue) > 0 ? COLLAPSED_HEIGHT + 6 : 0
+}
+
+export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+  const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(undefined)
+  const [draggingId, setDraggingId] = useState<string | undefined>(undefined)
+  const rows = useMemo<QueueRowView[]>(() => [
+    ...state.queue.items.map((item) => ({ id: item.id, text: item.text, placement: 'queued' as const, item })),
+    ...state.queue.steering.map((text, index) => ({ id: `native-steering-${index}-${text}`, text, placement: 'steering' as const })),
+    ...state.queue.followUp.map((text, index) => ({ id: `native-follow-up-${index}-${text}`, text, placement: 'follow-up' as const })),
+  ], [state.queue.followUp, state.queue.items, state.queue.steering])
+  const openProgress = Math.min(1, useSpringProgress(expanded && rows.length > 0))
+  const listTargetHeight = Math.min(MAX_LIST_HEIGHT, rows.length * ROW_HEIGHT + 8)
+  const listHeight = listTargetHeight * openProgress
+  const height = COLLAPSED_HEIGHT + listHeight
+
+  useEffect(() => {
+    if (rows.length === 0) {
+      setExpanded(false)
+      setEditing(undefined)
+      setDraggingId(undefined)
+      return
+    }
+    if (editing && !state.queue.items.some((item) => item.id === editing.id)) setEditing(undefined)
+    if (draggingId && !state.queue.items.some((item) => item.id === draggingId)) setDraggingId(undefined)
+  }, [draggingId, editing, rows.length, state.queue.items])
+
+  if (rows.length === 0) return null
+
+  const first = rows[0]!
+  const saveEdit = () => {
+    if (!editing) return
+    controller.updateQueuedInput(editing.id, editing.text)
+    setEditing(undefined)
+  }
+
+  return (
+    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 7, overflow: 'hidden', userSelect: 'none' }}>
+      <div style={{ position: 'absolute', left: 8, right: 8, bottom: 8, height: HEADER_HEIGHT, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, opacity: (1 - openProgress) * 0.36 }} />
+      <div style={{ position: 'absolute', left: 4, right: 4, bottom: 4, height: HEADER_HEIGHT, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised, opacity: (1 - openProgress) * 0.68 }} />
+
+      <div
+        testId="queue-scroll"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: COLLAPSED_HEIGHT,
+          height: listHeight,
+          display: 'flex',
+          flexDirection: 'column',
+          paddingTop: 4,
+          paddingBottom: 4,
+          borderTopLeftRadius: 12,
+          borderTopRightRadius: 12,
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          backgroundColor: colors.popover,
+          overflow: 'scroll',
+          opacity: openProgress,
+        }}
+      >
+        {rows.map((row) => {
+          const ownedIndex = row.item ? state.queue.items.findIndex((item) => item.id === row.id) : -1
+          const dispatching = state.queue.dispatchingId === row.id
+          const control = row.item && row.item.images.length === 0 ? parseQueuedControl(row.text) : undefined
+          return (
+            <div
+              key={row.id}
+              testId={`queue-row:${row.id}`}
+              style={{ width: '100%', minHeight: ROW_HEIGHT, height: ROW_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: draggingId === row.id ? colors.hover : colors.transparent, opacity: dispatching ? 0.55 : 1, flexShrink: 0 }}
+              onMouseMove={(event: MouseEventLike) => {
+                if (!draggingId || event.pressedButton !== 0 || ownedIndex < 0) return
+                controller.moveQueuedInput(draggingId, ownedIndex)
+              }}
+              onMouseUp={() => setDraggingId(undefined)}
+            >
+              {row.item ? (
+                <div
+                  testId={`queue-drag:${row.id}`}
+                  style={{ width: 22, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: 'grab', color: colors.textFaint, flexShrink: 0 }}
+                  onMouseDown={(event: MouseEventLike) => { if ((event.button ?? 0) === 0 && !state.queue.dispatchingId) setDraggingId(row.id) }}
+                  onMouseUp={() => setDraggingId(undefined)}
+                >
+                  <Icon name="grip" size={13} color={colors.textFaint} />
+                </div>
+              ) : (
+                <div style={{ width: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name="lock" size={11} color={colors.textFaint} /></div>
+              )}
+
+              {editing?.id === row.id ? (
+                <input
+                  testId={`queue-editor:${row.id}`}
+                  value={editing.text}
+                  autoFocus
+                  theme={nativeTheme}
+                  style={{ minWidth: 0, height: 30, flexGrow: 1, paddingLeft: 8, paddingRight: 8, borderRadius: 7, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.input, color: colors.text, fontSize: 11 }}
+                  onChange={(event) => setEditing({ id: row.id, text: String(event.value ?? '') })}
+                  onSubmit={saveEdit}
+                  onKeyDown={(event: { key?: string }) => { if (event.key === 'escape') setEditing(undefined) }}
+                />
+              ) : (
+                <div {...(row.item ? { testId: `queue-edit:${row.id}` } : {})} style={{ minWidth: 0, flexGrow: 1, height: 30, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, cursor: row.item ? 'text' : 'default' }} {...(row.item && !dispatching ? { onClick: () => setEditing({ id: row.id, text: row.text }) } : {})}>
+                  <text style={{ color: colors.text, fontSize: 11, lineHeight: 14, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.text || `${row.item?.images.length ?? 0} attached image${row.item?.images.length === 1 ? '' : 's'}`}</text>
+                  <text style={{ color: control ? colors.warning : row.placement === 'steering' ? '#7EA2FF' : row.placement === 'follow-up' ? colors.warning : colors.textFaint, fontSize: 8, fontWeight: 650 }}>{row.placement === 'queued' ? `${control ? 'CONTROL' : 'NEXT'}${row.item?.images.length ? ` · ${row.item.images.length} IMAGE${row.item.images.length === 1 ? '' : 'S'}` : ''}` : row.placement.toUpperCase()}</text>
+                </div>
+              )}
+
+              {row.item && state.session.isStreaming && !control && (
+                <div testId={`queue-steer:${row.id}`} tabIndex={dispatching ? -1 : 0} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: dispatching ? 'default' : 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} {...(dispatching ? {} : { onClick: () => void controller.steerQueuedInput(row.id) })}>
+                  <Icon name="arrowUp" size={12} color="#7EA2FF" />
+                </div>
+              )}
+              {row.item && (
+                <div testId={`queue-remove:${row.id}`} tabIndex={dispatching ? -1 : 0} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: dispatching ? 'default' : 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} {...(dispatching ? {} : { onClick: () => controller.removeQueuedInput(row.id) })}>
+                  <Icon name="x" size={11} color={colors.textFaint} />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 11, paddingRight: 9, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
+        <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
+        <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
+        <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{first.text || 'Image attachment'}</text>
+        {state.queue.paused && state.queue.items.length > 0 && (
+          <div testId="queue-resume" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: '#382D18', cursor: 'pointer' }} onClick={() => controller.resumeQueue()}>
+            <text style={{ color: colors.warning, fontSize: 9, fontWeight: 700 }}>Resume</text>
+          </div>
+        )}
+        <Icon name={expanded ? 'chevronDown' : 'chevronUp'} size={12} color={colors.textFaint} />
+      </div>
+    </div>
+  )
+}

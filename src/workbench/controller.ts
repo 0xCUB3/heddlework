@@ -22,6 +22,7 @@ import {
   type ExtensionWidget,
   type WorkbenchState,
 } from './state.ts'
+import { createQueueState, moveQueuedInput, parseQueuedControl, type QueuedControl, type QueuedInput } from './queue.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 
 const SESSION_PAGE_SIZE = 120
@@ -47,6 +48,8 @@ export class WorkbenchController {
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
   #sessionTransitionDepth = 0
+  #nextQueueId = 0
+  #queueDispatch: Promise<void> | undefined
   #unsubscribeEvent: () => void
   #unsubscribeStatus: () => void
 
@@ -105,44 +108,87 @@ export class WorkbenchController {
     const message = text.trim()
     const editorImages = this.#state.editorImages
     if ((!message && editorImages.length === 0) || this.#state.connection !== 'connected') return
-    const wasStreaming = this.#state.session.isStreaming
-    const rpcImages = editorImages.map(({ data, mimeType }) => ({ type: 'image' as const, data, mimeType }))
-    const optimisticContent = editorImages.length > 0
-      ? [
-          ...(message ? [{ type: 'text', text: message }] : []),
-          ...editorImages.map(({ data, mimeType, previewPath }) => ({ type: 'image', data, mimeType, previewPath })),
-        ]
-      : message
-    this.#patch({ editorText: '', editorImages: [] })
-    if (!wasStreaming) {
-      const optimistic: PiMessage = {
-        role: 'user',
-        content: optimisticContent,
-        timestamp: Date.now(),
-        workbenchOptimistic: true,
-      }
-      this.#patch({
-        messages: [...this.#state.messages, optimistic],
-        session: { ...this.#state.session, isStreaming: true },
-        activity: 'Sending',
-      })
+    if (this.#state.session.isStreaming) {
+      this.#patch({ editorText: '', editorImages: [] })
+      this.queueInput(message, editorImages)
+      return
     }
+    this.#patch({ editorText: '', editorImages: [] })
+    await this.#sendPrompt(message, editorImages, true)
+  }
+
+  queueInput(text: string, images: readonly ComposerImage[] = []): QueuedInput | undefined {
+    const message = text.trim()
+    if (!message && images.length === 0) return undefined
+    const item: QueuedInput = {
+      id: `queue-${Date.now()}-${++this.#nextQueueId}`,
+      text: message,
+      images: images.map((image) => ({ ...image })),
+      createdAt: Date.now(),
+    }
+    this.#patch({ queue: { ...this.#state.queue, items: [...this.#state.queue.items, item], ...(this.#state.queue.items.length === 0 ? { paused: false, pauseReason: undefined } : {}) } })
+    return item
+  }
+
+  updateQueuedInput(id: string, text: string): void {
+    const item = this.#state.queue.items.find((candidate) => candidate.id === id)
+    if (!item || this.#state.queue.dispatchingId === id) return
+    const message = text.trim()
+    if (!message && item.images.length === 0) {
+      this.removeQueuedInput(id)
+      return
+    }
+    this.#patch({
+      queue: {
+        ...this.#state.queue,
+        items: this.#state.queue.items.map((candidate) => candidate.id === id ? { ...candidate, text: message } : candidate),
+      },
+    })
+  }
+
+  removeQueuedInput(id: string): void {
+    if (this.#state.queue.dispatchingId === id) return
+    const items = this.#state.queue.items.filter((item) => item.id !== id)
+    this.#patch({ queue: { ...this.#state.queue, items, ...(items.length === 0 ? { paused: false, pauseReason: undefined } : {}) } })
+  }
+
+  moveQueuedInput(id: string, targetIndex: number): void {
+    if (this.#state.queue.dispatchingId) return
+    this.#patch({ queue: { ...this.#state.queue, items: moveQueuedInput(this.#state.queue.items, id, targetIndex) } })
+  }
+
+  async steerQueuedInput(id: string): Promise<void> {
+    const item = this.#state.queue.items.find((candidate) => candidate.id === id)
+    if (!item || !this.#state.session.isStreaming || this.#state.queue.dispatchingId) return
+    if (item.images.length === 0 && parseQueuedControl(item.text)) return
+    this.#patch({ queue: { ...this.#state.queue, dispatchingId: id } })
     try {
       await this.#transport.request({
         type: 'prompt',
-        message,
-        ...(rpcImages.length > 0 ? { images: rpcImages } : {}),
-        ...(wasStreaming ? { streamingBehavior: 'steer' } : {}),
+        message: item.text,
+        ...(item.images.length > 0 ? { images: item.images.map(({ data, mimeType }) => ({ type: 'image' as const, data, mimeType })) } : {}),
+        streamingBehavior: 'steer',
       })
-      if (wasStreaming) this.#setState((state) => addNotice(state, 'info', 'Steering message queued'))
+      this.#patch({
+        queue: {
+          ...this.#state.queue,
+          items: this.#state.queue.items.filter((candidate) => candidate.id !== id),
+          dispatchingId: undefined,
+        },
+      })
     } catch (error) {
-      this.#patch({ editorText: message, editorImages })
+      this.#patch({ queue: { ...this.#state.queue, dispatchingId: undefined } })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
-      this.#scheduleRefresh(true)
     }
   }
 
+  resumeQueue(): void {
+    this.#patch({ queue: { ...this.#state.queue, paused: false, pauseReason: undefined } })
+    this.#drainQueue()
+  }
+
   async abort(): Promise<void> {
+    if (this.#state.queue.items.length > 0) this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'abort' } })
     try {
       await this.#transport.request({ type: 'abort' })
       this.#patch({ activity: 'Aborting' })
@@ -157,7 +203,7 @@ export class WorkbenchController {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
       if (this.#state.dialog) this.respondToDialog({ cancelled: true })
-      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [], notices: [], dialog: undefined })
+      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [], notices: [], dialog: undefined, queue: createQueueState() })
       await this.#bootstrap(false)
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
@@ -193,6 +239,7 @@ export class WorkbenchController {
         editorImages: [],
         notices: [],
         dialog: undefined,
+        queue: createQueueState(),
         workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
       })
       await this.#bootstrap(false)
@@ -238,7 +285,7 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
       if (result.cancelled) return
-      this.#patch({ notices: [] })
+      this.#patch({ notices: [], queue: createQueueState() })
       await this.#bootstrap(false)
       this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
     } catch (error) {
@@ -251,7 +298,7 @@ export class WorkbenchController {
     try {
       const result = await this.#transport.request<{ text?: string; cancelled?: boolean }>({ type: 'fork', entryId })
       if (result.cancelled) return
-      this.#patch({ notices: [] })
+      this.#patch({ notices: [], queue: createQueueState() })
       await this.#bootstrap(false)
       this.#patch({ editorText: result.text ?? '', editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Branched from the selected turn'))
@@ -397,6 +444,156 @@ export class WorkbenchController {
     this.#listeners.clear()
   }
 
+  async #sendPrompt(message: string, images: readonly ComposerImage[], restoreDraft: boolean): Promise<boolean> {
+    const previousMessages = this.#state.messages
+    const previousSession = this.#state.session
+    const previousActivity = this.#state.activity
+    const optimisticContent = images.length > 0
+      ? [
+          ...(message ? [{ type: 'text' as const, text: message }] : []),
+          ...images.map(({ data, mimeType, previewPath }) => ({ type: 'image' as const, data, mimeType, previewPath })),
+        ]
+      : message
+    const optimistic: PiMessage = {
+      role: 'user',
+      content: optimisticContent,
+      timestamp: Date.now(),
+      workbenchOptimistic: true,
+    }
+    this.#patch({
+      messages: [...previousMessages, optimistic],
+      session: { ...previousSession, isStreaming: true },
+      activity: 'Sending',
+    })
+    try {
+      await this.#transport.request({
+        type: 'prompt',
+        message,
+        ...(images.length > 0 ? { images: images.map(({ data, mimeType }) => ({ type: 'image' as const, data, mimeType })) } : {}),
+      })
+      return true
+    } catch (error) {
+      this.#patch({
+        messages: previousMessages,
+        session: previousSession,
+        activity: previousActivity,
+        ...(restoreDraft ? { editorText: message, editorImages: images.map((image) => ({ ...image })) } : {}),
+      })
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      this.#scheduleRefresh(true)
+      return false
+    }
+  }
+
+  #drainQueue(): void {
+    if (this.#queueDispatch) return
+    const task = this.#drainQueueHead()
+    this.#queueDispatch = task
+    void task.finally(() => {
+      if (this.#queueDispatch !== task) return
+      this.#queueDispatch = undefined
+      if (!this.#state.session.isStreaming && !this.#state.queue.paused && this.#state.queue.items.length > 0) queueMicrotask(() => this.#drainQueue())
+    })
+  }
+
+  async #drainQueueHead(): Promise<void> {
+    const { queue, session, connection } = this.#state
+    if (queue.paused || queue.dispatchingId || session.isStreaming || connection !== 'connected') return
+    const item = queue.items[0]
+    if (!item) return
+    this.#patch({ queue: { ...queue, dispatchingId: item.id } })
+    const control = item.images.length === 0 ? parseQueuedControl(item.text) : undefined
+    const accepted = control
+      ? await this.#runQueuedControl(control)
+      : await this.#sendPrompt(item.text, item.images, false)
+    if (!accepted) {
+      this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error', dispatchingId: undefined } })
+      return
+    }
+    this.#patch({
+      queue: {
+        ...this.#state.queue,
+        items: this.#state.queue.items.filter((candidate) => candidate.id !== item.id),
+        dispatchingId: undefined,
+      },
+    })
+    if (!control && item.text.startsWith('/')) this.#scheduleRefresh(true)
+  }
+
+  async #runQueuedControl(control: QueuedControl): Promise<boolean> {
+    try {
+      if (control.kind === 'compact') {
+        this.#patch({ activity: 'Compacting context' })
+        await this.#transport.request({ type: 'compact', ...(control.instructions ? { customInstructions: control.instructions } : {}) })
+        this.#patch({ activity: 'Ready' })
+        return true
+      }
+      if (control.kind === 'new') {
+        const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
+        if (result.cancelled) return false
+        if (this.#state.dialog) this.respondToDialog({ cancelled: true })
+        this.#patch({
+          messages: [],
+          forkMessages: [],
+          liveAssistant: undefined,
+          liveTools: [],
+          editorText: '',
+          editorImages: [],
+          notices: [],
+          dialog: undefined,
+          queue: { ...this.#state.queue, steering: [], followUp: [] },
+        })
+        await this.#bootstrap(false)
+        return true
+      }
+      if (control.kind === 'model') {
+        const separator = control.target?.indexOf('/') ?? -1
+        if (!control.target || separator <= 0 || separator === control.target.length - 1) {
+          this.#setState((state) => addNotice(state, 'warning', 'Queued /model requires provider/model'))
+          return false
+        }
+        await this.#transport.request({ type: 'set_model', provider: control.target.slice(0, separator), modelId: control.target.slice(separator + 1) })
+        await this.#bootstrap(false)
+        return true
+      }
+      if (control.kind === 'thinking') {
+        if (!control.level || !this.#state.thinkingLevels.includes(control.level as ThinkingLevel)) {
+          this.#setState((state) => addNotice(state, 'warning', 'Queued /thinking requires a supported level'))
+          return false
+        }
+        await this.#transport.request({ type: 'set_thinking_level', level: control.level })
+        await this.#bootstrap(false)
+        return true
+      }
+      const sessionFile = this.#state.session.sessionFile
+      if (!sessionFile) {
+        this.#setState((state) => addNotice(state, 'warning', 'Queued /reload requires a persisted Pi session'))
+        return false
+      }
+      this.#connecting = true
+      try {
+        this.#started = false
+        this.#patch({ queue: { ...this.#state.queue, steering: [], followUp: [] } })
+        await this.#transport.stop()
+        await this.#transport.start()
+        this.#started = true
+        const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'switch_session', sessionPath: sessionFile })
+        if (result.cancelled) {
+          await this.#bootstrap(false)
+          return false
+        }
+        await this.#bootstrap(false)
+      } finally {
+        this.#connecting = false
+      }
+      return true
+    } catch (error) {
+      this.#patch({ activity: 'Ready' })
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      return false
+    }
+  }
+
   async #bootstrap(includeModels: boolean): Promise<void> {
     const session = await this.#transport.request<PiSessionState>({ type: 'get_state' })
     this.#patch({
@@ -425,6 +622,7 @@ export class WorkbenchController {
       stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
     })
     void this.refreshWorkspaceDiff()
+    if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
   }
 
   async #getThinkingLevels(): Promise<ThinkingLevel[]> {
@@ -467,8 +665,17 @@ export class WorkbenchController {
       return
     }
     this.#setState((state) => applyRpcEvent(state, event))
+    const runOutcome = event.type === 'agent_end' && !event.willRetry ? agentEndOutcome(event) : 'unknown'
+    if (runOutcome === 'failed') {
+      this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error' } })
+    } else if (runOutcome === 'healthy' && this.#state.queue.pauseReason === 'error') {
+      this.#patch({ queue: { ...this.#state.queue, paused: false, pauseReason: undefined } })
+    }
     if (event.type === 'message_end' || event.type === 'tool_execution_end') this.#scheduleRefresh(false)
-    if (event.type === 'agent_settled') this.#scheduleRefresh(true)
+    if (event.type === 'agent_settled') {
+      this.#scheduleRefresh(true)
+      this.#drainQueue()
+    }
   }
 
   #handleExtensionUi(request: ExtensionUiRequest): void {
@@ -559,6 +766,17 @@ export class WorkbenchController {
     this.#state = next
     for (const listener of this.#listeners) listener()
   }
+}
+
+function agentEndOutcome(event: RpcRecord): 'healthy' | 'failed' | 'unknown' {
+  if (!Array.isArray(event.messages)) return 'unknown'
+  for (let index = event.messages.length - 1; index >= 0; index -= 1) {
+    const message = event.messages[index]
+    if (!message || typeof message !== 'object' || (message as { role?: unknown }).role !== 'assistant') continue
+    const stopReason = (message as { stopReason?: unknown }).stopReason
+    return stopReason === 'error' || stopReason === 'aborted' ? 'failed' : 'healthy'
+  }
+  return 'unknown'
 }
 
 function forkMessagesFrom(value: unknown): PiForkMessage[] {

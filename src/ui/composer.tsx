@@ -7,6 +7,7 @@ import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
 import { ComposerNotificationStack } from './notifications.tsx'
+import { QueueDock } from './queue-dock.tsx'
 
 export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
   const [pastingImage, setPastingImage] = useState(false)
@@ -65,6 +66,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
       <ComposerNotificationStack notices={state.notices} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => controller.clearNotices()} />
       {state.dialog && <ExtensionDialogPanel key={state.dialog.id} dialog={state.dialog} controller={controller} />}
       {above.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
+      <QueueDock state={state} controller={controller} />
 
       <div style={{ position: 'relative', width: '100%', maxWidth: 768, paddingBottom: 32, overflow: 'visible' }}>
         <ComposerContextBar branch={state.workspaceDiff.branch || 'workspace'} />
@@ -135,9 +137,6 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
           />
           <div style={{ flexGrow: 1 }} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-            {state.queue.steering.length + state.queue.followUp.length > 0 && (
-              <text style={{ color: colors.textFaint, fontSize: 9 }}>{`${state.queue.steering.length + state.queue.followUp.length} queued`}</text>
-            )}
             {typeof contextPercent === 'number' && <ContextMeter percent={contextPercent} />}
             <PrimaryAction
               running={state.session.isStreaming}

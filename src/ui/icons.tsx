@@ -31,6 +31,7 @@ export type IconName =
   | 'bell'
   | 'clock'
   | 'list'
+  | 'grip'
   | 'fileDiff'
   | 'copy'
   | 'undo'
@@ -72,6 +73,7 @@ const ICONS: Record<IconName, string> = {
   bell: svg('<path d="M10.3 4.2a2 2 0 0 1 3.4 0A6 6 0 0 1 18 10v4l2 3H4l2-3v-4a6 6 0 0 1 4.3-5.8Z"/><path d="M10 21h4"/>'),
   clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   list: svg('<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r=".5" fill="currentColor"/><circle cx="3.5" cy="12" r=".5" fill="currentColor"/><circle cx="3.5" cy="18" r=".5" fill="currentColor"/>'),
+  grip: svg('<circle cx="9" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="19" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="19" r="1" fill="currentColor" stroke="none"/>'),
   fileDiff: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 13h6m-3-3v6m-3 3h6"/>'),
   copy: svg('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/>'),
   undo: svg('<path d="m9 14-5-5 5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v1"/>'),

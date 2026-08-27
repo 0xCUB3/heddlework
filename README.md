@@ -32,7 +32,7 @@ Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/e
 | Area | Status |
 | --- | --- |
 | Native desktop shell | **Available** — macOS, Linux, and Windows through GPUIX |
-| Pi adapter | **Available** — Pi RPC, persisted sessions, models, thinking, compaction, and extension UI |
+| Pi adapter | **Available** — Pi RPC, persisted sessions, editable queued work, models, thinking, compaction, and extension UI |
 | Diff and review surfaces | **Available** — native virtualized diffs, wrapping, file filtering, and changed-file entry points |
 | Fabric presentation | **Available** — rich nested `fabric_exec` activity and audit disclosures |
 | Durable work graph | **In design** — dependencies, schedules, checkout lanes, retries, triage, and artifacts |
@@ -96,6 +96,12 @@ Build the current unsigned executable:
 pnpm build
 ./dist/heddlework /path/to/repository
 ```
+
+### Queue behavior
+
+Submitting while an agent run is active stages the input in Heddlework's editable queue instead of immediately surrendering it to Pi's immutable RPC queue. The collapsed stack reserves one line above the composer; expanding it springs upward into a bounded scroll area where rows can be edited, removed, steered into the current run, or reordered from their left drag handles.
+
+Rows drain one at a time after healthy `agent_settled` boundaries. Abort pauses the remaining tail until **Resume** is selected. A terminal error also holds the tail, but a healthy retry or overflow-compaction recovery releases it automatically; otherwise it remains available for manual resume. Skills, prompt templates, and extension commands remain raw until Pi accepts them, while `/compact`, `/new`, `/model`, `/thinking`, and `/reload` are executed as explicit control rows. Image-bearing slash text remains a normal message so attachments are never discarded. The owned queue is currently transient and session-scoped; Pi-native steering and follow-up entries are mirrored as locked rows because RPC does not expose mutation operations for them.
 
 ## Install later: product channels
 
