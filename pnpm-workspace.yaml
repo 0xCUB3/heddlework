@@ -1,6 +1,18 @@
 packages:
   - '.'
 
+# These exact releases were reviewed during the migration and intentionally bypass pnpm's age gate.
+minimumReleaseAgeExclude:
+  - '@gpuix/native-darwin-arm64@0.5.1'
+  - '@gpuix/native-darwin-x64@0.5.1'
+  - '@gpuix/native-linux-arm64-gnu@0.5.1'
+  - '@gpuix/native-linux-x64-gnu@0.5.1'
+  - '@gpuix/native-win32-arm64-msvc@0.5.1'
+  - '@gpuix/native-win32-x64-msvc@0.5.1'
+  - '@gpuix/native@0.5.1'
+  - '@gpuix/react@0.5.1'
+  - '@types/node@26.4.0'
+
 # GPUIX's JSX declarations import React types without declaring the type peer.
 packageExtensions:
   '@gpuix/react@0.5.1':
