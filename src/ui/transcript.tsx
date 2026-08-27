@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { useGpuixRequired, type StyleDesc } from '@gpuix/react'
+import type { StyleDesc } from '@gpuix/react'
 import type { PiImageContent } from '../pi/types.ts'
 import type { WorkbenchState, ToolRun } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
@@ -8,7 +8,7 @@ import { colors, nativeTheme } from './theme.ts'
 import { openExternal } from './open-external.ts'
 import { formatElapsedSeconds } from './duration.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
-import { NativeVirtualList, type NativeElementHandle, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
+import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { composerNotificationStackHeight } from './notifications.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
@@ -85,9 +85,6 @@ export const Transcript = memo(function Transcript({
   onRevert(entryId: string): void
   onLoadEarlier?(): void | Promise<void>
 }) {
-  const renderer = useGpuixRequired()
-  const listRef = useRef<NativeElementHandle | null>(null)
-  const pendingRevealRow = useRef<string | undefined>(undefined)
   const paging = useRef(false)
   const visibleStartIndex = useRef<number | undefined>(undefined)
   const historyDemandDirection = useRef<'older' | 'newer'>('older')
@@ -146,16 +143,6 @@ export const Transcript = memo(function Transcript({
     }, TRACE_PROJECTION_FRAME_MS)
     return () => clearTimeout(timer)
   }, [disclosures, sessionKey, traceLengths])
-  useEffect(() => {
-    const rowId = pendingRevealRow.current
-    if (!rowId) return
-    pendingRevealRow.current = undefined
-    const rowIndex = rowIndexById.get(rowId)
-    const elementId = listRef.current?.id
-    if (rowIndex === undefined || elementId === undefined) return
-    queueMicrotask(() => renderer.scrollToItem?.(elementId, rowIndex))
-  }, [renderer, rowIndexById])
-
   const loadEarlier = (continuation = 0) => {
     if (historyDemandDirection.current !== 'older' || !onLoadEarlier || !state.messagesHasOlder || state.messagesLoadingEarlier || paging.current) return
     paging.current = true
@@ -210,13 +197,7 @@ export const Transcript = memo(function Transcript({
     }
   }, [rowIndexById, state.messagesHasOlder, state.messagesLoadingEarlier])
 
-  const queueReveal = (rowId: string) => {
-    const rowIndex = rowIndexById.get(rowId)
-    if (rowIndex === undefined) return
-    pendingRevealRow.current = rowId
-  }
   const toggleTrace = (traceId: string) => {
-    queueReveal(traceId)
     setDisclosures((current) => {
       const traces = new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS)
       if (traces.has(traceId)) traces.delete(traceId)
@@ -228,7 +209,6 @@ export const Transcript = memo(function Transcript({
     })
   }
   const toggleEntry = (rowId: string) => {
-    queueReveal(rowId)
     setDisclosures((current) => {
       const entries = new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS)
       if (entries.has(rowId)) entries.delete(rowId)
@@ -243,7 +223,6 @@ export const Transcript = memo(function Transcript({
       <NativeVirtualList
         key={`${sessionKey}:virtual`}
         testId="transcript-list"
-        elementRef={listRef}
         alignment="bottom"
         followTail={state.session.isStreaming}
         onVisibleRange={handleVisibleRange}

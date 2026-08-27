@@ -1,6 +1,6 @@
 import React from 'react'
 import { performance } from 'node:perf_hooks'
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, spyOn } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import type { PiForkMessage, PiMessage } from '../src/pi/types.ts'
@@ -546,6 +546,60 @@ describeNative('reverse-infinite transcript', () => {
     }
   })
 
+  it('keeps a long-session viewport fixed while a parent trace opens', async () => {
+    const calls = Array.from({ length: 100 }, (_, index) => ({
+      type: 'toolCall' as const,
+      id: `focus-call-${index}`,
+      name: 'read',
+      arguments: { path: `src/focus-${index}.ts` },
+    }))
+    const before = messages.slice(0, 80)
+    const after = messages.slice(80, 160).map((message, index) => ({ ...message, timestamp: 1_000 + index }))
+    const traceMessages: PiMessage[] = [
+      { role: 'user', workbenchEntryId: 'focus-prompt', content: 'Inspect without moving this viewport', timestamp: 100 },
+      { role: 'assistant', workbenchEntryId: 'focus-work', content: [{ type: 'thinking', thinking: 'Keep focus stable.' }, ...calls], timestamp: 101 },
+      ...calls.map((call, index): PiMessage => ({
+        role: 'toolResult',
+        workbenchEntryId: `focus-result-${index}`,
+        toolCallId: call.id,
+        toolName: call.name,
+        content: `result ${index}`,
+        timestamp: 200 + index,
+      })),
+    ]
+    const state = {
+      ...createInitialState('/tmp/disclosure-focus-project'),
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: false, sessionFile: '/tmp/disclosure-focus.jsonl', sessionId: 'disclosure-focus' },
+      messages: [...before, ...traceMessages, ...after],
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    const automation = await connectTest(root.renderer)
+    try {
+      const list = root.renderer.findByTestId('transcript-list')!
+      root.renderer.scrollToItem(list.id, before.length + 1)
+      root.renderer.flush()
+      const offsetBefore = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+      const headerBefore = await automation.getByTestId('tool-row').bounds()
+
+      await automation.getByTestId('tool-row').click()
+      await Bun.sleep(100)
+      root.renderer.flush()
+
+      const offsetAfter = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+      const headerAfter = await automation.getByTestId('tool-row').bounds()
+      expect(offsetAfter).toBeCloseTo(offsetBefore, 1)
+      expect(headerAfter.y).toBeCloseTo(headerBefore.y, 1)
+    } finally {
+      await automation.close()
+      root.unmount()
+    }
+  })
+
   it('progressively projects a large trace as independent native rows', async () => {
     const calls = Array.from({ length: 256 }, (_, index) => ({ type: 'toolCall' as const, id: `window-call-${index}`, name: 'read', arguments: { path: `src/window-${index}.ts` } }))
     const traceMessages: PiMessage[] = [
@@ -566,23 +620,18 @@ describeNative('reverse-infinite transcript', () => {
     )
     const automation = await connectTest(root.renderer)
     const surface = await automation.getByTestId('transcript-scroll-surface').bounds()
-    const headerBefore = await automation.getByTestId('tool-row').bounds()
 
     await automation.getByTestId('tool-row').press('enter')
     await Bun.sleep(0)
     root.renderer.flush()
 
     const list = root.renderer.findByTestId('transcript-list')!
-    const headerAfter = await automation.getByTestId('tool-row').bounds()
     const mountedTools = await automation.getByTestId('tool-detail-row').count()
     expect(list.customProps?.itemCount).toBeUndefined()
     expect(list.children.length).toBeLessThan(128)
     expect(mountedTools).toBeGreaterThan(0)
     expect(mountedTools).toBeLessThan(128)
     expect(await automation.getByTestId('trace-projection-continuation').count()).toBe(1)
-    expect(headerAfter.y).toBeGreaterThanOrEqual(surface.y)
-    expect(headerAfter.y + headerAfter.height).toBeLessThanOrEqual(surface.y + surface.height)
-    expect(headerAfter.y).toBeLessThanOrEqual(headerBefore.y)
     expect(root.renderer.getAllText().length).toBeLessThan(1_000)
 
     const wheelStarted = performance.now()
@@ -683,6 +732,7 @@ describeNative('reverse-infinite transcript', () => {
       </div>,
     )
     const automation = await connectTest(root.renderer)
+    const scrollToItem = spyOn(root.renderer, 'scrollToItem')
     try {
       expect(await automation.getByTestId('trace-reasoning').count()).toBe(0)
       await automation.getByTestId('tool-row').click()
@@ -718,7 +768,11 @@ describeNative('reverse-infinite transcript', () => {
       expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(0)
       await automation.getByTestId('tool-row').click()
       expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(1)
+      await Bun.sleep(0)
+      root.renderer.flush()
+      expect(scrollToItem).not.toHaveBeenCalled()
     } finally {
+      scrollToItem.mockRestore()
       await automation.close()
       root.unmount()
       await kernel.dispose()

@@ -38,13 +38,14 @@ There is one bottom-aligned native virtual list for every transcript size and li
 - Prepending semantic rows relies on stable keys and native measured anchoring, not `scrollTo` restoration.
 - Pointer hover never adds, removes, or recolors content through React state inside a virtual row. Controls remain retained and visual hover uses native pseudo-state, so a stationary cursor cannot trigger row remeasurement while scrolling.
 
-Programmatic `scrollToItem` is reserved for disclosure: if expanding a short bottom-aligned transcript would place the clicked header outside the viewport, it reveals that same keyed row. It is a no-op when the row remains visible.
+Disclosure never calls `scrollTo` or `scrollToItem`. Opening and closing parent traces or nested entries only changes the retained projection; the native list handles the resulting layout without a reveal command.
 
 ## Acceptance invariants
 
 - A retained visible message keeps the same native identity and y coordinate across a history prepend.
 - Loading cannot change list child indices or scroll geometry.
 - Reversing toward newer history prevents further prepends until the reader moves upward again.
+- Opening, closing, or reopening any disclosure issues zero programmatic scroll commands.
 - Forty downward wheel events across oversized adjacent messages have monotonically non-increasing native offsets.
 - A failed or very long trace remains collapsed until explicitly opened.
 - Opening 256 tools projects fewer than 80 rows in the first frame.
