@@ -36,4 +36,35 @@ describe('PiSessionHistoryPager', () => {
     expect(oldest.messages.some((message) => message.content === 'Abandoned branch')).toBe(false)
     expect(oldest.hasOlder).toBe(false)
   })
+
+  it('scans through collapsed work until a navigable conversation page is available', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'heddlework-semantic-history-'))
+    directories.push(directory)
+    const path = join(directory, 'session.jsonl')
+    const entries: Array<Record<string, unknown>> = [
+      { type: 'session', version: 3, id: 'session', timestamp: '2026-01-01T00:00:00.000Z', cwd: '/tmp' },
+    ]
+    let parentId: string | null = null
+    const append = (id: string, message: Record<string, unknown>) => {
+      entries.push({ type: 'message', id, parentId, message })
+      parentId = id
+    }
+    append('u1', { role: 'user', content: 'First prompt', timestamp: 1 })
+    append('a1', { role: 'assistant', content: 'First answer', timestamp: 2 })
+    for (let index = 0; index < 12; index += 1) append(`tool-${index}`, { role: 'toolResult', toolCallId: `call-${index}`, toolName: 'read', content: `hidden result ${index}`, timestamp: 3 + index })
+    append('u2', { role: 'user', content: 'Second prompt', timestamp: 20 })
+    append('a2', { role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden reasoning' }, { type: 'text', text: 'Second answer' }], timestamp: 21 })
+    await writeFile(path, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`)
+
+    const pager = new PiSessionHistoryPager(path)
+    const page = await pager.loadEarlier(3, { minimumConversationMessages: 4, maximumMessages: 20 })
+
+    expect(page.messages).toHaveLength(16)
+    expect(page.messages.filter((message) => message.role === 'user' || message.role === 'assistant').map((message) => message.workbenchEntryId)).toEqual(['u1', 'a1', 'u2', 'a2'])
+    expect(page.hasOlder).toBe(false)
+
+    const cappedPage = await new PiSessionHistoryPager(path).loadEarlier(3, { minimumConversationMessages: 4, maximumMessages: 8 })
+    expect(cappedPage.messages).toHaveLength(8)
+    expect(cappedPage.hasOlder).toBe(true)
+  })
 })

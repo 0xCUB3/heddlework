@@ -8,7 +8,7 @@ import { colors, nativeTheme } from './theme.ts'
 import { openExternal } from './open-external.ts'
 import { formatElapsedSeconds } from './duration.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
-import { NativeVirtualList, type NativeElementHandle, type NativeVisibleRangeEvent } from './primitives.tsx'
+import { NativeVirtualList, type NativeElementHandle, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { composerNotificationStackHeight } from './notifications.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
@@ -90,6 +90,7 @@ export const Transcript = memo(function Transcript({
   const pendingRevealRow = useRef<string | undefined>(undefined)
   const paging = useRef(false)
   const visibleStartIndex = useRef<number | undefined>(undefined)
+  const historyDemandDirection = useRef<'older' | 'newer'>('older')
   const pendingHistoryPage = useRef<{ anchorId: string | undefined; continuation: number } | undefined>(undefined)
   const sessionKey = state.session.sessionFile ?? state.session.sessionId ?? state.workspacePath
   const [disclosures, setDisclosures] = useState<TranscriptDisclosureState>(() => ({ sessionKey, traces: new Set(), entries: new Set(), traceLimits: new Map() }))
@@ -98,11 +99,13 @@ export const Transcript = memo(function Transcript({
   const traceLimits = disclosures.sessionKey === sessionKey ? disclosures.traceLimits : EMPTY_LIMITS
 
   useEffect(() => {
-    paging.current = false
+    if (!state.messagesLoadingEarlier) paging.current = false
   }, [sessionKey, state.messages.length, state.messagesLoadingEarlier])
   useEffect(() => {
+    paging.current = false
     pendingHistoryPage.current = undefined
     visibleStartIndex.current = undefined
+    historyDemandDirection.current = 'older'
   }, [sessionKey])
 
   const hydratedMessages = useMemo(() => hydrateMessageImages(state.messages), [state.messages])
@@ -154,7 +157,7 @@ export const Transcript = memo(function Transcript({
   }, [renderer, rowIndexById])
 
   const loadEarlier = (continuation = 0) => {
-    if (!onLoadEarlier || !state.messagesHasOlder || state.messagesLoadingEarlier || paging.current) return
+    if (historyDemandDirection.current !== 'older' || !onLoadEarlier || !state.messagesHasOlder || state.messagesLoadingEarlier || paging.current) return
     paging.current = true
     pendingHistoryPage.current = { anchorId: rows[0]?.id, continuation }
     try {
@@ -177,6 +180,17 @@ export const Transcript = memo(function Transcript({
     const firstVisible = Math.max(0, Math.floor(event.startIndex))
     visibleStartIndex.current = firstVisible
     if (firstVisible <= HISTORY_PREFETCH_ROWS) loadEarlier()
+  }
+  // Downward intent owns the viewport and cancels every queued hidden-page continuation.
+  const handleHistoryScroll = (event: NativeScrollEvent) => {
+    if (typeof event.deltaY !== 'number' || event.deltaY === 0) return
+    if (event.deltaY < 0) {
+      historyDemandDirection.current = 'newer'
+      pendingHistoryPage.current = undefined
+      return
+    }
+    historyDemandDirection.current = 'older'
+    if ((visibleStartIndex.current ?? HISTORY_PREFETCH_ROWS + 1) <= HISTORY_PREFETCH_ROWS) loadEarlier()
   }
 
   // A disk page can fold entirely into the collapsed first trace and add no scrollable row.
@@ -225,7 +239,7 @@ export const Transcript = memo(function Transcript({
 
   // Direct keyed children preserve measured prepend anchors; each expanded entry is its own native virtual row.
   return (
-    <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }} onScroll={handleHistoryScroll}>
       <NativeVirtualList
         key={`${sessionKey}:virtual`}
         testId="transcript-list"
@@ -358,10 +372,10 @@ function TranscriptRowShell({ children, user = false, compact = false }: { child
   )
 }
 
+// Pointer-only visuals stay native: React hover revisions make GPUI remeasure rows beneath a stationary cursor.
 function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'user' }>; onRevert(entryId: string): void }) {
-  const [hovered, setHovered] = useState(false)
   return (
-    <div testId="user-message" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', width: '100%', gap: 6 }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <div testId="user-message" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', width: '100%', gap: 6 }}>
       {item.images.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, maxWidth: '80%' }}>
           {item.images.map((image, index) => <MessageImage key={`${item.id}-image-${index}`} image={image} />)}
@@ -372,15 +386,14 @@ function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { 
           <text style={{ color: colors.text, fontSize: 14, lineHeight: 21, whiteSpace: 'normal' }}>{item.text}</text>
         </div>
       )}
-      <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} hovered={hovered} align="end" onRevert={onRevert} />
+      <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="end" onRevert={onRevert} />
     </div>
   )
 }
 
 function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'assistant' }>; onRevert(entryId: string): void }) {
-  const [hovered, setHovered] = useState(false)
   return (
-    <div testId="assistant-message" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 5, paddingLeft: 4, paddingRight: 4 }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <div testId="assistant-message" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 5, paddingLeft: 4, paddingRight: 4 }}>
       <markdown
         source={item.text || '…'}
         theme={nativeTheme}
@@ -389,7 +402,7 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
       />
       {item.streaming
         ? <text style={{ color: colors.textFaint, fontSize: 10 }}>streaming</text>
-        : <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} hovered={hovered} align="start" onRevert={onRevert} />}
+        : <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="start" onRevert={onRevert} />}
     </div>
   )
 }
@@ -424,11 +437,10 @@ function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<Tim
 }
 
 function TraceDisclosure({ label, text, testId, streaming = false, expanded, onToggle }: { label: string; text: string; testId: string; streaming?: boolean; expanded: boolean; onToggle(): void }) {
-  const [hovered, setHovered] = useState(false)
   return (
     <div testId={testId} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <div testId={`${testId}-toggle`} tabIndex={0} style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onClick={onToggle} onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}>
-        <text style={{ color: hovered ? colors.textMuted : colors.textFaint, fontSize: 9, fontWeight: 650, whiteSpace: 'nowrap' }}>{label}</text>
+      <div testId={`${testId}-toggle`} tabIndex={0} style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer' }} onClick={onToggle} onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}>
+        <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 650, whiteSpace: 'nowrap', hover: { color: colors.textMuted } }}>{label}</text>
         {!expanded && <text testId={`${testId}-preview`} style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(text)}</text>}
         {streaming && <text style={{ color: colors.info, fontSize: 9 }}>LIVE</text>}
         <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={10} color={colors.textFaint} />
@@ -461,7 +473,6 @@ function TracePreview({ item }: { item: TraceTimelineItem }) {
 
 function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { item: Extract<TimelineItem, { kind: 'tool' }>; presenters: ReadonlyMap<string, ToolPresenter>; expanded: boolean; onToggle(): void; onRevert(entryId: string): void }) {
   const tool = item.tool
-  const [hovered, setHovered] = useState(false)
   const presentation = resolveToolPresentation(tool, presenters)
   const suppressToggle = useRef(false)
   const runInlineAction = (action: () => void) => {
@@ -487,8 +498,6 @@ function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { item: Ext
       <div
         testId="tool-detail-row"
         tabIndex={0}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         style={{
           minHeight: 28,
           display: 'flex',
@@ -507,10 +516,10 @@ function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { item: Ext
         <div style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Icon name={tool.isError ? 'x' : icon} size={15} color={tool.isError ? colors.error : colors.textFaint} />
         </div>
-        <text testId="tool-summary-label" style={{ color: hovered ? colors.text : colors.textMuted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontMono }}>{summary}</text>
+        <text testId="tool-summary-label" style={{ color: colors.textMuted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontMono, hover: { color: colors.text } }}>{summary}</text>
         <div style={{ flexGrow: 1 }} />
-        {hovered && <InlineAction icon="copy" testId="copy-tool" onClick={() => runInlineAction(() => { void copyTextToClipboard(toolCopyText(tool, args, content)) })} />}
-        {hovered && item.revertEntryId && <InlineAction icon="undo" testId="revert-tool" onClick={() => runInlineAction(() => onRevert(item.revertEntryId!))} />}
+        <InlineAction icon="copy" testId="copy-tool" onClick={() => runInlineAction(() => { void copyTextToClipboard(toolCopyText(tool, args, content)) })} />
+        {item.revertEntryId && <InlineAction icon="undo" testId="revert-tool" onClick={() => runInlineAction(() => onRevert(item.revertEntryId!))} />}
         <text style={{ color: tool.isError ? colors.error : tool.status === 'complete' ? colors.textFaint : colors.info, fontSize: 10, fontFamily: nativeTheme.fontMono }}>
           {tool.isError ? 'failed' : tool.status === 'complete' ? 'done' : tool.status}
         </text>
@@ -681,32 +690,29 @@ function MessageFooter({
   timestamp,
   copyText,
   revertEntryId,
-  hovered,
   align,
   onRevert,
 }: {
   timestamp?: number | undefined
   copyText: string
   revertEntryId?: string | undefined
-  hovered: boolean
   align: 'start' | 'end'
   onRevert(entryId: string): void
 }) {
   const [copied, setCopied] = useState(false)
-  const [footerHovered, setFooterHovered] = useState(false)
   const copy = async () => {
     if (!await copyTextToClipboard(copyText)) return
     setCopied(true)
     setTimeout(() => setCopied(false), 900)
   }
-  const actions = hovered || footerHovered ? (
+  const actions = (
     <>
       {revertEntryId && <InlineAction icon="gitBranch" testId="fork-message" onClick={() => onRevert(revertEntryId)} />}
       {copyText && <InlineAction icon={copied ? 'check' : 'copy'} testId="copy-message" onClick={() => void copy()} />}
     </>
-  ) : null
+  )
   return (
-    <div testId="message-footer" style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: align === 'end' ? 'flex-end' : 'flex-start', gap: 5 }} onMouseEnter={() => setFooterHovered(true)} onMouseLeave={() => setFooterHovered(false)}>
+    <div testId="message-footer" style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: align === 'end' ? 'flex-end' : 'flex-start', gap: 5 }}>
       {align === 'start' && actions}
       {timestamp && <Timestamp value={timestamp} />}
       {align === 'end' && actions}

@@ -1,6 +1,12 @@
 import { resolve } from 'node:path'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
-import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_MESSAGES, type SessionHistoryPage } from '../pi/session-history.ts'
+import {
+  PiSessionHistoryPager,
+  SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES,
+  SESSION_HISTORY_PAGE_MAX_MESSAGES,
+  SESSION_HISTORY_PAGE_MESSAGES,
+  type SessionHistoryPage,
+} from '../pi/session-history.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
 import {
   errorMessage,
@@ -27,6 +33,10 @@ import { createQueueState, moveQueuedInput, parseQueuedControl, type QueuedContr
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 
 const SESSION_PAGE_SIZE = 120
+const HISTORY_NAVIGATION_LOAD_OPTIONS = {
+  minimumConversationMessages: SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES,
+  maximumMessages: SESSION_HISTORY_PAGE_MAX_MESSAGES,
+} as const
 
 export interface WorkbenchControllerDependencies {
   sessionCatalog: SessionCatalogService
@@ -82,7 +92,7 @@ export class WorkbenchController {
     if (!pager || !this.#state.messagesHasOlder || this.#state.messagesLoadingEarlier) return
     this.#patch({ messagesLoadingEarlier: true })
     try {
-      const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES)
+      const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
       if (pager !== this.#historyPager) return
       const known = new Set(this.#state.messages.flatMap((message) => messageEntryId(message) ? [messageEntryId(message)!] : []))
       const older = page.messages.filter((message) => !known.has(messageEntryId(message) ?? ''))
@@ -674,7 +684,7 @@ export class WorkbenchController {
     if (session.sessionFile) {
       const pager = new PiSessionHistoryPager(session.sessionFile)
       try {
-        const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES)
+        const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
         return { page, pager }
       } catch {
         // Fall through to RPC for unsaved, unavailable, or legacy sessions.
@@ -695,7 +705,7 @@ export class WorkbenchController {
       const forkMessagesPromise = this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' })
       if (sessionFile) {
         const latestPager = new PiSessionHistoryPager(sessionFile)
-        const [page, forkMessages] = await Promise.all([latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES), forkMessagesPromise])
+        const [page, forkMessages] = await Promise.all([latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS), forkMessagesPromise])
         const retainedPager = this.#historyPager
         if (!retainedPager) this.#historyPager = latestPager
         this.#patch({

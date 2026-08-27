@@ -32,9 +32,11 @@ There is one bottom-aligned native virtual list for every transcript size and li
 - Settled sessions start at the newest content but do not follow row-height changes.
 - Streaming sessions enable native `followTail`; GPUIX stops following when the reader scrolls away.
 - Loading older history is intentionally paintless; retained keyed content stays visible until the prepend commits.
-- `onVisibleRange` requests older disk data before the loaded boundary is exposed.
-- If a disk chunk only extends an already collapsed first trace and adds no scrollable row, bounded continuation reads through it until semantic history appears.
+- A disk page has an 80-message floor, then scans through collapsed work until 12 user/assistant messages are available, with a 1,200-message ceiling. The collapsed trace header is the placeholder while hidden reasoning and tools load.
+- `onVisibleRange` requests older disk data only while the reader is moving toward older history. One downward wheel event cancels continuation demand immediately; a later upward gesture explicitly rearms it.
+- If a capped disk chunk only extends an already collapsed first trace and adds no scrollable row, bounded continuation reads through it until semantic history appears.
 - Prepending semantic rows relies on stable keys and native measured anchoring, not `scrollTo` restoration.
+- Pointer hover never adds, removes, or recolors content through React state inside a virtual row. Controls remain retained and visual hover uses native pseudo-state, so a stationary cursor cannot trigger row remeasurement while scrolling.
 
 Programmatic `scrollToItem` is reserved for disclosure: if expanding a short bottom-aligned transcript would place the clicked header outside the viewport, it reveals that same keyed row. It is a no-op when the row remains visible.
 
@@ -42,6 +44,8 @@ Programmatic `scrollToItem` is reserved for disclosure: if expanding a short bot
 
 - A retained visible message keeps the same native identity and y coordinate across a history prepend.
 - Loading cannot change list child indices or scroll geometry.
+- Reversing toward newer history prevents further prepends until the reader moves upward again.
+- Forty downward wheel events across oversized adjacent messages have monotonically non-increasing native offsets.
 - A failed or very long trace remains collapsed until explicitly opened.
 - Opening 256 tools projects fewer than 80 rows in the first frame.
 - Expanded tools are independent native rows and twenty wheel frames stay below the giant-row regression budget.

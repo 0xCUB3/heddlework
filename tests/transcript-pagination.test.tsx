@@ -248,6 +248,101 @@ describeNative('reverse-infinite transcript', () => {
     root.unmount()
   })
 
+  it('stops hidden-page demand when the reader reverses toward newer history', async () => {
+    const tail: PiMessage[] = [
+      { role: 'assistant', workbenchEntryId: 'escape-trace', content: [{ type: 'thinking', thinking: 'Retained boundary reasoning' }], timestamp: 100 },
+      { role: 'assistant', workbenchEntryId: 'escape-separator', content: 'Tail separator', timestamp: 101 },
+      ...Array.from({ length: 30 }, (_, index): PiMessage[] => [
+        { role: 'user', workbenchEntryId: `escape-user-${index}`, content: `Escape prompt ${index}`, timestamp: 200 + index * 2 },
+        { role: 'assistant', workbenchEntryId: `escape-answer-${index}`, content: `Escape answer ${index}`, timestamp: 201 + index * 2 },
+      ]).flat(),
+    ]
+    const pages: PiMessage[][] = Array.from({ length: 5 }, (_, index) => [
+      { role: 'assistant', workbenchEntryId: `escape-hidden-${index}`, content: [{ type: 'thinking', thinking: `Hidden page ${index}` }], timestamp: 90 - index },
+    ])
+    let loadCalls = 0
+
+    function Fixture() {
+      const [history, setHistory] = React.useState({ messages: tail, page: 0, loading: false })
+      const loadEarlier = async () => {
+        if (history.loading) return
+        const page = pages[loadCalls]
+        if (!page) return
+        loadCalls += 1
+        setHistory((current) => ({ ...current, loading: true }))
+        await Bun.sleep(20)
+        setHistory((current) => ({ messages: [...page, ...current.messages], page: current.page + 1, loading: false }))
+      }
+      return <Transcript state={{ ...createInitialState('/tmp/downward-escape-project'), session: { model: null, thinkingLevel: 'off' as const, isStreaming: false, sessionFile: '/tmp/downward-escape.jsonl', sessionId: 'downward-escape' }, messages: history.messages, messagesHasOlder: history.page < pages.length, messagesLoadingEarlier: history.loading }} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} onLoadEarlier={loadEarlier} />
+    }
+
+    const root = createTestRoot({ width: 920, height: 640 })
+    root.render(<div style={{ width: 920, height: 640, display: 'flex', flexDirection: 'column' }}><Fixture /></div>)
+    const automation = await connectTest(root.renderer)
+    const list = root.renderer.findByTestId('transcript-list')!
+    const bounds = await automation.getByTestId('transcript-scroll-surface').bounds()
+    const point = { x: bounds.x + bounds.width / 2, y: bounds.y + 80 }
+    root.renderer.scrollToItem(list.id, 0)
+    await Bun.sleep(5)
+    root.renderer.flush()
+    expect(loadCalls).toBe(1)
+
+    await automation.call('scrollWheel', { ...point, deltaX: 0, deltaY: -240 })
+    root.renderer.flush()
+    const escapedOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+    expect(escapedOffset).toBeLessThan(-100)
+
+    await Bun.sleep(100)
+    root.renderer.flush()
+    expect(loadCalls).toBe(1)
+    expect(root.renderer.getScrollOffset(list.id)?.[1] ?? 0).toBeLessThanOrEqual(escapedOffset + 1)
+
+    await automation.call('scrollWheel', { ...point, deltaX: 0, deltaY: 10_000 })
+    await Bun.sleep(50)
+    root.renderer.flush()
+    expect(loadCalls).toBeGreaterThan(1)
+
+    await automation.close()
+    root.unmount()
+  })
+
+  it('keeps downward progress as oversized messages cross a stationary pointer', async () => {
+    const assistant = Array.from({ length: 18 }, (_, index) => `## Section ${index}\n\nThis assistant paragraph ${index} is deliberately long enough to occupy several wrapped lines in the native Markdown surface and expose row remeasurement.`).join('\n\n')
+    const user = Array.from({ length: 18 }, (_, index) => `User diagnostic line ${index}: Encountered a boundary and needs downward scrolling to continue without returning to the assistant response.`).join('\n')
+    const hoverMessages: PiMessage[] = [
+      { role: 'assistant', workbenchEntryId: 'hover-large-assistant', content: [{ type: 'text', text: assistant }], timestamp: 1 },
+      { role: 'user', workbenchEntryId: 'hover-large-user', content: user, timestamp: 2 },
+      ...Array.from({ length: 12 }, (_, index): PiMessage[] => [
+        { role: 'assistant', workbenchEntryId: `hover-later-a-${index}`, content: `Later answer ${index}`, timestamp: 3 + index * 2 },
+        { role: 'user', workbenchEntryId: `hover-later-u-${index}`, content: `Later prompt ${index}`, timestamp: 4 + index * 2 },
+      ]).flat(),
+    ]
+    const root = createTestRoot({ width: 1000, height: 700 })
+    root.render(
+      <div style={{ width: 1000, height: 700, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={{ ...createInitialState('/tmp/hover-staircase'), session: { model: null, thinkingLevel: 'off' as const, isStreaming: false, sessionFile: '/tmp/hover-staircase.jsonl', sessionId: 'hover-staircase' }, messages: hoverMessages }} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    const automation = await connectTest(root.renderer)
+    const list = root.renderer.findByTestId('transcript-list')!
+    const bounds = await automation.getByTestId('transcript-scroll-surface').bounds()
+    const point = { x: bounds.x + bounds.width / 2, y: bounds.y + 100 }
+    root.renderer.scrollToItem(list.id, 0)
+    let previousOffset = 0
+
+    for (let index = 0; index < 40; index += 1) {
+      await automation.call('scrollWheel', { ...point, deltaX: 0, deltaY: -120 })
+      root.renderer.flush()
+      const offset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+      expect(offset).toBeLessThanOrEqual(previousOffset)
+      previousOffset = offset
+    }
+
+    expect(previousOffset).toBeLessThan(-3_000)
+    await automation.close()
+    root.unmount()
+  })
+
   it('keeps a short settled transcript movable after reaching its first prompt', async () => {
     const root = createTestRoot({ width: 920, height: 460 })
     const state = {
@@ -298,7 +393,7 @@ describeNative('reverse-infinite transcript', () => {
     }
     root.render(
       <div style={{ width: 920, height: 640, display: 'flex', flexDirection: 'column' }}>
-        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} onLoadEarlier={() => { loadCalls += 1 }} />
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} onLoadEarlier={() => { loadCalls += 1; return new Promise<void>(() => {}) }} />
       </div>,
     )
     const automation = await connectTest(root.renderer)
@@ -497,8 +592,10 @@ describeNative('reverse-infinite transcript', () => {
     }
     expect(performance.now() - wheelStarted).toBeLessThan(400)
 
-    await Bun.sleep(140)
-    root.renderer.flush()
+    for (let attempt = 0; attempt < 20 && await automation.getByTestId('tool-detail-row').count() < 256; attempt += 1) {
+      await Bun.sleep(20)
+      root.renderer.flush()
+    }
     expect(await automation.getByTestId('tool-detail-row').count()).toBe(256)
     expect(await automation.getByTestId('trace-projection-continuation').count()).toBe(0)
     expect(root.renderer.getPaintedText().length).toBeLessThan(100)

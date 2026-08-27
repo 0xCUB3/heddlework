@@ -3,6 +3,8 @@ import type { PiMessage } from './types.ts'
 
 const REVERSE_SCAN_CHUNK_BYTES = 256 * 1024
 export const SESSION_HISTORY_PAGE_MESSAGES = 80
+export const SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES = 12
+export const SESSION_HISTORY_PAGE_MAX_MESSAGES = 1_200
 
 interface PersistedSessionEntry {
   type?: string
@@ -20,6 +22,11 @@ export interface SessionHistoryPage {
   hasOlder: boolean
 }
 
+export interface SessionHistoryLoadOptions {
+  minimumConversationMessages?: number
+  maximumMessages?: number
+}
+
 export class PiSessionHistoryPager {
   readonly #path: string
   #scanEnd: number | undefined
@@ -30,8 +37,13 @@ export class PiSessionHistoryPager {
     this.#path = path
   }
 
-  async loadEarlier(limit = SESSION_HISTORY_PAGE_MESSAGES): Promise<SessionHistoryPage> {
+  async loadEarlier(
+    limit = SESSION_HISTORY_PAGE_MESSAGES,
+    options: SessionHistoryLoadOptions = {},
+  ): Promise<SessionHistoryPage> {
     if (this.#done || limit <= 0) return { messages: [], hasOlder: false }
+    const minimumConversationMessages = Math.max(0, options.minimumConversationMessages ?? 0)
+    const maximumMessages = Math.max(limit, options.maximumMessages ?? limit)
     const file = await open(this.#path, 'r')
     try {
       if (this.#scanEnd === undefined) this.#scanEnd = (await stat(this.#path)).size
@@ -39,6 +51,7 @@ export class PiSessionHistoryPager {
       let suffix = Buffer.alloc(0)
       let targetId = this.#targetId
       const messages: PiMessage[] = []
+      let conversationMessages = 0
 
       const visit = (line: Buffer, lineStart: number): boolean => {
         const entry = parseEntry(line)
@@ -47,8 +60,14 @@ export class PiSessionHistoryPager {
         if (entry.id !== targetId) return false
         targetId = typeof entry.parentId === 'string' ? entry.parentId : null
         const message = persistedMessage(entry)
-        if (message) messages.push(message)
-        if (messages.length < limit) return false
+        if (message) {
+          messages.push(message)
+          if (isConversationMessage(message)) conversationMessages += 1
+        }
+        if (
+          messages.length < limit
+          || (conversationMessages < minimumConversationMessages && messages.length < maximumMessages)
+        ) return false
         this.#scanEnd = lineStart
         this.#targetId = targetId
         return true
@@ -105,6 +124,15 @@ function persistedMessage(entry: PersistedSessionEntry): PiMessage | undefined {
     ...(entry.content === undefined ? {} : { content: entry.content }),
     ...(timestamp === undefined ? {} : { timestamp }),
   }
+}
+
+function isConversationMessage(message: PiMessage): boolean {
+  if (message.role === 'user') return true
+  if (message.role !== 'assistant') return false
+  if (typeof message.content === 'string') return message.content.trim().length > 0
+  return Array.isArray(message.content) && message.content.some((block) => (
+    block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0
+  ))
 }
 
 function persistedTimestamp(value: string | number | undefined): number | undefined {
