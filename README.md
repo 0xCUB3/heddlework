@@ -155,6 +155,7 @@ Heddlework follows a small supervised component model inspired by Cordis:
 - `src/ui/extensions.ts` hosts observable, reversible feature manifests; one plugin can contribute several native workbench surfaces.
 - `src/ui/core-extension.tsx` registers the shipped surfaces through the same contract available to future user plugins.
 - `src/ui/tool-presenters.ts` remains a keyed presentation contribution slot.
+- `src/ui/transcript-projection.ts` turns loaded transcript semantics into stable, progressively disclosed native rows; see [Transcript projection](docs/transcript-projection.md).
 - `src/ui/` contains the shared GPUIX shell and never owns harness execution truth.
 
 The UI boundary is intentionally not a microfrontend platform: extensions share one React/GPUIX runtime and register coarse feature surfaces rather than independent applications or a plugin per visual element. See [UI extensions](docs/ui-extensions.md).

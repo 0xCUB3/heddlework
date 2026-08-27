@@ -1,4 +1,5 @@
 import React from 'react'
+import { performance } from 'node:perf_hooks'
 import { describe, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
@@ -37,7 +38,7 @@ describeNative('reverse-infinite transcript', () => {
     const listId = list.id
     expect(list.type).toBe('virtual-list')
     expect(list.customProps?.alignment).toBe('bottom')
-    expect(list.customProps?.followTail).toBe(true)
+    expect(list.customProps?.followTail).toBe(false)
     expect(root.renderer.getPaintedText()).toContain('Prompt 119')
 
     root.renderer.scrollToItem(list.id, 100)
@@ -107,14 +108,17 @@ describeNative('reverse-infinite transcript', () => {
     expect(await automation.getByTestId('history-loading-skeleton').count()).toBe(1)
     expect(root.renderer.findByTestId('transcript-list')?.id).toBe(listId)
     expect(root.renderer.getPaintedText()).toContain('Prompt 83')
+    const retainedPromptBefore = await automation.getByText('Prompt 84').bounds()
 
     finishLoad?.()
     await Bun.sleep(25)
     root.renderer.flush()
 
     expect(await automation.getByTestId('history-loading-skeleton').count()).toBe(0)
-    expect(root.renderer.findByTestId('transcript-list')?.id).toBe(listId)
-    expect(root.renderer.getPaintedText()).toContain('Prompt 83')
+    const settledList = root.renderer.findByTestId('transcript-list')!
+    const retainedPromptAfter = await automation.getByText('Prompt 84').bounds()
+    expect(settledList.id).toBe(listId)
+    expect(Math.abs(retainedPromptAfter.y - retainedPromptBefore.y)).toBeLessThan(2)
     expect(root.renderer.getPaintedText()).not.toContain('Prompt 40')
     const boundaryOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
 
@@ -165,13 +169,15 @@ describeNative('reverse-infinite transcript', () => {
     const anchorRowId = list.children[0]!
     root.renderer.scrollToItem(list.id, 0)
     expect(Math.abs(root.renderer.getScrollOffset(list.id)?.[1] ?? 0)).toBeLessThan(1)
+    const retainedBefore = root.renderer.findByTestId('user-message')!.id
 
     render(retained, true)
     root.renderer.flush()
     const loadingList = root.renderer.findByTestId('transcript-list')!
-    expect(loadingList.children.indexOf(anchorRowId)).toBe(1)
+    expect(loadingList.children.indexOf(anchorRowId)).toBe(0)
+    expect(root.renderer.findByTestId('user-message')?.id).toBe(retainedBefore)
     const loadingOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
-    expect(loadingOffset).toBeLessThan(0)
+    expect(Math.abs(loadingOffset)).toBeLessThan(1)
 
     render([...older, ...retained], false)
     root.renderer.flush()
@@ -274,7 +280,9 @@ describeNative('reverse-infinite transcript', () => {
 
     await automation.call('scrollWheel', { ...point, deltaX: 0, deltaY: -10_000 })
     root.renderer.flush()
-    expect(Math.abs((root.renderer.getScrollOffset(list.id)?.[1] ?? 0) - bottomOffset)).toBeLessThan(2)
+    const returnedBottom = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+    expect(returnedBottom).toBeLessThan(-100)
+    expect(root.renderer.getPaintedText()).toContain('Prompt 11')
     await automation.close()
     root.unmount()
   })
@@ -443,6 +451,62 @@ describeNative('reverse-infinite transcript', () => {
     }
   })
 
+  it('progressively projects a large trace as independent native rows', async () => {
+    const calls = Array.from({ length: 256 }, (_, index) => ({ type: 'toolCall' as const, id: `window-call-${index}`, name: 'read', arguments: { path: `src/window-${index}.ts` } }))
+    const traceMessages: PiMessage[] = [
+      { role: 'user', workbenchEntryId: 'window-user', content: 'Inspect the large trace', timestamp: 1 },
+      { role: 'assistant', workbenchEntryId: 'window-assistant', content: [{ type: 'thinking', thinking: 'Keep this trace virtual.' }, ...calls], timestamp: 2 },
+      ...calls.map((call, index): PiMessage => ({ role: 'toolResult', workbenchEntryId: `window-result-${index}`, toolCallId: call.id, toolName: call.name, content: `result ${index}`, timestamp: 3 + index })),
+    ]
+    const state = {
+      ...createInitialState('/tmp/windowed-trace-project'),
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: false, sessionFile: '/tmp/windowed-trace.jsonl', sessionId: 'windowed-trace' },
+      messages: traceMessages,
+    }
+    const root = createTestRoot({ width: 1000, height: 700 })
+    root.render(
+      <div style={{ width: 1000, height: 700, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    const automation = await connectTest(root.renderer)
+    const surface = await automation.getByTestId('transcript-scroll-surface').bounds()
+    const headerBefore = await automation.getByTestId('tool-row').bounds()
+
+    await automation.getByTestId('tool-row').press('enter')
+    await Bun.sleep(0)
+    root.renderer.flush()
+
+    const list = root.renderer.findByTestId('transcript-list')!
+    const headerAfter = await automation.getByTestId('tool-row').bounds()
+    const mountedTools = await automation.getByTestId('tool-detail-row').count()
+    expect(list.customProps?.itemCount).toBeUndefined()
+    expect(list.children.length).toBeLessThan(128)
+    expect(mountedTools).toBeGreaterThan(0)
+    expect(mountedTools).toBeLessThan(128)
+    expect(await automation.getByTestId('trace-projection-continuation').count()).toBe(1)
+    expect(headerAfter.y).toBeGreaterThanOrEqual(surface.y)
+    expect(headerAfter.y + headerAfter.height).toBeLessThanOrEqual(surface.y + surface.height)
+    expect(headerAfter.y).toBeLessThanOrEqual(headerBefore.y)
+    expect(root.renderer.getAllText().length).toBeLessThan(1_000)
+
+    const wheelStarted = performance.now()
+    for (let index = 0; index < 20; index += 1) {
+      await automation.call('scrollWheel', { x: surface.x + surface.width / 2, y: surface.y + surface.height / 2, deltaX: 0, deltaY: index % 2 ? -120 : 120 })
+      root.renderer.flush()
+    }
+    expect(performance.now() - wheelStarted).toBeLessThan(400)
+
+    await Bun.sleep(140)
+    root.renderer.flush()
+    expect(await automation.getByTestId('tool-detail-row').count()).toBe(256)
+    expect(await automation.getByTestId('trace-projection-continuation').count()).toBe(0)
+    expect(root.renderer.getPaintedText().length).toBeLessThan(100)
+
+    await automation.close()
+    root.unmount()
+  })
+
   it('keeps a 9,397-second failed trace neutral, collapsed, and keyed across a prepend', async () => {
     const calls = Array.from({ length: 256 }, (_, index) => ({ type: 'toolCall' as const, id: `call-${index}`, name: 'read', arguments: { path: `src/file-${index}.ts` } }))
     const tail: PiMessage[] = [
@@ -543,6 +607,11 @@ describeNative('reverse-infinite transcript', () => {
       const metrics = (markdown?.customProps?.theme as { metrics?: { mdHeadingSizes?: number[]; mdHeadingLineHeights?: number[] } } | undefined)?.metrics
       expect(metrics?.mdHeadingSizes).toEqual([12, 12, 12, 12])
       expect(metrics?.mdHeadingLineHeights).toEqual([19, 19, 19, 19])
+
+      await automation.getByTestId('tool-row').click()
+      expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(0)
+      await automation.getByTestId('tool-row').click()
+      expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(1)
     } finally {
       await automation.close()
       root.unmount()

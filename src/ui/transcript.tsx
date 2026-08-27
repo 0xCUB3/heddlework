@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useGpuixRequired, type StyleDesc } from '@gpuix/react'
-import type { PiImageContent, PiMessage } from '../pi/types.ts'
+import type { PiImageContent } from '../pi/types.ts'
 import type { WorkbenchState, ToolRun } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon, type IconName } from './icons.tsx'
@@ -11,11 +11,22 @@ import { NativeVirtualList, type NativeElementHandle, type NativeVisibleRangeEve
 import { composerNotificationStackHeight } from './notifications.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
+import {
+  groupWorkItems,
+  projectTranscriptRows,
+  type DisplayTimelineItem,
+  type TraceTimelineItem,
+  type TranscriptProjectionRow,
+} from './transcript-projection.ts'
 
 const MAX_TOOL_OUTPUT = 24_000
 const HISTORY_PREFETCH_ROWS = 8
 const MAX_HISTORY_NO_PROGRESS_PAGES = 8
-const HISTORY_SKELETON_HEIGHT = 132
+const TRACE_INITIAL_PROJECTED_ROWS = 48
+const TRACE_PROJECTION_CHUNK_ROWS = 48
+const TRACE_PROJECTION_FRAME_MS = 16
+const TRANSCRIPT_ESTIMATED_ROW_HEIGHT = 88
+const HISTORY_SKELETON_HEIGHT = 88
 const CODE_SURFACE_STYLE = {
   width: '100%',
   paddingTop: 10,
@@ -46,14 +57,20 @@ const TRACE_MARKDOWN_THEME = {
 
 const FABRIC_COLLAPSED_CALL_LIMIT = 8
 
-type TraceTimelineItem = Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' }>
+type TranscriptRenderRow = TranscriptProjectionRow
+  | { id: 'empty-conversation'; kind: 'empty-conversation' }
+  | { id: 'working'; kind: 'working' }
+  | { id: 'composer-spacer'; kind: 'composer-spacer' }
 
-type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' }> | {
-  id: string
-  kind: 'work-trace'
-  items: TraceTimelineItem[]
-  revertEntryId?: string
+interface TranscriptDisclosureState {
+  sessionKey: string
+  traces: Set<string>
+  entries: Set<string>
+  traceLimits: Map<string, number>
 }
+
+const EMPTY_IDS: ReadonlySet<string> = new Set()
+const EMPTY_LIMITS: ReadonlyMap<string, number> = new Map()
 
 export const Transcript = memo(function Transcript({
   state,
@@ -70,10 +87,16 @@ export const Transcript = memo(function Transcript({
 }) {
   const renderer = useGpuixRequired()
   const listRef = useRef<NativeElementHandle | null>(null)
+  const pendingRevealRow = useRef<string | undefined>(undefined)
   const paging = useRef(false)
   const visibleStartIndex = useRef<number | undefined>(undefined)
   const pendingHistoryPage = useRef<{ anchorId: string | undefined; continuation: number } | undefined>(undefined)
   const sessionKey = state.session.sessionFile ?? state.session.sessionId ?? state.workspacePath
+  const [disclosures, setDisclosures] = useState<TranscriptDisclosureState>(() => ({ sessionKey, traces: new Set(), entries: new Set(), traceLimits: new Map() }))
+  const expandedTraceIds = disclosures.sessionKey === sessionKey ? disclosures.traces : EMPTY_IDS
+  const expandedEntryIds = disclosures.sessionKey === sessionKey ? disclosures.entries : EMPTY_IDS
+  const traceLimits = disclosures.sessionKey === sessionKey ? disclosures.traceLimits : EMPTY_LIMITS
+
   useEffect(() => {
     paging.current = false
   }, [sessionKey, state.messages.length, state.messagesLoadingEarlier])
@@ -87,18 +110,53 @@ export const Transcript = memo(function Transcript({
     () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages)),
     [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools],
   )
-  const usesStaticShortScroller = !state.session.isStreaming && !state.messagesHasOlder && state.messages.length >= 8 && state.messages.length <= 40
+  const traceLengths = useMemo(() => new Map(items.flatMap((item) => item.kind === 'work-trace' ? [[item.id, item.items.length] as const] : [])), [items])
+  const projectedRows = useMemo(() => projectTranscriptRows(items, expandedTraceIds, traceLimits), [expandedTraceIds, items, traceLimits])
+  const hasActiveTrace = items.some((item) => item.kind === 'work-trace' && item.items.some((entry) => entry.kind === 'thinking' ? entry.streaming : entry.kind === 'tool' ? entry.tool.status !== 'complete' : false))
+  const rows = useMemo<TranscriptRenderRow[]>(() => {
+    const next: TranscriptRenderRow[] = projectedRows.length > 0 ? [...projectedRows] : [{ id: 'empty-conversation', kind: 'empty-conversation' }]
+    if (state.session.isStreaming && !hasActiveTrace) next.push({ id: 'working', kind: 'working' })
+    next.push({ id: 'composer-spacer', kind: 'composer-spacer' })
+    return next
+  }, [hasActiveTrace, projectedRows, state.session.isStreaming])
+  const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [row.id, index])), [rows])
+  // Spread retained-tree growth across frames; native virtualization handles layout and paint per direct row.
   useEffect(() => {
-    if (!usesStaticShortScroller) return
-    queueMicrotask(() => {
-      const elementId = listRef.current?.id
-      if (elementId !== undefined) renderer.scrollTo?.(elementId, 0, -1_000_000_000)
-    })
-  }, [items, renderer, sessionKey, state.notices.length, state.queue, usesStaticShortScroller])
+    if (disclosures.sessionKey !== sessionKey) return
+    const hasPendingRows = [...disclosures.traces].some((traceId) => (disclosures.traceLimits.get(traceId) ?? 0) < (traceLengths.get(traceId) ?? 0))
+    if (!hasPendingRows) return
+    const timer = setTimeout(() => {
+      setDisclosures((current) => {
+        if (current.sessionKey !== sessionKey) return current
+        const traceLimits = new Map(current.traceLimits)
+        let selected: { id: string; length: number; limit: number } | undefined
+        for (const traceId of current.traces) {
+          const length = traceLengths.get(traceId) ?? 0
+          const limit = traceLimits.get(traceId) ?? Math.min(TRACE_INITIAL_PROJECTED_ROWS, length)
+          if (limit >= length || (selected && selected.limit <= limit)) continue
+          selected = { id: traceId, length, limit }
+        }
+        if (!selected) return current
+        traceLimits.set(selected.id, Math.min(selected.length, selected.limit + TRACE_PROJECTION_CHUNK_ROWS))
+        return { ...current, traceLimits }
+      })
+    }, TRACE_PROJECTION_FRAME_MS)
+    return () => clearTimeout(timer)
+  }, [disclosures, sessionKey, traceLengths])
+  useEffect(() => {
+    const rowId = pendingRevealRow.current
+    if (!rowId) return
+    pendingRevealRow.current = undefined
+    const rowIndex = rowIndexById.get(rowId)
+    const elementId = listRef.current?.id
+    if (rowIndex === undefined || elementId === undefined) return
+    queueMicrotask(() => renderer.scrollToItem?.(elementId, rowIndex))
+  }, [renderer, rowIndexById])
+
   const loadEarlier = (continuation = 0) => {
     if (!onLoadEarlier || !state.messagesHasOlder || state.messagesLoadingEarlier || paging.current) return
     paging.current = true
-    pendingHistoryPage.current = { anchorId: items[0]?.id, continuation }
+    pendingHistoryPage.current = { anchorId: rows[0]?.id, continuation }
     try {
       const request = onLoadEarlier()
       if (request) {
@@ -116,17 +174,18 @@ export const Transcript = memo(function Transcript({
   }
   const handleVisibleRange = (event: NativeVisibleRangeEvent) => {
     if (typeof event.startIndex !== 'number') return
-    const firstMessageRow = Math.max(0, Math.floor(event.startIndex) - (state.messagesLoadingEarlier ? 1 : 0))
-    visibleStartIndex.current = firstMessageRow
-    if (firstMessageRow <= HISTORY_PREFETCH_ROWS) loadEarlier()
+    const firstVisible = Math.max(0, Math.floor(event.startIndex))
+    visibleStartIndex.current = firstVisible
+    if (firstVisible <= HISTORY_PREFETCH_ROWS) loadEarlier()
   }
+
   // A disk page can fold entirely into the collapsed first trace and add no scrollable row.
   useEffect(() => {
     if (state.messagesLoadingEarlier) return
     const pending = pendingHistoryPage.current
     if (!pending) return
     pendingHistoryPage.current = undefined
-    const anchorIndex = pending.anchorId ? items.findIndex((item) => item.id === pending.anchorId) : -1
+    const anchorIndex = pending.anchorId ? rowIndexById.get(pending.anchorId) ?? -1 : -1
     if (
       anchorIndex === 0
       && state.messagesHasOlder
@@ -135,48 +194,67 @@ export const Transcript = memo(function Transcript({
     ) {
       queueMicrotask(() => loadEarlier(pending.continuation + 1))
     }
-  }, [items, state.messagesHasOlder, state.messagesLoadingEarlier])
+  }, [rowIndexById, state.messagesHasOlder, state.messagesLoadingEarlier])
 
-  const transcriptContent = (
-    <>
-      {state.messagesLoadingEarlier && <HistoryLoadingSkeleton />}
-      {items.length === 0 ? (
-        <EmptyConversation workspacePath={state.workspacePath} />
-      ) : items.map((item) => (
-        <TimelineRow key={item.id} item={item} presenters={presenters} onOpenDiff={onOpenDiff} onRevert={onRevert} />
-      ))}
-      {state.session.isStreaming && !items.some((item) => item.kind === 'work-trace' && item.items.some((entry) => entry.kind === 'thinking' ? entry.streaming : entry.kind === 'tool' ? entry.tool.status !== 'complete' : false)) && <WorkingRow activity={state.activity} />}
-      <ComposerSpacer noticeCount={state.notices.length} queue={state.queue} />
-    </>
-  )
+  const queueReveal = (rowId: string) => {
+    const rowIndex = rowIndexById.get(rowId)
+    if (rowIndex === undefined) return
+    pendingRevealRow.current = rowId
+  }
+  const toggleTrace = (traceId: string) => {
+    queueReveal(traceId)
+    setDisclosures((current) => {
+      const traces = new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS)
+      if (traces.has(traceId)) traces.delete(traceId)
+      else traces.add(traceId)
+      const traceLimits = new Map(current.sessionKey === sessionKey ? current.traceLimits : EMPTY_LIMITS)
+      if (traces.has(traceId)) traceLimits.set(traceId, Math.min(TRACE_INITIAL_PROJECTED_ROWS, traceLengths.get(traceId) ?? 0))
+      else traceLimits.delete(traceId)
+      return { sessionKey, traces, entries: new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS), traceLimits }
+    })
+  }
+  const toggleEntry = (rowId: string) => {
+    queueReveal(rowId)
+    setDisclosures((current) => {
+      const entries = new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS)
+      if (entries.has(rowId)) entries.delete(rowId)
+      else entries.add(rowId)
+      return { sessionKey, traces: new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS), entries, traceLimits: new Map(current.sessionKey === sessionKey ? current.traceLimits : EMPTY_LIMITS) }
+    })
+  }
 
-  // Keyed children let GPUIX preserve the native row anchor when history prepends.
+  // Direct keyed children preserve measured prepend anchors; each expanded entry is its own native virtual row.
   return (
     <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
-      {usesStaticShortScroller ? (
-        <div
-          key={`${sessionKey}:static`}
-          testId="transcript-list"
-          ref={(element) => { listRef.current = element }}
-          style={{ height: 0, flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', overflow: 'scroll' }}
-        >
-          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>{transcriptContent}</div>
-        </div>
-      ) : (
-        <NativeVirtualList
-          key={`${sessionKey}:virtual`}
-          testId="transcript-list"
-          elementRef={listRef}
-          alignment="bottom"
-          followTail
-          onVisibleRange={handleVisibleRange}
-          overdraw={240}
-          estimatedItemHeight={108}
-          style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
-        >
-          {transcriptContent}
-        </NativeVirtualList>
-      )}
+      <NativeVirtualList
+        key={`${sessionKey}:virtual`}
+        testId="transcript-list"
+        elementRef={listRef}
+        alignment="bottom"
+        followTail={state.session.isStreaming}
+        onVisibleRange={handleVisibleRange}
+        overdraw={240}
+        estimatedItemHeight={TRANSCRIPT_ESTIMATED_ROW_HEIGHT}
+        style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
+      >
+        {rows.map((row) => (
+          <ProjectedTranscriptRow
+            key={row.id}
+            row={row}
+            presenters={presenters}
+            workspacePath={state.workspacePath}
+            activity={state.activity}
+            noticeCount={state.notices.length}
+            queue={state.queue}
+            expanded={row.kind === 'trace-header' ? expandedTraceIds.has(row.id) : expandedEntryIds.has(row.id)}
+            onToggleTrace={toggleTrace}
+            onToggleEntry={toggleEntry}
+            onOpenDiff={onOpenDiff}
+            onRevert={onRevert}
+          />
+        ))}
+      </NativeVirtualList>
+      {state.messagesLoadingEarlier && <HistoryLoadingSkeleton />}
     </div>
   )
 }, (previous, next) => previous.presenters === next.presenters
@@ -199,6 +277,11 @@ function HistoryLoadingSkeleton() {
     <div
       testId="history-loading-skeleton"
       style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        pointerEvents: 'none',
         width: '100%',
         height: HISTORY_SKELETON_HEIGHT,
         flexShrink: 0,
@@ -220,26 +303,86 @@ function HistoryLoadingSkeleton() {
   )
 }
 
-function TimelineRow({ item, presenters, onOpenDiff, onRevert }: { item: DisplayTimelineItem; presenters: ReadonlyMap<string, ToolPresenter>; onOpenDiff(): void; onRevert(entryId: string): void }) {
+function ProjectedTranscriptRow({
+  row,
+  presenters,
+  workspacePath,
+  activity,
+  noticeCount,
+  queue,
+  expanded,
+  onToggleTrace,
+  onToggleEntry,
+  onOpenDiff,
+  onRevert,
+}: {
+  row: TranscriptRenderRow
+  presenters: ReadonlyMap<string, ToolPresenter>
+  workspacePath: string
+  activity: string
+  noticeCount: number
+  queue: WorkbenchState['queue']
+  expanded: boolean
+  onToggleTrace(traceId: string): void
+  onToggleEntry(rowId: string): void
+  onOpenDiff(): void
+  onRevert(entryId: string): void
+}) {
+  if (row.kind === 'empty-conversation') return <EmptyConversation workspacePath={workspacePath} />
+  if (row.kind === 'working') return <WorkingRow activity={activity} />
+  if (row.kind === 'composer-spacer') return <ComposerSpacer noticeCount={noticeCount} queue={queue} />
+  if (row.kind === 'timeline-item') return <TimelineItemRow item={row.item} onRevert={onRevert} />
+  if (row.kind === 'trace-header') {
+    return (
+      <TranscriptRowShell>
+        <ExecutionTraceHeader trace={row.trace} expanded={expanded} onToggle={() => onToggleTrace(row.id)} />
+      </TranscriptRowShell>
+    )
+  }
+  if (row.kind === 'trace-files') {
+    return (
+      <TranscriptRowShell compact>
+        <div style={{ marginLeft: 26 }}><ChangedFilesCard paths={row.paths} onOpenDiff={onOpenDiff} /></div>
+      </TranscriptRowShell>
+    )
+  }
+  if (row.kind === 'trace-continuation') {
+    return (
+      <TranscriptRowShell compact>
+        <div testId="trace-projection-continuation" style={{ minHeight: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, marginLeft: 8, paddingLeft: 18, borderLeftWidth: 1, borderColor: colors.borderStrong }}>
+          <Icon name="circle" size={10} color={colors.textFaint} />
+          <text style={{ color: colors.textFaint, fontSize: 10, fontFamily: nativeTheme.fontMono }}>{`Preparing ${row.remaining} more ${row.remaining === 1 ? 'entry' : 'entries'}…`}</text>
+        </div>
+      </TranscriptRowShell>
+    )
+  }
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'row',
-        justifyContent: 'center',
-        width: '100%',
-        paddingTop: item.kind === 'user' ? 9 : 4,
-        paddingBottom: item.kind === 'user' ? 11 : 7,
-        paddingLeft: 20,
-        paddingRight: 20,
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0 }}>
-        {item.kind === 'user' && <UserMessage item={item} onRevert={onRevert} />}
-        {item.kind === 'assistant' && <AssistantMessage item={item} onRevert={onRevert} />}
-        {item.kind === 'work-trace' && <ExecutionTrace items={item.items} presenters={presenters} onOpenDiff={onOpenDiff} onRevert={onRevert} />}
-        {item.kind === 'status' && <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />}
+    <TranscriptRowShell compact>
+      <div testId="execution-timeline" style={{ display: 'flex', flexDirection: 'column', marginLeft: 8, paddingLeft: 18, paddingTop: 4, paddingBottom: 5, borderLeftWidth: 1, borderColor: colors.borderStrong }}>
+        {row.item.kind === 'thinking'
+          ? <TraceReasoning item={row.item} expanded={expanded} onToggle={() => onToggleEntry(row.id)} />
+          : row.item.kind === 'context-injection'
+            ? <TraceContextInjection item={row.item} expanded={expanded} onToggle={() => onToggleEntry(row.id)} />
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 650 }}>TOOL CALL</text><ToolRow item={row.item} presenters={presenters} expanded={expanded} onToggle={() => onToggleEntry(row.id)} onRevert={onRevert} /></div>}
       </div>
+    </TranscriptRowShell>
+  )
+}
+
+function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem, { kind: 'work-trace' }>; onRevert(entryId: string): void }) {
+  return (
+    <TranscriptRowShell user={item.kind === 'user'}>
+      {item.kind === 'user' && <UserMessage item={item} onRevert={onRevert} />}
+      {item.kind === 'assistant' && <AssistantMessage item={item} onRevert={onRevert} />}
+      {item.kind === 'status' && <StatusMessage text={item.text} error={item.tone === 'error'} timestamp={item.timestamp} />}
+    </TranscriptRowShell>
+  )
+}
+
+function TranscriptRowShell({ children, user = false, compact = false }: { children: React.ReactNode; user?: boolean; compact?: boolean }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingTop: user ? 9 : compact ? 0 : 4, paddingBottom: user ? 11 : compact ? 0 : 7, paddingLeft: 20, paddingRight: 20 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0 }}>{children}</div>
     </div>
   )
 }
@@ -280,13 +423,10 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
   )
 }
 
-function ExecutionTrace({ items, presenters, onOpenDiff, onRevert }: { items: TraceTimelineItem[]; presenters: ReadonlyMap<string, ToolPresenter>; onOpenDiff(): void; onRevert(entryId: string): void }) {
-  const tools = items.filter((item): item is Extract<TimelineItem, { kind: 'tool' }> => item.kind === 'tool')
-  const running = items.some((item) => item.kind === 'thinking' ? item.streaming : item.kind === 'tool' ? item.tool.status !== 'complete' : false)
-  const [expanded, setExpanded] = useState(false)
+function ExecutionTraceHeader({ trace, expanded, onToggle }: { trace: Extract<DisplayTimelineItem, { kind: 'work-trace' }>; expanded: boolean; onToggle(): void }) {
+  const running = trace.items.some((item) => item.kind === 'thinking' ? item.streaming : item.kind === 'tool' ? item.tool.status !== 'complete' : false)
   const [hovered, setHovered] = useState(false)
-  const changedPaths = [...new Set(tools.flatMap((item) => changedPath(item.tool) ? [changedPath(item.tool)!] : []))]
-  const preview = items.at(-1)
+  const preview = trace.items.at(-1)
   return (
     <div testId="execution-trace" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 5, paddingLeft: 4, paddingRight: 2 }}>
       <div
@@ -295,41 +435,30 @@ function ExecutionTrace({ items, presenters, onOpenDiff, onRevert }: { items: Tr
         style={{ minHeight: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer' }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        onClick={() => setExpanded((value) => !value)}
-        onKeyDown={(event) => { if (event.key === 'enter') setExpanded((value) => !value) }}
+        onClick={onToggle}
+        onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}
       >
-        <text testId="execution-trace-label" style={{ color: hovered ? colors.text : colors.textMuted, fontSize: 13 }}>{running ? 'Working' : `Worked for ${traceDuration(items)}`}</text>
+        <text testId="execution-trace-label" style={{ color: hovered ? colors.text : colors.textMuted, fontSize: 13 }}>{running ? 'Working' : `Worked for ${traceDuration(trace.items)}`}</text>
         <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={12} color={hovered ? colors.textMuted : colors.textFaint} />
       </div>
       {!expanded && running && preview && <TracePreview item={preview} />}
-      {expanded && (
-        <div testId="execution-timeline" style={{ display: 'flex', flexDirection: 'column', gap: 14, marginLeft: 8, paddingLeft: 18, paddingTop: 6, paddingBottom: 8, borderLeftWidth: 1, borderColor: colors.borderStrong }}>
-          {items.map((item) => item.kind === 'thinking'
-            ? <TraceReasoning key={item.id} item={item} />
-            : item.kind === 'context-injection'
-              ? <TraceContextInjection key={item.id} item={item} />
-              : <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 650 }}>TOOL CALL</text><ToolRow item={item} presenters={presenters} onRevert={onRevert} /></div>)}
-        </div>
-      )}
-      {changedPaths.length > 0 && <ChangedFilesCard paths={changedPaths} onOpenDiff={onOpenDiff} />}
     </div>
   )
 }
 
-function TraceReasoning({ item }: { item: Extract<TimelineItem, { kind: 'thinking' }> }) {
-  return <TraceDisclosure label="REASONING" text={item.text} testId="trace-reasoning" streaming={Boolean(item.streaming)} />
+function TraceReasoning({ item, expanded, onToggle }: { item: Extract<TimelineItem, { kind: 'thinking' }>; expanded: boolean; onToggle(): void }) {
+  return <TraceDisclosure label="REASONING" text={item.text} testId="trace-reasoning" streaming={Boolean(item.streaming)} expanded={expanded} onToggle={onToggle} />
 }
 
-function TraceContextInjection({ item }: { item: Extract<TimelineItem, { kind: 'context-injection' }> }) {
-  return <TraceDisclosure label="CONTEXT INJECTION" text={item.text} testId="trace-context-injection" />
+function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<TimelineItem, { kind: 'context-injection' }>; expanded: boolean; onToggle(): void }) {
+  return <TraceDisclosure label="CONTEXT INJECTION" text={item.text} testId="trace-context-injection" expanded={expanded} onToggle={onToggle} />
 }
 
-function TraceDisclosure({ label, text, testId, streaming = false }: { label: string; text: string; testId: string; streaming?: boolean }) {
-  const [expanded, setExpanded] = useState(false)
+function TraceDisclosure({ label, text, testId, streaming = false, expanded, onToggle }: { label: string; text: string; testId: string; streaming?: boolean; expanded: boolean; onToggle(): void }) {
   const [hovered, setHovered] = useState(false)
   return (
     <div testId={testId} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <div testId={`${testId}-toggle`} tabIndex={0} style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onClick={() => setExpanded((value) => !value)} onKeyDown={(event) => { if (event.key === 'enter') setExpanded((value) => !value) }}>
+      <div testId={`${testId}-toggle`} tabIndex={0} style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onClick={onToggle} onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}>
         <text style={{ color: hovered ? colors.textMuted : colors.textFaint, fontSize: 9, fontWeight: 650, whiteSpace: 'nowrap' }}>{label}</text>
         {!expanded && <text testId={`${testId}-preview`} style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(text)}</text>}
         {streaming && <text style={{ color: colors.info, fontSize: 9 }}>LIVE</text>}
@@ -361,10 +490,9 @@ function TracePreview({ item }: { item: TraceTimelineItem }) {
   )
 }
 
-function ToolRow({ item, presenters, onRevert }: { item: Extract<TimelineItem, { kind: 'tool' }>; presenters: ReadonlyMap<string, ToolPresenter>; onRevert(entryId: string): void }) {
+function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { item: Extract<TimelineItem, { kind: 'tool' }>; presenters: ReadonlyMap<string, ToolPresenter>; expanded: boolean; onToggle(): void; onRevert(entryId: string): void }) {
   const tool = item.tool
   const [hovered, setHovered] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const presentation = resolveToolPresentation(tool, presenters)
   const suppressToggle = useRef(false)
   const runInlineAction = (action: () => void) => {
@@ -377,7 +505,7 @@ function ToolRow({ item, presenters, onRevert }: { item: Extract<TimelineItem, {
       suppressToggle.current = false
       return
     }
-    setExpanded((value) => !value)
+    onToggle()
   }
   const args = formatArgs(tool.args, tool.argsText)
   const content = presentation.content.length > MAX_TOOL_OUTPUT
@@ -668,25 +796,6 @@ function Timestamp({ value }: { value: number }) {
   return <text style={{ color: colors.textFaint, fontSize: 9 }}>{formatTimestamp(value)}</text>
 }
 
-function groupWorkItems(items: TimelineItem[]): DisplayTimelineItem[] {
-  const grouped: DisplayTimelineItem[] = []
-  for (const item of items) {
-    if (item.kind !== 'thinking' && item.kind !== 'context-injection' && item.kind !== 'tool') {
-      grouped.push(item)
-      continue
-    }
-    const previous = grouped.at(-1)
-    if (previous?.kind === 'work-trace') {
-      previous.items.push(item)
-      previous.id = `work-trace-${item.id}`
-      if (item.revertEntryId) previous.revertEntryId = item.revertEntryId
-    } else {
-      grouped.push({ id: `work-trace-${item.id}`, kind: 'work-trace', items: [item], ...(item.revertEntryId ? { revertEntryId: item.revertEntryId } : {}) })
-    }
-  }
-  return grouped
-}
-
 export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpenDiff(): void }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 5, padding: 10, borderRadius: 10, backgroundColor: colors.card, fontFamily: nativeTheme.fontMono }}>
@@ -711,23 +820,10 @@ export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpe
   )
 }
 
-function changedPath(tool: ToolRun): string | undefined {
-  if (tool.name !== 'edit' && tool.name !== 'write') return undefined
-  const args = tool.args && typeof tool.args === 'object' ? tool.args as Record<string, unknown> : {}
-  return typeof args.path === 'string' ? args.path : undefined
-}
-
 function traceDuration(tools: Array<Pick<TimelineItem, 'timestamp'>>): string {
   const timestamps = tools.map((item) => item.timestamp).filter((value): value is number => typeof value === 'number')
   if (timestamps.length > 1) return `${Math.max(1, Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 1_000))}s`
   return `${Math.max(1, tools.length)}s`
-}
-
-function workSummary(commands: number, tools: number): string {
-  const parts: string[] = []
-  if (commands > 0) parts.push(`Ran ${commands} ${commands === 1 ? 'command' : 'commands'}`)
-  if (tools > 0) parts.push(`used ${tools} ${tools === 1 ? 'tool' : 'tools'}`)
-  return parts.join(' and ') || 'Completed agent work'
 }
 
 function toolIcon(name: string): IconName {
