@@ -125,6 +125,11 @@ export interface NativeScrollEvent {
   precise?: boolean
 }
 
+export interface NativeVisibleRangeEvent {
+  startIndex?: number
+  endIndex?: number
+}
+
 export function NativeVirtualList({
   children,
   style,
@@ -134,6 +139,7 @@ export function NativeVirtualList({
   estimatedItemHeight,
   testId,
   onScroll,
+  onVisibleRange,
   elementRef,
 }: {
   children: React.ReactNode
@@ -144,6 +150,7 @@ export function NativeVirtualList({
   estimatedItemHeight?: number
   testId?: string
   onScroll?(event: NativeScrollEvent): void
+  onVisibleRange?(event: NativeVisibleRangeEvent): void
   elementRef?: React.Ref<NativeElementHandle>
 }) {
   return React.createElement('virtual-list', {
@@ -154,6 +161,7 @@ export function NativeVirtualList({
     style,
     ...(testId ? { testId } : {}),
     ...(onScroll ? { onScroll } : {}),
+    ...(onVisibleRange ? { onVisibleRange } : {}),
     ...(elementRef ? { ref: elementRef } : {}),
   } as never, children)
 }

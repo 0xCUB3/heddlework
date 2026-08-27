@@ -35,7 +35,7 @@ describeNative('queue dock', () => {
       expect(controller.getSnapshot().queue.pauseReason).toBe('manual')
       expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/fabric prewalk'])
       expect(await automation.getByTestId('queue-resume').count()).toBe(1)
-      expect(root.renderer.getPaintedText()).toContain(process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue')
+      expect(root.renderer.getPaintedText()).not.toContain(process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue')
 
       const emptyComposer = root.renderer.findByTestId('composer')!
       root.renderer.nativeSimulateKeystrokes(emptyComposer.id, 'enter')
@@ -72,16 +72,15 @@ describeNative('queue dock', () => {
 
     try {
       expect(queueDockReserveHeight(createQueueState())).toBe(0)
-      expect(queueDockReserveHeight(controller.getSnapshot().queue)).toBe(40)
+      expect(queueDockReserveHeight(controller.getSnapshot().queue)).toBe(50)
       expect(root.renderer.getPaintedText()).toContain('20 queued')
       const collapsed = await automation.getByTestId('queue-dock').bounds()
       const collapsedHeader = await automation.getByTestId('queue-header').bounds()
       const collapsedPanel = await automation.getByTestId('queue-panel').bounds()
-      expect(collapsed.height).toBeLessThanOrEqual(48)
-      expect(collapsed.height - collapsedHeader.height).toBe(7)
-      expect(collapsedHeader.width).toBe(collapsed.width - 44)
-      expect(collapsedPanel.x - collapsed.x).toBeGreaterThanOrEqual(22)
-      expect(collapsedPanel.x - collapsed.x).toBeLessThanOrEqual(23)
+      expect(collapsed.height).toBeLessThanOrEqual(43)
+      expect(collapsedHeader.width).toBe(collapsed.width)
+      expect(collapsedPanel.x - collapsed.x).toBeGreaterThanOrEqual(0)
+      expect(collapsedPanel.x - collapsed.x).toBeLessThanOrEqual(1)
       expect(collapsedPanel.width + 2).toBe(collapsedHeader.width)
       const anchoredBottom = collapsed.y + collapsed.height
 
@@ -90,13 +89,13 @@ describeNative('queue dock', () => {
       root.renderer.flush()
       const opening = await automation.getByTestId('queue-dock').bounds()
       expect(opening.height).toBeGreaterThan(collapsed.height)
-      expect(opening.height).toBeLessThan(312)
+      expect(opening.height).toBeLessThan(307)
       expect(Math.abs(opening.y + opening.height - anchoredBottom)).toBeLessThanOrEqual(1)
 
       await Bun.sleep(SPRING_SETTLE_MS)
       root.renderer.flush()
       const expanded = await automation.getByTestId('queue-dock').bounds()
-      expect(expanded.height).toBeGreaterThanOrEqual(310)
+      expect(expanded.height).toBeGreaterThanOrEqual(305)
       expect(Math.abs(expanded.y + expanded.height - anchoredBottom)).toBeLessThanOrEqual(1)
       const scroll = (await automation.getByTestId('queue-scroll').all())[0]!
       expect(root.renderer.getScrollOffset(scroll.id)).not.toBeNull()
@@ -118,12 +117,19 @@ describeNative('queue dock', () => {
       const target = controller.getSnapshot().queue.items[5]!
       const handleBounds = await automation.getByTestId(`queue-drag:${dragged.id}`).bounds()
       const targetBounds = await automation.getByTestId(`queue-row:${target.id}`).bounds()
+      await automation.call('mouseMove', { x: handleBounds.x + handleBounds.width / 2, y: handleBounds.y + handleBounds.height / 2 })
+      await Bun.sleep(160)
+      root.renderer.flush()
       root.renderer.nativeSimulateMouseDown(handleBounds.x + handleBounds.width / 2, handleBounds.y + handleBounds.height / 2)
       root.renderer.nativeSimulateMouseMove(targetBounds.x + targetBounds.width / 2, targetBounds.y + targetBounds.height / 2, 0)
       root.renderer.nativeSimulateMouseUp(targetBounds.x + targetBounds.width / 2, targetBounds.y + targetBounds.height / 2)
       expect(controller.getSnapshot().queue.items[5]?.id).toBe(dragged.id)
 
       const removable = controller.getSnapshot().queue.items[0]!
+      const removableBounds = await automation.getByTestId(`queue-row:${removable.id}`).bounds()
+      await automation.call('mouseMove', { x: removableBounds.x + removableBounds.width / 2, y: removableBounds.y + removableBounds.height / 2 })
+      await Bun.sleep(160)
+      root.renderer.flush()
       await automation.getByTestId(`queue-remove:${removable.id}`).click()
       expect(controller.getSnapshot().queue.items).toHaveLength(19)
 
@@ -135,7 +141,7 @@ describeNative('queue dock', () => {
       expect(closing.height).toBeLessThan(expanded.height)
       await Bun.sleep(SPRING_SETTLE_MS)
       root.renderer.flush()
-      expect((await automation.getByTestId('queue-dock').bounds()).height).toBeLessThanOrEqual(48)
+      expect((await automation.getByTestId('queue-dock').bounds()).height).toBeLessThanOrEqual(43)
     } finally {
       await automation.close()
       root.unmount()

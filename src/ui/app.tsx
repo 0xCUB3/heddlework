@@ -180,7 +180,7 @@ export function WorkbenchApp({
                     </div>
                   ) : (
                     <>
-                      <Transcript state={state} presenters={presenters} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.forkFrom(entryId)} />
+                      <Transcript state={state} presenters={presenters} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.forkFrom(entryId)} onLoadEarlier={controller.loadEarlierMessages} />
                       <TranscriptFade />
                       <Composer state={state} controller={controller} />
                     </>

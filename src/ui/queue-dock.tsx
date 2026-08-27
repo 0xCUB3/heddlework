@@ -3,13 +3,12 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { parseQueuedControl, queueSize, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { useSpringProgress } from './motion.ts'
+import { MotionDiv, useSpringProgress } from './motion.ts'
 import { colors, nativeTheme } from './theme.ts'
 
-const HEADER_HEIGHT = 40
-const COMPOSER_OVERLAP = 7
-const COLLAPSED_HEIGHT = HEADER_HEIGHT + COMPOSER_OVERLAP
-const DOCK_INSET = 22
+const HEADER_HEIGHT = 42
+const COLLAPSED_HEIGHT = HEADER_HEIGHT
+const DOCK_INSET = 0
 const ROW_HEIGHT = 44
 const MAX_LIST_HEIGHT = 264
 
@@ -26,16 +25,17 @@ interface QueueRowView {
 }
 
 export function queueDockReserveHeight(queue: WorkbenchQueueState): number {
-  return queueSize(queue) > 0 ? COLLAPSED_HEIGHT - COMPOSER_OVERLAP : 0
+  return queueSize(queue) > 0 ? COLLAPSED_HEIGHT + 8 : 0
 }
 
 export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(undefined)
   const [draggingId, setDraggingId] = useState<string | undefined>(undefined)
+  const [hoveredId, setHoveredId] = useState<string | undefined>(undefined)
   const rows = useMemo<QueueRowView[]>(() => [
-    ...state.queue.items.map((item) => ({ id: item.id, text: item.text, placement: 'queued' as const, item })),
     ...state.queue.steering.map((text, index) => ({ id: `native-steering-${index}-${text}`, text, placement: 'steering' as const })),
+    ...state.queue.items.map((item) => ({ id: item.id, text: item.text, placement: 'queued' as const, item })),
     ...state.queue.followUp.map((text, index) => ({ id: `native-follow-up-${index}-${text}`, text, placement: 'follow-up' as const })),
   ], [state.queue.followUp, state.queue.items, state.queue.steering])
   const openProgress = Math.min(1, useSpringProgress(expanded && rows.length > 0))
@@ -48,6 +48,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
       setExpanded(false)
       setEditing(undefined)
       setDraggingId(undefined)
+      setHoveredId(undefined)
       return
     }
     if (editing && !state.queue.items.some((item) => item.id === editing.id)) setEditing(undefined)
@@ -64,8 +65,8 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
   }
 
   return (
-    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: -COMPOSER_OVERLAP, overflow: 'hidden', userSelect: 'none' }}>
-      <div testId="queue-panel" style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, top: 0, bottom: 0, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderWidth: 1, borderColor: colors.composerOutline, backgroundColor: colors.contextBar }} />
+    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 8, overflow: 'hidden', userSelect: 'none' }}>
+      <div testId="queue-panel" style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, top: 0, bottom: 0, borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised }} />
 
       <div
         testId="queue-scroll"
@@ -91,7 +92,9 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
             <div
               key={row.id}
               testId={`queue-row:${row.id}`}
-              style={{ width: '100%', minHeight: ROW_HEIGHT, height: ROW_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: draggingId === row.id ? colors.hover : colors.transparent, opacity: dispatching ? 0.55 : 1, flexShrink: 0 }}
+              style={{ width: '100%', minHeight: ROW_HEIGHT, height: ROW_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: hoveredId === row.id || draggingId === row.id ? colors.hover : colors.transparent, opacity: dispatching ? 0.55 : 1, flexShrink: 0 }}
+              onMouseEnter={() => setHoveredId(row.id)}
+              onMouseLeave={() => { if (draggingId !== row.id) setHoveredId(undefined) }}
               onMouseMove={(event: MouseEventLike) => {
                 if (!draggingId || event.pressedButton !== 0 || ownedIndex < 0) return
                 controller.moveQueuedInput(draggingId, ownedIndex)
@@ -99,16 +102,19 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
               onMouseUp={() => setDraggingId(undefined)}
             >
               {row.item ? (
-                <div
+                <MotionDiv
                   testId={`queue-drag:${row.id}`}
-                  style={{ width: 22, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: 'grab', color: colors.textFaint, flexShrink: 0 }}
-                  onMouseDown={(event: MouseEventLike) => { if ((event.button ?? 0) === 0 && !state.queue.dispatchingId) setDraggingId(row.id) }}
+                  initial={{ opacity: 0, left: -4 }}
+                  animate={{ opacity: hoveredId === row.id || draggingId === row.id ? 1 : 0, left: hoveredId === row.id || draggingId === row.id ? 0 : -4 }}
+                  transition={{ duration: 0.14, ease: 'easeOut' }}
+                  style={{ position: 'relative', width: 22, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: hoveredId === row.id ? 'grab' : 'default', color: colors.textFaint, flexShrink: 0 }}
+                  onMouseDown={(event: MouseEventLike) => { if (hoveredId === row.id && (event.button ?? 0) === 0 && !state.queue.dispatchingId) setDraggingId(row.id) }}
                   onMouseUp={() => setDraggingId(undefined)}
                 >
                   <Icon name="grip" size={13} color={colors.textFaint} />
-                </div>
+                </MotionDiv>
               ) : (
-                <div style={{ width: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name="lock" size={11} color={colors.textFaint} /></div>
+                <div style={{ width: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Icon name={row.placement === 'steering' ? 'arrowUp' : 'lock'} size={11} color={row.placement === 'steering' ? '#7EA2FF' : colors.textFaint} /></div>
               )}
 
               {editing?.id === row.id ? (
@@ -125,26 +131,26 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
               ) : (
                 <div {...(row.item ? { testId: `queue-edit:${row.id}` } : {})} style={{ minWidth: 0, flexGrow: 1, height: 30, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, cursor: row.item ? 'text' : 'default' }} {...(row.item && !dispatching ? { onClick: () => setEditing({ id: row.id, text: row.text }) } : {})}>
                   <text style={{ color: colors.text, fontSize: 11, lineHeight: 14, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.text || `${row.item?.images.length ?? 0} attached image${row.item?.images.length === 1 ? '' : 's'}`}</text>
-                  <text style={{ color: control ? colors.warning : row.placement === 'steering' ? '#7EA2FF' : row.placement === 'follow-up' ? colors.warning : colors.textFaint, fontSize: 8, fontWeight: 650 }}>{row.placement === 'queued' ? `${control ? 'CONTROL' : 'NEXT'}${row.item?.images.length ? ` · ${row.item.images.length} IMAGE${row.item.images.length === 1 ? '' : 'S'}` : ''}` : row.placement.toUpperCase()}</text>
+                  <text style={{ color: control ? colors.warning : row.placement === 'steering' ? '#7EA2FF' : row.placement === 'follow-up' ? colors.warning : colors.textFaint, fontSize: 8, fontWeight: 650 }}>{row.placement === 'queued' ? `${control ? 'CONTROL' : 'NEXT'}${row.item?.images.length ? ` · ${row.item.images.length} IMAGE${row.item.images.length === 1 ? '' : 'S'}` : ''}` : row.placement === 'steering' ? 'STEERED · NEXT' : row.placement.toUpperCase()}</text>
                 </div>
               )}
 
               {row.item && state.session.isStreaming && !control && (
-                <div testId={`queue-steer:${row.id}`} tabIndex={dispatching ? -1 : 0} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: dispatching ? 'default' : 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} {...(dispatching ? {} : { onClick: () => void controller.steerQueuedInput(row.id) })}>
+                <MotionDiv testId={`queue-steer:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: hoveredId === row.id ? 1 : 0, left: hoveredId === row.id ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: hoveredId === row.id && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(hoveredId === row.id && !dispatching ? { onClick: () => void controller.steerQueuedInput(row.id) } : {})}>
                   <Icon name="arrowUp" size={12} color="#7EA2FF" />
-                </div>
+                </MotionDiv>
               )}
               {row.item && (
-                <div testId={`queue-remove:${row.id}`} tabIndex={dispatching ? -1 : 0} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: dispatching ? 'default' : 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} {...(dispatching ? {} : { onClick: () => controller.removeQueuedInput(row.id) })}>
+                <MotionDiv testId={`queue-remove:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: hoveredId === row.id ? 1 : 0, left: hoveredId === row.id ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: hoveredId === row.id && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(hoveredId === row.id && !dispatching ? { onClick: () => controller.removeQueuedInput(row.id) } : {})}>
                   <Icon name="x" size={11} color={colors.textFaint} />
-                </div>
+                </MotionDiv>
               )}
             </div>
           )
         })}
       </div>
 
-      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: COMPOSER_OVERLAP, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
+      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
         <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{first.text || 'Image attachment'}</text>

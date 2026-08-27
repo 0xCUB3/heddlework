@@ -65,7 +65,7 @@ const ICONS: Record<IconName, string> = {
   lock: svg('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>'),
   gitBranch: svg('<circle cx="6" cy="5" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10m2-8c5 0 8-1 8-3"/>'),
   eye: svg('<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>'),
-  wrench: svg('<path d="M14.7 6.3a4 4 0 0 0-5-5l2.2 2.2-2.8 2.8-2.2-2.2a4 4 0 0 0 5 5L20 17.2a2 2 0 0 1-2.8 2.8l-8.1-8.1"/>'),
+  wrench: svg('<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 8l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 8-8Z"/>'),
   x: svg('<path d="m6 6 12 12M18 6 6 18"/>'),
   eraser: svg('<path d="m7 21-4-4a2.8 2.8 0 0 1 0-4L14 2a2.8 2.8 0 0 1 4 0l3 3a2.8 2.8 0 0 1 0 4L9 21Z"/><path d="m5 11 9 9M7 21h14"/>'),
   arrowUp: svg('<path d="M12 19V5m-6 6 6-6 6 6"/>'),

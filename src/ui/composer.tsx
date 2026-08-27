@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import type { ComposerImage, PiModel, ThinkingLevel } from '../pi/types.ts'
+import type { ComposerImage, PiModel, PiSessionStats, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { ExtensionDialog, ExtensionWidget, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
@@ -152,8 +152,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
           />
           <div style={{ flexGrow: 1 }} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-            {connected && !state.session.isStreaming && <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue'}</text>}
-            {typeof contextPercent === 'number' && <ContextMeter percent={contextPercent} />}
+            {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} />}
             <PrimaryAction
               running={state.session.isStreaming}
               disabled={!connected || (!state.session.isStreaming && !state.editorText.trim() && state.editorImages.length === 0)}
@@ -176,9 +175,56 @@ function ToolbarSeparator() {
   return <div style={{ width: 1, height: 16, backgroundColor: colors.borderStrong, marginLeft: 1, marginRight: 1 }} />
 }
 
-function ContextMeter({ percent }: { percent: number }) {
-  const rounded = Math.max(0, Math.min(100, Math.round(percent)))
-  return <div testId="context-meter" style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: rounded > 80 ? colors.warning : colors.borderStrong }} />
+function ContextMeter({ stats }: { stats: PiSessionStats }) {
+  const [hovered, setHovered] = useState(false)
+  const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
+  const rounded = Math.round(percent * 10) / 10
+  const tokens = stats.contextUsage?.tokens ?? 0
+  const contextWindow = stats.contextUsage?.contextWindow ?? 0
+  const tone = percent > 80 ? colors.warning : percent > 60 ? '#D8A95B' : colors.textMuted
+  return (
+    <div testId="context-meter" style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 8, borderRadius: 9, marginRight: 9, backgroundColor: hovered ? colors.hover : colors.transparent, cursor: 'default' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <text style={{ color: hovered ? colors.text : colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
+      <div style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
+      {hovered && (
+        <anchored side="top" align="end" gap={8} offset={{ x: 8, y: 0 }} fit="snap" snapMargin={8} deferred priority={12} occlude>
+        <div testId="context-popover" style={{ width: 256, display: 'flex', flexDirection: 'column', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
+              <text style={{ color: colors.text, fontSize: 13, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
+              <div style={{ flexGrow: 1 }} />
+              <text style={{ color: colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${formatTokenCount(tokens)} / ${formatTokenCount(contextWindow)}`}</text>
+            </div>
+            <div style={{ position: 'relative', width: '100%', height: 8, borderRadius: 4, backgroundColor: colors.hover, overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 226 * percent / 100, backgroundColor: percent > 80 ? colors.warning : colors.primary }} />
+            </div>
+          </div>
+          <div style={{ height: 1, backgroundColor: colors.borderStrong }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 14 }}>
+            <ContextStat label="Messages" value={String(stats.totalMessages ?? 0)} />
+            <ContextStat label="Tool calls" value={String(stats.toolCalls ?? 0)} />
+          </div>
+          <div style={{ height: 1, backgroundColor: colors.borderStrong }} />
+          <div style={{ display: 'flex', flexDirection: 'row', padding: 14, backgroundColor: colors.card }}>
+            <text style={{ color: colors.textMuted, fontSize: 11 }}>Total cost</text>
+            <div style={{ flexGrow: 1 }} />
+            <text style={{ color: colors.text, fontSize: 12, fontFamily: nativeTheme.fontMono }}>{`$${(stats.cost ?? 0).toFixed(2)}`}</text>
+          </div>
+        </div>
+        </anchored>
+      )}
+    </div>
+  )
+}
+
+function ContextStat({ label, value }: { label: string; value: string }) {
+  return <div style={{ display: 'flex', flexDirection: 'row' }}><text style={{ color: colors.textMuted, fontSize: 11 }}>{label}</text><div style={{ flexGrow: 1 }} /><text style={{ color: colors.text, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{value}</text></div>
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`
+  if (value >= 1_000) return `${Math.round(value / 100) / 10}K`
+  return String(value)
 }
 
 function ComposerContextShadow() {

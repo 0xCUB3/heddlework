@@ -81,6 +81,8 @@ export interface WorkbenchState {
   models: PiModel[]
   thinkingLevels: ThinkingLevel[]
   messages: PiMessage[]
+  messagesHasOlder: boolean
+  messagesLoadingEarlier: boolean
   forkMessages: PiForkMessage[]
   sessions: PiSessionSummary[]
   sessionsLoading: boolean
@@ -112,6 +114,8 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     models: [],
     thinkingLevels: ['off'],
     messages: [],
+    messagesHasOlder: false,
+    messagesLoadingEarlier: false,
     forkMessages: [],
     sessions: [],
     sessionsLoading: false,

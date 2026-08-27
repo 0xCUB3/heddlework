@@ -9,6 +9,7 @@ export type TimelineItem =
   | ({ id: string; kind: 'user'; text: string; images: PiImageContent[]; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'assistant'; text: string; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'thinking'; text: string; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
+  | ({ id: string; kind: 'context-injection'; text: string; source?: string | undefined; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'tool'; tool: ToolRun; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'status'; text: string; tone?: 'normal' | 'error'; timestamp?: number | undefined } & RevertibleItem)
 
@@ -17,18 +18,28 @@ export function buildTimeline(
   liveAssistant: LiveAssistant | undefined,
   liveTools: ToolRun[],
   forkMessages: PiForkMessage[] = [],
+  messageIndexOffset = 0,
 ): TimelineItem[] {
   const items: TimelineItem[] = []
   const toolIndexes = new Map<string, number>()
   let userMessageIndex = 0
   let revertEntryId: string | undefined
+  const forkMessagesByEntryId = new Map(forkMessages.map((message) => [message.entryId, message]))
 
-  messages.forEach((message, messageIndex) => {
+  messages.forEach((message, localMessageIndex) => {
     if (message.role === 'custom' && message.display !== true) return
-    const base = `${message.timestamp ?? messageIndex}-${messageIndex}`
+    const messageIndex = messageIndexOffset + localMessageIndex
+    const entryId = typeof message.workbenchEntryId === 'string' ? message.workbenchEntryId : undefined
+    const base = entryId ? `entry-${entryId}` : `${message.timestamp ?? messageIndex}-${messageIndex}`
+    if (message.role === 'custom') {
+      const text = messageText(message)
+      if (text) items.push({ id: `${base}-context`, kind: 'context-injection', text, ...(message.customType ? { source: message.customType } : {}), timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
+      return
+    }
     if (message.role === 'user') {
-      const forkMessage = forkMessages[userMessageIndex++]
-      if (forkMessage) revertEntryId = forkMessage.entryId
+      const positionalForkMessage = forkMessages[userMessageIndex++]
+      const forkMessage = entryId ? forkMessagesByEntryId.get(entryId) : positionalForkMessage
+      revertEntryId = forkMessage?.entryId ?? entryId
       items.push({
         id: `${base}-user`,
         kind: 'user',

@@ -103,6 +103,7 @@ describe('owned workbench queue', () => {
       const steer = transport.commands.filter((command) => command.type === 'prompt').at(-1)!
       expect(steer).toMatchObject({ type: 'prompt', message: '/skill:review edited before expansion', streamingBehavior: 'steer' })
       expect(controller.getSnapshot().queue.items.some((item) => item.id === slash.id)).toBe(false)
+      expect(controller.getSnapshot().queue.steering[0]).toBe('/skill:review edited before expansion')
 
       await controller.abort()
       await Bun.sleep(0)

@@ -59,7 +59,22 @@ describe('buildTimeline', () => {
       { role: 'custom', customType: 'visible-status', content: 'Visible extension context', display: true, timestamp: 2 },
     ], undefined, [])
     expect(items).toHaveLength(1)
-    expect(items[0]).toMatchObject({ kind: 'status', text: 'Visible extension context' })
+    expect(items[0]).toMatchObject({ kind: 'context-injection', source: 'visible-status', text: 'Visible extension context' })
+  })
+
+  it('matches persisted suffix turns by entry ID instead of catalog position', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', workbenchEntryId: 'tail-user', content: 'Tail prompt', timestamp: 10 },
+      { role: 'assistant', workbenchEntryId: 'tail-assistant', content: [{ type: 'thinking', thinking: 'Tail reasoning' }], timestamp: 11 },
+    ]
+    const items = buildTimeline(messages, undefined, [], [
+      { entryId: 'older-user', text: 'Older prompt' },
+      { entryId: 'tail-user', text: 'Tail prompt' },
+    ])
+
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ kind: 'user', revertEntryId: 'tail-user' })
+    expect(items[1]).toMatchObject({ kind: 'thinking', revertEntryId: 'tail-user' })
   })
 
   it('attaches image blocks and the nearest forkable prompt to every turn row', () => {

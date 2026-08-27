@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_MESSAGES, type SessionHistoryPage } from '../pi/session-history.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
 import {
   errorMessage,
@@ -48,6 +49,7 @@ export class WorkbenchController {
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
   #sessionTransitionDepth = 0
+  #historyPager: PiSessionHistoryPager | undefined
   #nextQueueId = 0
   #queueDispatch: Promise<void> | undefined
   #unsubscribeEvent: () => void
@@ -74,6 +76,27 @@ export class WorkbenchController {
   }
 
   readonly getSnapshot = (): WorkbenchState => this.#state
+
+  readonly loadEarlierMessages = async (): Promise<void> => {
+    const pager = this.#historyPager
+    if (!pager || !this.#state.messagesHasOlder || this.#state.messagesLoadingEarlier) return
+    this.#patch({ messagesLoadingEarlier: true })
+    try {
+      const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES)
+      if (pager !== this.#historyPager) return
+      const known = new Set(this.#state.messages.flatMap((message) => messageEntryId(message) ? [messageEntryId(message)!] : []))
+      const older = page.messages.filter((message) => !known.has(messageEntryId(message) ?? ''))
+      this.#patch({
+        messages: [...older, ...this.#state.messages],
+        messagesHasOlder: page.hasOlder,
+        messagesLoadingEarlier: false,
+      })
+    } catch (error) {
+      if (pager !== this.#historyPager) return
+      this.#patch({ messagesHasOlder: false, messagesLoadingEarlier: false })
+      this.#setState((state) => addNotice(state, 'warning', `Could not load earlier transcript: ${errorMessage(error)}`))
+    }
+  }
 
   readonly acceptAgentEvent = (event: RpcRecord): void => this.#handleEvent(event)
   readonly acceptAgentStatus = (status: TransportStatus): void => this.#handleStatus(status)
@@ -181,6 +204,7 @@ export class WorkbenchController {
         queue: {
           ...this.#state.queue,
           items: this.#state.queue.items.filter((candidate) => candidate.id !== id),
+          steering: [item.text || 'Image attachment', ...this.#state.queue.steering.filter((text) => text !== item.text)],
           dispatchingId: undefined,
         },
       })
@@ -211,7 +235,8 @@ export class WorkbenchController {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
       if (this.#state.dialog) this.respondToDialog({ cancelled: true })
-      this.#patch({ messages: [], forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [], notices: [], dialog: undefined, queue: createQueueState() })
+      this.#historyPager = undefined
+      this.#patch({ messages: [], messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [], notices: [], dialog: undefined, queue: createQueueState() })
       await this.#bootstrap(false)
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
@@ -237,9 +262,12 @@ export class WorkbenchController {
       }
       const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
       if (this.#state.dialog) this.respondToDialog({ cancelled: true })
+      this.#historyPager = undefined
       this.#patch({
         workspacePath,
         messages: [],
+        messagesHasOlder: false,
+        messagesLoadingEarlier: false,
         forkMessages: [],
         liveAssistant: undefined,
         liveTools: [],
@@ -540,8 +568,11 @@ export class WorkbenchController {
         const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
         if (result.cancelled) return false
         if (this.#state.dialog) this.respondToDialog({ cancelled: true })
+        this.#historyPager = undefined
         this.#patch({
           messages: [],
+          messagesHasOlder: false,
+          messagesLoadingEarlier: false,
           forkMessages: [],
           liveAssistant: undefined,
           liveTools: [],
@@ -613,7 +644,7 @@ export class WorkbenchController {
       activity: session.isStreaming ? 'Working' : 'Ready',
     })
     const tasks = await Promise.allSettled([
-      this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' }),
+      this.#loadInitialTranscript(session),
       includeModels
         ? this.#transport.request<{ models: PiModel[] }>({ type: 'get_available_models' })
         : Promise.resolve({ models: this.#state.models }),
@@ -622,8 +653,11 @@ export class WorkbenchController {
       this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
     ])
     const [messagesResult, modelsResult, levelsResult, statsResult, forkMessagesResult] = tasks
+    if (messagesResult.status === 'fulfilled') this.#historyPager = messagesResult.value.pager
     this.#patch({
-      messages: messagesResult.status === 'fulfilled' ? messagesResult.value.messages : this.#state.messages,
+      messages: messagesResult.status === 'fulfilled' ? messagesResult.value.page.messages : this.#state.messages,
+      messagesHasOlder: messagesResult.status === 'fulfilled' ? messagesResult.value.page.hasOlder : false,
+      messagesLoadingEarlier: false,
       forkMessages: forkMessagesResult.status === 'fulfilled' ? forkMessagesFrom(forkMessagesResult.value) : this.#state.forkMessages,
       models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
       thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
@@ -633,6 +667,20 @@ export class WorkbenchController {
     if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
   }
 
+  async #loadInitialTranscript(session: PiSessionState): Promise<{ page: SessionHistoryPage; pager: PiSessionHistoryPager | undefined }> {
+    if (session.sessionFile) {
+      const pager = new PiSessionHistoryPager(session.sessionFile)
+      try {
+        const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES)
+        return { page, pager }
+      } catch {
+        // Fall through to RPC for unsaved, unavailable, or legacy sessions.
+      }
+    }
+    const result = await this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
+    return { page: { messages: result.messages, hasOlder: false }, pager: undefined }
+  }
+
   async #getThinkingLevels(): Promise<ThinkingLevel[]> {
     const data = await this.#transport.request<{ levels: ThinkingLevel[] }>({ type: 'get_available_thinking_levels' })
     return data.levels
@@ -640,11 +688,28 @@ export class WorkbenchController {
 
   async #refreshMessages(): Promise<void> {
     try {
+      const sessionFile = this.#state.session.sessionFile
+      const forkMessagesPromise = this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' })
+      if (sessionFile) {
+        const latestPager = new PiSessionHistoryPager(sessionFile)
+        const [page, forkMessages] = await Promise.all([latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES), forkMessagesPromise])
+        const retainedPager = this.#historyPager
+        if (!retainedPager) this.#historyPager = latestPager
+        this.#patch({
+          messages: mergeTranscriptTail(this.#state.messages, page.messages),
+          messagesHasOlder: retainedPager ? this.#state.messagesHasOlder : page.hasOlder,
+          messagesLoadingEarlier: false,
+          forkMessages: forkMessagesFrom(forkMessages),
+          liveAssistant: undefined,
+          liveTools: [],
+        })
+        return
+      }
       const [messages, forkMessages] = await Promise.all([
         this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' }),
-        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
+        forkMessagesPromise,
       ])
-      this.#patch({ messages: messages.messages, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
+      this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
     } catch (error) {
       this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
     }
@@ -774,6 +839,25 @@ export class WorkbenchController {
     this.#state = next
     for (const listener of this.#listeners) listener()
   }
+}
+
+function messageEntryId(message: PiMessage): string | undefined {
+  return typeof message.workbenchEntryId === 'string' ? message.workbenchEntryId : undefined
+}
+
+function mergeTranscriptTail(current: PiMessage[], latest: PiMessage[]): PiMessage[] {
+  if (latest.length === 0) return current
+  const latestIds = new Set(latest.flatMap((message) => messageEntryId(message) ? [messageEntryId(message)!] : []))
+  const overlap = current.findIndex((message) => latestIds.has(messageEntryId(message) ?? ''))
+  const prefix = overlap >= 0 ? current.slice(0, overlap) : current.filter((message) => messageEntryId(message) !== undefined)
+  const seen = new Set<string>()
+  return [...prefix, ...latest].filter((message) => {
+    const id = messageEntryId(message)
+    if (!id) return true
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
 }
 
 function agentEndOutcome(event: RpcRecord): 'healthy' | 'failed' | 'unknown' {
