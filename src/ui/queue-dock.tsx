@@ -6,8 +6,10 @@ import { Icon } from './icons.tsx'
 import { useSpringProgress } from './motion.ts'
 import { colors, nativeTheme } from './theme.ts'
 
-const HEADER_HEIGHT = 36
-const COLLAPSED_HEIGHT = 44
+const HEADER_HEIGHT = 40
+const COLLAPSED_HEIGHT = 40
+const COMPOSER_OVERLAP = 7
+const DOCK_INSET = 22
 const ROW_HEIGHT = 44
 const MAX_LIST_HEIGHT = 264
 
@@ -24,7 +26,7 @@ interface QueueRowView {
 }
 
 export function queueDockReserveHeight(queue: WorkbenchQueueState): number {
-  return queueSize(queue) > 0 ? COLLAPSED_HEIGHT + 6 : 0
+  return queueSize(queue) > 0 ? COLLAPSED_HEIGHT - COMPOSER_OVERLAP : 0
 }
 
 export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
@@ -62,27 +64,21 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
   }
 
   return (
-    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 7, overflow: 'hidden', userSelect: 'none' }}>
-      <div style={{ position: 'absolute', left: 8, right: 8, bottom: 8, height: HEADER_HEIGHT, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, opacity: (1 - openProgress) * 0.36 }} />
-      <div style={{ position: 'absolute', left: 4, right: 4, bottom: 4, height: HEADER_HEIGHT, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised, opacity: (1 - openProgress) * 0.68 }} />
+    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: -COMPOSER_OVERLAP, overflow: 'hidden', userSelect: 'none' }}>
+      <div testId="queue-panel" style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, top: 0, bottom: 0, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderWidth: 1, borderColor: colors.composerOutline, backgroundColor: colors.contextBar }} />
 
       <div
         testId="queue-scroll"
         style={{
           position: 'absolute',
-          left: 0,
-          right: 0,
+          left: DOCK_INSET,
+          right: DOCK_INSET,
           bottom: COLLAPSED_HEIGHT,
           height: listHeight,
           display: 'flex',
           flexDirection: 'column',
           paddingTop: 4,
           paddingBottom: 4,
-          borderTopLeftRadius: 12,
-          borderTopRightRadius: 12,
-          borderWidth: 1,
-          borderColor: colors.borderStrong,
-          backgroundColor: colors.popover,
           overflow: 'scroll',
           opacity: openProgress,
         }}
@@ -148,7 +144,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         })}
       </div>
 
-      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 11, paddingRight: 9, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
+      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
         <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{first.text || 'Image attachment'}</text>

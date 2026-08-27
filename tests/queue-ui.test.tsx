@@ -72,10 +72,16 @@ describeNative('queue dock', () => {
 
     try {
       expect(queueDockReserveHeight(createQueueState())).toBe(0)
-      expect(queueDockReserveHeight(controller.getSnapshot().queue)).toBe(50)
+      expect(queueDockReserveHeight(controller.getSnapshot().queue)).toBe(33)
       expect(root.renderer.getPaintedText()).toContain('20 queued')
       const collapsed = await automation.getByTestId('queue-dock').bounds()
-      expect(collapsed.height).toBeLessThanOrEqual(45)
+      const collapsedHeader = await automation.getByTestId('queue-header').bounds()
+      const collapsedPanel = await automation.getByTestId('queue-panel').bounds()
+      expect(collapsed.height).toBeLessThanOrEqual(41)
+      expect(collapsedHeader.width).toBe(collapsed.width - 44)
+      expect(collapsedPanel.x - collapsed.x).toBeGreaterThanOrEqual(22)
+      expect(collapsedPanel.x - collapsed.x).toBeLessThanOrEqual(23)
+      expect(collapsedPanel.width + 2).toBe(collapsedHeader.width)
       const anchoredBottom = collapsed.y + collapsed.height
 
       await automation.getByTestId('queue-header').click()
@@ -83,13 +89,13 @@ describeNative('queue dock', () => {
       root.renderer.flush()
       const opening = await automation.getByTestId('queue-dock').bounds()
       expect(opening.height).toBeGreaterThan(collapsed.height)
-      expect(opening.height).toBeLessThan(309)
+      expect(opening.height).toBeLessThan(305)
       expect(Math.abs(opening.y + opening.height - anchoredBottom)).toBeLessThanOrEqual(1)
 
       await Bun.sleep(SPRING_SETTLE_MS)
       root.renderer.flush()
       const expanded = await automation.getByTestId('queue-dock').bounds()
-      expect(expanded.height).toBeGreaterThanOrEqual(307)
+      expect(expanded.height).toBeGreaterThanOrEqual(303)
       expect(Math.abs(expanded.y + expanded.height - anchoredBottom)).toBeLessThanOrEqual(1)
       const scroll = (await automation.getByTestId('queue-scroll').all())[0]!
       expect(root.renderer.getScrollOffset(scroll.id)).not.toBeNull()
@@ -128,7 +134,7 @@ describeNative('queue dock', () => {
       expect(closing.height).toBeLessThan(expanded.height)
       await Bun.sleep(SPRING_SETTLE_MS)
       root.renderer.flush()
-      expect((await automation.getByTestId('queue-dock').bounds()).height).toBeLessThanOrEqual(45)
+      expect((await automation.getByTestId('queue-dock').bounds()).height).toBeLessThanOrEqual(41)
     } finally {
       await automation.close()
       root.unmount()
