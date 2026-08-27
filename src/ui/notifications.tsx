@@ -1,47 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { useGpuixRequired } from '@gpuix/react'
+import React from 'react'
 import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { NativeVirtualList } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 
-export const NOTIFICATION_STACK_FADE_MS = 2_200
-export const NOTIFICATION_DISMISS_MS = 180
-export const NOTIFICATION_TOAST_DURATION_MS = NOTIFICATION_STACK_FADE_MS
+export function composerNotificationStackHeight(noticeCount: number): number {
+  const visibleCount = Math.min(3, Math.max(0, noticeCount))
+  return visibleCount === 0 ? 0 : 48 + (visibleCount - 1) * 18
+}
 
-export function ComposerNotificationStack({ notices }: { notices: Notice[] }) {
-  const [visibleIds, setVisibleIds] = useState<number[]>([])
-  const [dismissedIds, setDismissedIds] = useState<Set<number>>(() => new Set())
-  const [dismissal, setDismissal] = useState<{ id: number; progress: number } | null>(null)
-  const latest = notices.at(-1)
-
-  useEffect(() => {
-    if (!latest || dismissedIds.has(latest.id)) return
-    setVisibleIds((current) => [...current.filter((id) => id !== latest.id && !dismissedIds.has(id)), latest.id].slice(-3))
-    const timer = setTimeout(() => setVisibleIds((current) => current.includes(latest.id) ? [latest.id] : current), NOTIFICATION_STACK_FADE_MS)
-    return () => clearTimeout(timer)
-  }, [dismissedIds, latest])
-
-  useEffect(() => {
-    if (!dismissal) return
-    const startedAt = Date.now() - dismissal.progress * NOTIFICATION_DISMISS_MS
-    const timer = setInterval(() => {
-      const progress = Math.min(1, (Date.now() - startedAt) / NOTIFICATION_DISMISS_MS)
-      if (progress < 1) {
-        setDismissal((current) => current?.id === dismissal.id ? { id: dismissal.id, progress } : current)
-        return
-      }
-      clearInterval(timer)
-      setVisibleIds((current) => current.filter((id) => id !== dismissal.id))
-      setDismissedIds((current) => new Set(current).add(dismissal.id))
-      setDismissal(null)
-    }, 16)
-    return () => clearInterval(timer)
-  }, [dismissal?.id])
-
-  const visible = visibleIds
-    .map((id) => notices.find((notice) => notice.id === id))
-    .filter((notice): notice is Notice => Boolean(notice))
+export function ComposerNotificationStack({ notices, onClear }: { notices: Notice[]; onClear(): void }) {
+  const visible = notices.slice(-3)
   if (visible.length === 0) return null
 
   return (
@@ -56,8 +25,7 @@ export function ComposerNotificationStack({ notices }: { notices: Notice[] }) {
             newest={newest}
             depth={depth}
             stacked={index > 0}
-            dismissProgress={dismissal?.id === notice.id ? dismissal.progress : 0}
-            onDismiss={() => setDismissal((current) => current ?? { id: notice.id, progress: 0 })}
+            onClear={onClear}
           />
         )
       })}
@@ -65,31 +33,29 @@ export function ComposerNotificationStack({ notices }: { notices: Notice[] }) {
   )
 }
 
-function NotificationCard({ notice, newest, depth, stacked, dismissProgress, onDismiss }: { notice: Notice; newest: boolean; depth: number; stacked: boolean; dismissProgress: number; onDismiss(): void }) {
+function NotificationCard({ notice, newest, depth, stacked, onClear }: { notice: Notice; newest: boolean; depth: number; stacked: boolean; onClear(): void }) {
   const tone = noticeColor(notice.kind)
-  const easedDismiss = 1 - (1 - dismissProgress) ** 3
-  const remaining = 1 - easedDismiss
   const baseOpacity = newest ? 1 : depth === 1 ? 0.55 : 0.28
   return (
     <div
       testId={newest ? 'notification-toast' : 'notification-stack-item'}
       style={{
-        height: 40 * remaining,
-        minHeight: 40 * remaining,
+        height: 40,
+        minHeight: 40,
         display: 'flex',
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
-        marginTop: stacked ? -22 * remaining : 0,
-        paddingTop: 8 * remaining,
+        marginTop: stacked ? -22 : 0,
+        paddingTop: 8,
         paddingRight: 12,
-        paddingBottom: 8 * remaining,
+        paddingBottom: 8,
         paddingLeft: 12,
         borderRadius: 11,
         borderWidth: 1,
         borderColor: colors.borderStrong,
         backgroundColor: colors.popover,
-        opacity: baseOpacity * remaining,
+        opacity: baseOpacity,
         overflow: 'hidden',
         selectionColor: '#4F67D866',
       }}
@@ -100,15 +66,16 @@ function NotificationCard({ notice, newest, depth, stacked, dismissProgress, onD
       <AutoScrollingNoticeText message={notice.message} {...(newest ? { testId: 'notification-toast-message', scrollTestId: 'notification-toast-scroll' } : {})} />
       <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontSans, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatDate(notice.createdAt)}</text>
       {newest && (
-        <div testId="dismiss-toast" tabIndex={0} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} onClick={onDismiss}>
-          <Icon name="x" size={12} color={colors.textFaint} />
+        <div testId="clear-notifications" tabIndex={0} style={{ height: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: 6, paddingRight: 6, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} onClick={onClear}>
+          <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', pointerEvents: 'none' }}>Clear all</text>
+          <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name="x" size={10} color={colors.textFaint} /></div>
         </div>
       )}
     </div>
   )
 }
 
-export function NotificationLedgerView({ state, panelWidth = 422 }: { state: WorkbenchState; panelWidth?: number }) {
+export function NotificationLedgerView({ state, panelWidth = 422, onClear }: { state: WorkbenchState; panelWidth?: number; onClear(): void }) {
   const notices = [...state.notices].reverse()
   return (
     <div testId="notification-panel" style={{ width: panelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
@@ -117,6 +84,11 @@ export function NotificationLedgerView({ state, panelWidth = 422 }: { state: Wor
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Notifications</text>
         <div style={{ flexGrow: 1 }} />
         <text style={{ color: colors.textFaint, fontSize: 10 }}>{`${notices.length} saved`}</text>
+        {notices.length > 0 && (
+          <div testId="clear-notification-ledger" tabIndex={0} style={{ height: 26, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 7, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onClear}>
+            <text style={{ color: colors.textMuted, fontSize: 10, pointerEvents: 'none' }}>Clear all</text>
+          </div>
+        )}
       </div>
       <NativeVirtualList testId="notification-list" alignment="top" estimatedItemHeight={52} overdraw={300} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {notices.length === 0 ? (
@@ -145,61 +117,9 @@ function LedgerRow({ notice }: { notice: Notice }) {
 }
 
 function AutoScrollingNoticeText({ message, testId, scrollTestId }: { message: string; testId?: string; scrollTestId?: string }) {
-  const renderer = useGpuixRequired()
-  const viewportIdRef = useRef<number | undefined>(undefined)
-
-  useEffect(() => {
-    const elementId = viewportIdRef.current
-    const scrollTo = renderer.scrollTo?.bind(renderer)
-    const getScrollOffset = renderer.getScrollOffset?.bind(renderer)
-    if (elementId === undefined || !scrollTo) return
-
-    let interval: ReturnType<typeof setInterval> | undefined
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let cancelled = false
-    const stopInterval = () => {
-      if (interval) clearInterval(interval)
-      interval = undefined
-    }
-    const startScrolling = () => {
-      let requestedOffset = 0
-      let lastOffset = 0
-      let unchangedFrames = 0
-      let steps = 0
-      let moved = false
-      interval = setInterval(() => {
-        requestedOffset -= 2
-        scrollTo(elementId, requestedOffset, 0)
-        const actualOffset = getScrollOffset?.(elementId)?.[0]
-        if (actualOffset !== undefined) {
-          if (actualOffset < -0.5) moved = true
-          unchangedFrames = Math.abs(actualOffset - lastOffset) < 0.01 ? unchangedFrames + 1 : 0
-          lastOffset = actualOffset
-        }
-        steps += 1
-        if ((steps >= 12 && unchangedFrames >= 4) || steps >= 2_000) {
-          stopInterval()
-          if (!moved || cancelled) return
-          timer = setTimeout(() => {
-            scrollTo(elementId, 0, 0)
-            timer = setTimeout(startScrolling, 1_800)
-          }, 1_400)
-        }
-      }, 20)
-    }
-
-    scrollTo(elementId, 0, 0)
-    timer = setTimeout(startScrolling, 700)
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-      stopInterval()
-    }
-  }, [message, renderer])
-
   return (
-    <div ref={(element) => { viewportIdRef.current = element?.id }} {...(scrollTestId ? { testId: scrollTestId } : {})} style={{ minWidth: 0, height: 18, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', overflowX: 'scroll', overflowY: 'hidden' }}>
-      <text {...(testId ? { testId } : {})} style={{ color: colors.textMuted, fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0, fontFamily: nativeTheme.fontSans }}>{message}</text>
+    <div {...(scrollTestId ? { testId: scrollTestId } : {})} style={{ minWidth: 0, height: 18, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', overflow: 'hidden' }}>
+      <text {...(testId ? { testId } : {})} style={{ minWidth: 0, color: colors.textMuted, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontSans }}>{message}</text>
     </div>
   )
 }

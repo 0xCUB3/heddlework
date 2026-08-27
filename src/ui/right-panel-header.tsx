@@ -7,6 +7,7 @@ export function RightPanelHeader({
   icon,
   title,
   fullscreen,
+  fullscreenProgress,
   refreshDisabled = false,
   onNew,
   onRefresh,
@@ -16,15 +17,18 @@ export function RightPanelHeader({
   icon: IconName
   title: string
   fullscreen: boolean
+  fullscreenProgress?: number | undefined
   refreshDisabled?: boolean
   onNew?(): void
   onRefresh?(): void
   onToggleFullscreen(): void
   onClose(): void
 }) {
+  const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
+  const trafficLightInset = process.platform === 'darwin' ? 96 * titlebarProgress : 0
   return (
-    <div testId="right-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 9, paddingRight: 9 }}>
-      <div style={{ height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 9, paddingRight: 9, borderRadius: 8, backgroundColor: colors.raised }}>
+    <div testId="right-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 9 + trafficLightInset, paddingRight: 9 }}>
+      <div testId="right-panel-tab" style={{ height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 9, paddingRight: 9, borderRadius: 8, backgroundColor: colors.raised }}>
         <Icon name={icon} size={13} color={colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 11, fontWeight: 600 }}>{title}</text>
       </div>

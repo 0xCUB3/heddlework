@@ -8,7 +8,8 @@ import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
-import { ComposerNotificationStack, NOTIFICATION_DISMISS_MS, NOTIFICATION_STACK_FADE_MS } from '../src/ui/notifications.tsx'
+import { createInitialState } from '../src/workbench/state.ts'
+import { ComposerNotificationStack, NotificationLedgerView, composerNotificationStackHeight } from '../src/ui/notifications.tsx'
 
 const controllers: WorkbenchController[] = []
 afterEach(async () => {
@@ -55,23 +56,19 @@ describeNative('notification surfaces', () => {
     expect(await automation.getByTestId('notification-stack-item').count()).toBe(1)
     expect(await automation.getByTestId('notification-toast').count()).toBe(1)
 
-    await Bun.sleep(NOTIFICATION_STACK_FADE_MS + 150)
+    await Bun.sleep(2_350)
     root.renderer.flush()
-    expect(await automation.getByTestId('notification-stack-item').count()).toBe(0)
+    expect(await automation.getByTestId('notification-stack-item').count()).toBe(1)
     expect(await automation.getByTestId('notification-toast').count()).toBe(1)
     expect(controller.getSnapshot().notices).toHaveLength(2)
 
-    await automation.getByTestId('dismiss-toast').click()
-    expect(await automation.getByTestId('notification-toast').count()).toBe(1)
-    await Bun.sleep(NOTIFICATION_DISMISS_MS + 60)
-    root.renderer.flush()
-    expect(await automation.getByTestId('notification-toast').count()).toBe(0)
     await automation.getByTestId('sidebar-notifications').click()
     expect(await automation.getByTestId('notification-panel').count()).toBe(1)
     expect((await automation.getByTestId('notification-panel').bounds()).width).toBe(420)
     expect(root.renderer.getPaintedText()).toContain('Notifications')
     expect(root.renderer.getPaintedText()).toContain('Thread moved to Settled')
-    expect(root.renderer.getPaintedText()).not.toContain('Clear all')
+    expect(root.renderer.getPaintedText()).toContain('Clear all')
+    expect(await automation.getByTestId('clear-notification-ledger').count()).toBe(1)
     expect(await automation.getByTestId('close-notifications').count()).toBe(0)
     const panelBounds = await automation.getByTestId('notification-panel').bounds()
     const rowBounds = (await automation.getByTestId('notification-ledger-row').all())[0]!.bounds!
@@ -86,73 +83,87 @@ describeNative('notification surfaces', () => {
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
 
+    controller.clearNotices()
+    await Bun.sleep(25)
+    root.renderer.flush()
+    expect(controller.getSnapshot().notices).toHaveLength(0)
+    expect(root.renderer.getPaintedText()).toContain('No notifications yet')
+
+    await automation.getByTestId('sidebar-notifications').click()
+    controller.settleThread('fixture-thread-three')
+    await Bun.sleep(25)
+    root.renderer.flush()
+    await automation.getByTestId('clear-notifications').click()
+    await Bun.sleep(25)
+    root.renderer.flush()
+    expect(controller.getSnapshot().notices).toHaveLength(0)
+    expect(await automation.getByTestId('notification-toast').count()).toBe(0)
+
     await automation.close()
     root.unmount()
   }, 10_000)
 
-  it('tightly overlaps cards and fades the newest out while pulling its predecessor forward', async () => {
+  it('dispatches the ledger clear-all control', async () => {
     const root = createTestRoot()
-    const first = { id: 1, kind: 'info' as const, message: 'First notification', createdAt: Date.now() }
-    const second = { id: 2, kind: 'warning' as const, message: 'Second notification', createdAt: Date.now() + 1 }
-    root.render(<ComposerNotificationStack notices={[first]} />)
-    await Bun.sleep(25)
-    root.renderer.flush()
-    root.render(<ComposerNotificationStack notices={[first, second]} />)
-    await Bun.sleep(25)
-    root.renderer.flush()
+    let clears = 0
+    const state = { ...createInitialState('/tmp/notices'), notices: [{ id: 1, kind: 'info' as const, message: 'Saved notice', createdAt: 1 }] }
+    root.render(<NotificationLedgerView state={state} onClear={() => { clears += 1 }} />)
+    const automation = await connectTest(root.renderer)
+    await automation.getByTestId('clear-notification-ledger').click()
+    expect(clears).toBe(1)
+    await automation.close()
+    root.unmount()
+  })
+
+  it('keeps a compact persistent stack of the latest three notices', async () => {
+    const root = createTestRoot()
+    let clears = 0
+    const notices = Array.from({ length: 4 }, (_, index) => ({
+      id: index + 1,
+      kind: (index % 2 === 0 ? 'info' : 'warning') as 'info' | 'warning',
+      message: `Notification ${index + 1}`,
+      createdAt: Date.now() + index,
+    }))
+    root.render(<ComposerNotificationStack notices={notices} onClear={() => { clears += 1 }} />)
     const automation = await connectTest(root.renderer)
 
-    const olderBounds = await automation.getByTestId('notification-stack-item').bounds()
-    const newestBounds = await automation.getByTestId('notification-toast').bounds()
-    expect(newestBounds.y - olderBounds.y).toBeLessThanOrEqual(20)
-    expect(newestBounds.y).toBeGreaterThan(olderBounds.y)
-
-    await automation.getByTestId('dismiss-toast').click()
-    await Bun.sleep(70)
-    root.renderer.flush()
-    const fading = (await automation.getByTestId('notification-toast').all())[0]!
-    expect(fading.style?.opacity as number).toBeGreaterThan(0)
-    expect(fading.style?.opacity as number).toBeLessThan(1)
-    expect(fading.bounds!.height).toBeLessThan(40)
-
-    await Bun.sleep(NOTIFICATION_DISMISS_MS + 60)
-    root.renderer.flush()
-    expect(await automation.getByTestId('notification-stack-item').count()).toBe(0)
+    expect(await automation.getByTestId('notification-stack-item').count()).toBe(2)
     expect(await automation.getByTestId('notification-toast').count()).toBe(1)
-    expect(root.renderer.getPaintedText()).toContain('First notification')
-    expect(root.renderer.getPaintedText()).not.toContain('Second notification')
+    expect(root.renderer.getPaintedText()).not.toContain('Notification 1')
+    expect(root.renderer.getPaintedText()).toContain('Notification 2')
+    const cards = await automation.getByTestId('notification-stack-item').all()
+    const newestBounds = await automation.getByTestId('notification-toast').bounds()
+    expect(newestBounds.y - cards[0]!.bounds!.y).toBeLessThan(40)
+    expect(composerNotificationStackHeight(4)).toBe(84)
+
+    await Bun.sleep(2_500)
+    root.renderer.flush()
+    expect(await automation.getByTestId('notification-stack-item').count()).toBe(2)
+    await automation.getByTestId('clear-notifications').click()
+    expect(clears).toBe(1)
 
     await automation.close()
     root.unmount()
   })
 
-  it('smoothly reveals the hidden end of an overflowing notice', async () => {
+  it('clips overflowing notices without background scroll timers', async () => {
     const root = createTestRoot()
-    const message = 'This overflowing notification smoothly reveals its hidden ending, then starts over.'
+    const message = 'This overflowing notification remains compact without continuously mutating native scroll state.'
     root.render(
       <div style={{ width: 300 }}>
-        <ComposerNotificationStack notices={[{ id: 1, kind: 'info', message, createdAt: Date.now() }]} />
+        <ComposerNotificationStack notices={[{ id: 1, kind: 'info', message, createdAt: Date.now() }]} onClear={() => {}} />
       </div>,
     )
     const automation = await connectTest(root.renderer)
-    await Bun.sleep(50)
-    root.renderer.flush()
-
-    const scrollNode = (await automation.getByTestId('notification-toast-scroll').all())[0]!
-    expect(root.renderer.getScrollOffset(scrollNode.id)?.[0]).toBe(0)
+    const text = (await automation.getByTestId('notification-toast-message').all())[0]!
+    expect(text.style?.textOverflow).toBe('ellipsis')
     await Bun.sleep(1_100)
     root.renderer.flush()
-    expect(root.renderer.getScrollOffset(scrollNode.id)?.[0] ?? 0).toBeLessThan(-5)
+    const viewport = (await automation.getByTestId('notification-toast-scroll').all())[0]!
+    expect(root.renderer.getScrollOffset(viewport.id)).toBeNull()
     expect(await automation.getByText(message).count()).toBe(1)
-
-    const resetDeadline = Date.now() + 8_000
-    while ((root.renderer.getScrollOffset(scrollNode.id)?.[0] ?? 0) !== 0 && Date.now() < resetDeadline) {
-      await Bun.sleep(80)
-      root.renderer.flush()
-    }
-    expect(root.renderer.getScrollOffset(scrollNode.id)?.[0]).toBe(0)
 
     await automation.close()
     root.unmount()
-  }, 12_000)
+  })
 })

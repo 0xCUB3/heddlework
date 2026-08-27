@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { ChatHeader } from './chat-header.tsx'
@@ -12,12 +12,12 @@ import { Transcript } from './transcript.tsx'
 import type { ToolPresenter } from './tool-presenters.ts'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
+import { SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
 
 type Surface = 'chat' | 'settings'
 type DeferredSurface = Exclude<SurfaceKind, 'diff'>
 type RightPanel = 'diff' | 'notifications' | 'surfaces' | DeferredSurface
 
-export const PANEL_TRANSITION_MS = 200
 const LEFT_SIDEBAR_WIDTH = 256
 
 export function WorkbenchApp({
@@ -31,11 +31,12 @@ export function WorkbenchApp({
   const renderer = useGpuixRequired()
   const [surface, setSurface] = useState<Surface>('chat')
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true)
-  const leftSidebarProgress = useAnimatedProgress(leftSidebarOpen)
+  const leftSidebarProgress = useSpringProgress(leftSidebarOpen)
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
   const [displayedRightPanel, setDisplayedRightPanel] = useState<RightPanel | undefined>()
-  const rightPanelProgress = useAnimatedProgress(Boolean(rightPanel))
+  const rightPanelProgress = useSpringProgress(Boolean(rightPanel))
   const [panelFullscreen, setPanelFullscreen] = useState(false)
+  const fullscreenProgress = Math.min(1, useSpringProgress(panelFullscreen))
   const diffOpen = rightPanel === 'diff'
   const notificationsOpen = rightPanel === 'notifications'
   const [lastSeenNoticeId, setLastSeenNoticeId] = useState(0)
@@ -58,7 +59,7 @@ export function WorkbenchApp({
       return
     }
     setPanelFullscreen(false)
-    const timer = setTimeout(() => setDisplayedRightPanel(undefined), PANEL_TRANSITION_MS + 32)
+    const timer = setTimeout(() => setDisplayedRightPanel(undefined), SPRING_SETTLE_MS + 32)
     return () => clearTimeout(timer)
   }, [rightPanel])
 
@@ -117,22 +118,23 @@ export function WorkbenchApp({
   const mainWidth = shellWidth - LEFT_SIDEBAR_WIDTH * leftSidebarProgress
   const standardPanelWidth = Math.max(420, Math.floor(mainWidth * 0.44))
   const panelWidth = displayedRightPanel === 'notifications' ? 422 : standardPanelWidth
-  const sidebarToggleLeft = process.platform === 'darwin' ? 90 : 10 + 54 * leftSidebarProgress
+  const animatedSidebarProgress = leftSidebarProgress * (1 - fullscreenProgress)
+  const fullscreenVisible = panelFullscreen || fullscreenProgress > 0.001
+  const sidebarToggleLeft = process.platform === 'darwin' ? 90 : 10 + 54 * animatedSidebarProgress
   const panel = displayedRightPanel === 'diff'
-    ? <DiffPanel diff={state.workspaceDiff} controller={controller} fullscreen={panelFullscreen} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
+    ? <DiffPanel diff={state.workspaceDiff} controller={controller} fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
     : displayedRightPanel === 'notifications'
-      ? <NotificationLedgerView state={state} panelWidth={panelWidth} />
+      ? <NotificationLedgerView state={state} panelWidth={panelWidth} onClear={() => controller.clearNotices()} />
       : displayedRightPanel === 'surfaces'
-        ? <SurfacePickerPanel fullscreen={panelFullscreen} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
+        ? <SurfacePickerPanel fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
         : displayedRightPanel === 'browser' || displayedRightPanel === 'terminal' || displayedRightPanel === 'files' || displayedRightPanel === 'agents'
-          ? <SurfacePlaceholderPanel surface={displayedRightPanel} fullscreen={panelFullscreen} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNew={openSurfacePicker} onClose={closeRightPanel} />
+          ? <SurfacePlaceholderPanel surface={displayedRightPanel} fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNew={openSurfacePicker} onClose={closeRightPanel} />
           : null
 
   return (
     <div testId="workbench-root" style={{ position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
-      {panelFullscreen && panel ? panel : (
-        <>
-          <div testId="left-sidebar-host" style={{ position: 'relative', width: LEFT_SIDEBAR_WIDTH * leftSidebarProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }}>
+      <>
+          <div testId="left-sidebar-host" style={{ position: 'relative', width: LEFT_SIDEBAR_WIDTH * animatedSidebarProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }}>
             <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: LEFT_SIDEBAR_WIDTH }}>
               <WorkbenchSidebar
                 state={state}
@@ -153,8 +155,8 @@ export function WorkbenchApp({
             <SettingsView state={state} controller={controller} onClose={() => setSurface('chat')} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background }}>
-              <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minWidth: 0, height: '100%' }}>
-                <ChatHeader state={state} controller={controller} diffOpen={diffOpen} leftSidebarProgress={leftSidebarProgress} onToggleDiff={toggleDiff} />
+              <div style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: 1 - fullscreenProgress, minWidth: 0, height: '100%', overflow: 'hidden' }}>
+                <ChatHeader state={state} controller={controller} diffOpen={diffOpen} leftSidebarProgress={animatedSidebarProgress} onToggleDiff={toggleDiff} />
                 <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
                   {draft ? (
                     <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 25, paddingLeft: 20, paddingRight: 20, paddingBottom: 74 }}>
@@ -171,14 +173,13 @@ export function WorkbenchApp({
                 </div>
               </div>
               {panel && (
-                <div testId="right-panel-host" style={{ position: 'relative', width: panelWidth * rightPanelProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: panelWidth }}>{panel}</div>
+                <div testId="right-panel-host" style={{ position: 'relative', width: panelWidth * rightPanelProgress * (1 - fullscreenProgress), flexGrow: fullscreenProgress * rightPanelProgress, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}>{panel}</div>
                 </div>
               )}
             </div>
           )}
         </>
-      )}
       {!panelFullscreen && (
         <div
           testId="toggle-left-sidebar"
@@ -191,32 +192,6 @@ export function WorkbenchApp({
       )}
     </div>
   )
-}
-
-function useAnimatedProgress(open: boolean): number {
-  const target = open ? 1 : 0
-  const [progress, setProgress] = useState(target)
-  const progressRef = useRef(progress)
-  useEffect(() => {
-    const from = progressRef.current
-    const distance = Math.abs(target - from)
-    if (distance < 0.001) {
-      progressRef.current = target
-      setProgress(target)
-      return
-    }
-    const startedAt = Date.now()
-    const duration = PANEL_TRANSITION_MS * distance
-    const timer = setInterval(() => {
-      const elapsed = Math.min(1, (Date.now() - startedAt) / duration)
-      const next = from + (target - from) * elapsed
-      progressRef.current = next
-      setProgress(next)
-      if (elapsed >= 1) clearInterval(timer)
-    }, 16)
-    return () => clearInterval(timer)
-  }, [target])
-  return progress
 }
 
 function TranscriptFade() {

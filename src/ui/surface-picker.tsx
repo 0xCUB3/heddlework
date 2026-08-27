@@ -20,9 +20,9 @@ const SURFACES: SurfaceDescriptor[] = [
   { kind: 'agents', title: 'Agents', description: 'Watch subagents and workflows run.', icon: 'bot' },
 ]
 
-export function SurfacePickerPanel({ fullscreen, panelWidth, onToggleFullscreen, onSelect, onClose }: { fullscreen: boolean; panelWidth?: number; onToggleFullscreen(): void; onSelect(surface: SurfaceKind): void; onClose(): void }) {
+export function SurfacePickerPanel({ fullscreen, fullscreenProgress, panelWidth, onToggleFullscreen, onSelect, onClose }: { fullscreen: boolean; fullscreenProgress?: number | undefined; panelWidth?: number; onToggleFullscreen(): void; onSelect(surface: SurfaceKind): void; onClose(): void }) {
   return (
-    <PanelFrame testId="surface-picker" title="New surface" icon="plus" fullscreen={fullscreen} {...(panelWidth === undefined ? {} : { panelWidth })} onToggleFullscreen={onToggleFullscreen} onClose={onClose}>
+    <PanelFrame testId="surface-picker" title="New surface" icon="plus" fullscreen={fullscreen} fullscreenProgress={fullscreenProgress} {...(panelWidth === undefined ? {} : { panelWidth })} onToggleFullscreen={onToggleFullscreen} onClose={onClose}>
       <div style={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 22 }}>
         <text style={{ color: colors.text, fontSize: 14, fontWeight: 550 }}>Open a surface</text>
         <text style={{ color: colors.textFaint, fontSize: 10, marginTop: 7 }}>Choose what to show in the right panel.</text>
@@ -36,11 +36,11 @@ export function SurfacePickerPanel({ fullscreen, panelWidth, onToggleFullscreen,
   )
 }
 
-export function SurfacePlaceholderPanel({ surface, fullscreen, panelWidth, onToggleFullscreen, onNew, onClose }: { surface: Exclude<SurfaceKind, 'diff'>; fullscreen: boolean; panelWidth?: number; onToggleFullscreen(): void; onNew(): void; onClose(): void }) {
+export function SurfacePlaceholderPanel({ surface, fullscreen, fullscreenProgress, panelWidth, onToggleFullscreen, onNew, onClose }: { surface: Exclude<SurfaceKind, 'diff'>; fullscreen: boolean; fullscreenProgress?: number | undefined; panelWidth?: number; onToggleFullscreen(): void; onNew(): void; onClose(): void }) {
   const descriptor = SURFACES.find((candidate) => candidate.kind === surface)!
   return (
     <div testId="surface-placeholder" style={rightPanelStyle(fullscreen, panelWidth)}>
-      <RightPanelHeader icon={descriptor.icon} title={descriptor.title} fullscreen={fullscreen} onNew={onNew} onToggleFullscreen={onToggleFullscreen} onClose={onClose} />
+      <RightPanelHeader icon={descriptor.icon} title={descriptor.title} fullscreen={fullscreen} fullscreenProgress={fullscreenProgress} onNew={onNew} onToggleFullscreen={onToggleFullscreen} onClose={onClose} />
       <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 30 }}>
         <Icon name={descriptor.icon} size={22} color={colors.textFaint} />
         <text style={{ color: colors.textMuted, fontSize: 12 }}>{`${descriptor.title} surface`}</text>
@@ -50,10 +50,10 @@ export function SurfacePlaceholderPanel({ surface, fullscreen, panelWidth, onTog
   )
 }
 
-function PanelFrame({ testId, title, icon, fullscreen, panelWidth, onToggleFullscreen, onClose, children }: { testId: string; title: string; icon: IconName; fullscreen: boolean; panelWidth?: number; onToggleFullscreen(): void; onClose(): void; children: React.ReactNode }) {
+function PanelFrame({ testId, title, icon, fullscreen, fullscreenProgress, panelWidth, onToggleFullscreen, onClose, children }: { testId: string; title: string; icon: IconName; fullscreen: boolean; fullscreenProgress?: number | undefined; panelWidth?: number; onToggleFullscreen(): void; onClose(): void; children: React.ReactNode }) {
   return (
     <div testId={testId} style={rightPanelStyle(fullscreen, panelWidth)}>
-      <RightPanelHeader icon={icon} title={title} fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen} onClose={onClose} />
+      <RightPanelHeader icon={icon} title={title} fullscreen={fullscreen} fullscreenProgress={fullscreenProgress} onToggleFullscreen={onToggleFullscreen} onClose={onClose} />
       {children}
     </div>
   )

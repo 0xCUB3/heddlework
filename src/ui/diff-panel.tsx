@@ -5,11 +5,13 @@ import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors, nativeTheme } from './theme.ts'
+import { useSpringProgress } from './motion.ts'
 
-export function DiffPanel({
+export const DiffPanel = React.memo(function DiffPanel({
   diff,
   controller,
   fullscreen,
+  fullscreenProgress,
   panelWidth,
   onClose,
   onNewSurface,
@@ -18,6 +20,7 @@ export function DiffPanel({
   diff: WorkspaceDiff
   controller: WorkbenchController
   fullscreen: boolean
+  fullscreenProgress: number
   panelWidth?: number
   onClose(): void
   onNewSurface(): void
@@ -26,11 +29,12 @@ export function DiffPanel({
   const [filesOpen, setFilesOpen] = useState(false)
   const [wordWrap, setWordWrap] = useState(false)
   const [selectedPath, setSelectedPath] = useState<string | undefined>()
+  const fileListProgress = useSpringProgress(filesOpen)
   useEffect(() => {
     if (selectedPath && !diff.files.some((file) => file.path === selectedPath)) setSelectedPath(undefined)
   }, [diff.files, selectedPath])
   const selectedFile = selectedPath ? diff.files.find((file) => file.path === selectedPath) : undefined
-  const patch = selectedFile?.patch ?? diff.files.map((file) => file.patch).join('\n')
+  const patch = useMemo(() => selectedFile?.patch ?? diff.files.map((file) => file.patch).join('\n'), [diff.files, selectedFile])
   const additions = selectedFile?.additions ?? diff.additions
   const deletions = selectedFile?.deletions ?? diff.deletions
   const canvasWidth = useMemo(() => diffCanvasWidth(patch), [patch])
@@ -41,6 +45,7 @@ export function DiffPanel({
         icon="fileDiff"
         title="Diff"
         fullscreen={fullscreen}
+        fullscreenProgress={fullscreenProgress}
         refreshDisabled={diff.status === 'loading'}
         onNew={onNewSurface}
         onRefresh={() => void controller.refreshWorkspaceDiff()}
@@ -63,7 +68,13 @@ export function DiffPanel({
         <IconButton icon="list" label="Toggle changed files" testId="diff-file-list" active={filesOpen} onClick={() => setFilesOpen((value) => !value)} />
       </div>
       <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minHeight: 0 }}>
-        {filesOpen && <DiffFileList files={diff.files} selectedPath={selectedPath} onSelect={setSelectedPath} />}
+        {(filesOpen || fileListProgress > 0) && (
+          <div testId="diff-file-list-host" style={{ position: 'relative', width: 212 * fileListProgress, flexShrink: 0, minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: 212, display: 'flex' }}>
+              <DiffFileList files={diff.files} selectedPath={selectedPath} onSelect={setSelectedPath} />
+            </div>
+          </div>
+        )}
         <div testId="diff-content" style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minWidth: 0, minHeight: 0, fontFamily: nativeTheme.fontMono }}>
           {diff.status === 'loading' ? (
             <PanelMessage icon="refresh" title="Loading working tree diff…" />
@@ -74,19 +85,153 @@ export function DiffPanel({
           ) : wordWrap ? (
             <WrappedDiff patch={patch} />
           ) : (
-            <div testId="diff-horizontal-scroll" style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, minHeight: 0, overflowX: 'scroll', overflowY: 'hidden' }}>
-              <diff testId="diff-native" patch={patch} wordDiff scroll maxLines={2_000} theme={nativeTheme} style={{ width: canvasWidth, minWidth: canvasWidth, height: '100%', flexShrink: 0, fontFamily: nativeTheme.fontMono }} />
-            </div>
+            <NativeDiffViewport patch={patch} files={selectedFile ? [selectedFile] : diff.files} canvasWidth={canvasWidth} />
           )}
         </div>
       </div>
     </div>
   )
+}, (previous, next) => previous.diff === next.diff
+  && previous.controller === next.controller
+  && previous.fullscreen === next.fullscreen
+  && previous.fullscreenProgress === next.fullscreenProgress
+  && previous.panelWidth === next.panelWidth)
+
+const DIFF_HUNK_HEIGHT = 28
+const DIFF_NOTICE_HEIGHT = 24
+const DIFF_BODY_PAD = 8
+
+interface DiffSection {
+  file: WorkspaceDiffFile
+  start: number
+  end: number
+}
+
+interface DiffLayoutRow {
+  key: string
+  file: WorkspaceDiffFile
+  kind: 'header' | 'hunk' | 'notice' | 'line'
+  top: number
+  height: number
+  oldLine?: number | undefined
+  newLine?: number | undefined
+  marker?: string
+  tone?: 'normal' | 'add' | 'delete'
+}
+
+interface DiffLayout {
+  rows: DiffLayoutRow[]
+  sections: DiffSection[]
+  truncated: boolean
+}
+
+export function NativeDiffViewport({ patch }: { patch: string; files: WorkspaceDiffFile[]; canvasWidth: number }) {
+  return (
+    <div testId="diff-native-viewport" style={{ display: 'flex', flexGrow: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+      <diff
+        testId="diff-native"
+        patch={patch}
+        scroll
+        wordDiff
+        theme={nativeTheme}
+        style={{ width: '100%', height: '100%', flexGrow: 1, minWidth: 0, minHeight: 0, fontFamily: nativeTheme.fontMono }}
+      />
+    </div>
+  )
+}
+
+export function diffSections(files: WorkspaceDiffFile[]): DiffSection[] {
+  return buildDiffLayout(files).sections
+}
+
+function buildDiffLayout(files: WorkspaceDiffFile[], lineLimit = Number.POSITIVE_INFINITY): DiffLayout {
+  const rows: DiffLayoutRow[] = []
+  const sections: DiffSection[] = []
+  let cursor = 0
+  let renderedLines = 0
+  let truncated = false
+  for (const file of files) {
+    const start = cursor
+    rows.push({ key: `${file.path}:header`, file, kind: 'header', top: cursor, height: nativeTheme.metrics.diffFileHeaderHeight })
+    cursor += nativeTheme.metrics.diffFileHeaderHeight
+    let oldLine: number | undefined
+    let newLine: number | undefined
+    let inHunk = false
+    let noticeCount = diffNoticeCount(file.patch)
+    for (let index = 0; index < noticeCount; index += 1) {
+      rows.push({ key: `${file.path}:notice:${index}`, file, kind: 'notice', top: cursor, height: DIFF_NOTICE_HEIGHT })
+      cursor += DIFF_NOTICE_HEIGHT
+    }
+    for (const [index, line] of indexedPatchLines(file.patch)) {
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
+      if (hunk) {
+        oldLine = Number(hunk[1])
+        newLine = Number(hunk[2])
+        inHunk = true
+        rows.push({ key: `${file.path}:hunk:${index}`, file, kind: 'hunk', top: cursor, height: DIFF_HUNK_HEIGHT })
+        cursor += DIFF_HUNK_HEIGHT
+        continue
+      }
+      if (!inHunk) continue
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        if (renderedLines >= lineLimit) { truncated = true; break }
+        rows.push({ key: `${file.path}:line:${index}`, file, kind: 'line', top: cursor, height: nativeTheme.metrics.diffLineHeight, newLine, marker: '+', tone: 'add' })
+        if (newLine !== undefined) newLine += 1
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        if (renderedLines >= lineLimit) { truncated = true; break }
+        rows.push({ key: `${file.path}:line:${index}`, file, kind: 'line', top: cursor, height: nativeTheme.metrics.diffLineHeight, oldLine, marker: '−', tone: 'delete' })
+        if (oldLine !== undefined) oldLine += 1
+      } else if (line.startsWith(' ')) {
+        if (renderedLines >= lineLimit) { truncated = true; break }
+        rows.push({ key: `${file.path}:line:${index}`, file, kind: 'line', top: cursor, height: nativeTheme.metrics.diffLineHeight, oldLine, newLine, marker: '·', tone: 'normal' })
+        if (oldLine !== undefined) oldLine += 1
+        if (newLine !== undefined) newLine += 1
+      } else if (line.startsWith('\\')) {
+        if (renderedLines >= lineLimit) { truncated = true; break }
+        rows.push({ key: `${file.path}:line:${index}`, file, kind: 'line', top: cursor, height: nativeTheme.metrics.diffLineHeight, marker: '', tone: 'normal' })
+      } else if (line.startsWith('diff --git ')) {
+        inHunk = false
+        continue
+      } else {
+        continue
+      }
+      cursor += nativeTheme.metrics.diffLineHeight
+      renderedLines += 1
+    }
+    cursor += DIFF_BODY_PAD
+    sections.push({ file, start, end: cursor })
+    if (truncated) break
+  }
+  return { rows, sections, truncated }
+}
+
+function* indexedPatchLines(patch: string): Generator<[number, string]> {
+  let start = 0
+  let index = 0
+  while (start <= patch.length) {
+    const newline = patch.indexOf('\n', start)
+    if (newline === -1) {
+      yield [index, patch.slice(start)]
+      return
+    }
+    yield [index, patch.slice(start, newline)]
+    start = newline + 1
+    index += 1
+  }
+}
+
+function diffNoticeCount(patch: string): number {
+  const added = patch.includes('\nnew file mode ')
+  const deleted = patch.includes('\ndeleted file mode ')
+  const renamed = patch.includes('\nrename from ') || patch.includes('\nrename to ')
+  const binary = patch.includes('\nBinary files ') || patch.includes('\nGIT binary patch')
+  const modeChanges = patch.match(/^new mode /gm)?.length ?? 0
+  return Number(added) + Number(deleted) + Number(renamed) + Number(binary) + modeChanges
 }
 
 function DiffFileList({ files, selectedPath, onSelect }: { files: WorkspaceDiffFile[]; selectedPath: string | undefined; onSelect(path: string | undefined): void }) {
   return (
-    <div testId="diff-file-list-panel" style={{ width: 212, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
+    <div testId="diff-file-list-panel" style={{ width: 212, flexGrow: 1, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
       <NativeVirtualList alignment="top" estimatedItemHeight={40} overdraw={160} style={{ flexGrow: 1, minHeight: 0, width: '100%', padding: 6 }}>
         <DiffFileRow label="All changes" active={!selectedPath} additions={files.reduce((sum, file) => sum + file.additions, 0)} deletions={files.reduce((sum, file) => sum + file.deletions, 0)} onClick={() => onSelect(undefined)} />
         {files.map((file) => (
@@ -117,16 +262,22 @@ interface WrappedLine {
   tone: 'normal' | 'add' | 'delete' | 'hunk' | 'file'
 }
 
-function WrappedDiff({ patch }: { patch: string }) {
+const WRAPPED_PAGE_SIZE = 400
+
+export function WrappedDiff({ patch }: { patch: string }) {
   const rows = useMemo(() => parseWrappedDiff(patch).slice(0, 2_000), [patch])
+  const [visibleRows, setVisibleRows] = useState(WRAPPED_PAGE_SIZE)
+  useEffect(() => setVisibleRows(WRAPPED_PAGE_SIZE), [patch])
+  const displayedRows = rows.slice(0, visibleRows)
   return (
-    <div testId="diff-wrapped-scroll" style={{ flexGrow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'scroll', backgroundColor: colors.background, userSelect: 'text', selectionColor: '#4F67D866' }}>
-      {rows.map((row) => {
+    <div testId="diff-wrapped-viewport" style={{ width: '100%', minWidth: 0, minHeight: 0, flexGrow: 1, display: 'flex', overflow: 'hidden' }}>
+    <NativeVirtualList testId="diff-wrapped-scroll" alignment="top" estimatedItemHeight={19} overdraw={300} style={{ width: '100%', flexGrow: 1, minHeight: 0, minWidth: 0, alignSelf: 'stretch', backgroundColor: colors.background, userSelect: 'text', selectionColor: '#4F67D866' }}>
+      {displayedRows.map((row) => {
         const background = row.tone === 'add' ? colors.diffAdd : row.tone === 'delete' ? colors.diffDel : row.tone === 'hunk' ? colors.diffHunkBg : colors.transparent
         const foreground = row.tone === 'hunk' ? colors.textMuted : row.tone === 'file' ? colors.text : '#D7D7DC'
         return (
           <React.Fragment key={row.key}>
-            <div style={{ minHeight: 19, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', backgroundColor: background }}>
+            <div testId={`diff-wrapped-row:${row.tone}`} style={{ width: '100%', minWidth: 0, minHeight: 19, flexShrink: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'flex-start', backgroundColor: background }}>
               <text style={{ width: 38, flexShrink: 0, color: colors.textFaint, fontSize: 10, lineHeight: 19, textAlign: 'right', fontFamily: nativeTheme.fontMono }}>{row.oldLine ?? ''}</text>
               <text style={{ width: 38, flexShrink: 0, color: colors.textFaint, fontSize: 10, lineHeight: 19, textAlign: 'right', fontFamily: nativeTheme.fontMono }}>{row.newLine ?? ''}</text>
               <text style={{ width: 18, flexShrink: 0, color: row.tone === 'add' ? colors.success : row.tone === 'delete' ? colors.error : colors.textFaint, fontSize: 11, lineHeight: 19, textAlign: 'center', fontFamily: nativeTheme.fontMono }}>{row.marker}</text>
@@ -135,6 +286,12 @@ function WrappedDiff({ patch }: { patch: string }) {
           </React.Fragment>
         )
       })}
+      {visibleRows < rows.length && (
+        <div testId="diff-wrapped-show-more" tabIndex={0} style={{ height: 34, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.textMuted, backgroundColor: colors.raised, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => setVisibleRows((count) => Math.min(rows.length, count + WRAPPED_PAGE_SIZE))}>
+          <text style={{ color: colors.textMuted, fontSize: 10, fontFamily: nativeTheme.fontMono }}>{`Show ${Math.min(WRAPPED_PAGE_SIZE, rows.length - visibleRows)} more lines`}</text>
+        </div>
+      )}
+    </NativeVirtualList>
     </div>
   )
 }
@@ -170,7 +327,13 @@ export function parseWrappedDiff(patch: string): WrappedLine[] {
 }
 
 function diffCanvasWidth(patch: string): number {
-  const longest = patch.split('\n').slice(0, 2_000).reduce((width, line) => Math.max(width, [...line].length), 0)
+  let longest = 0
+  let scanned = 0
+  for (const [, line] of indexedPatchLines(patch)) {
+    longest = Math.max(longest, [...line].length)
+    scanned += 1
+    if (scanned >= 2_000) break
+  }
   return Math.max(840, Math.min(16_000, 112 + longest * 7.4))
 }
 

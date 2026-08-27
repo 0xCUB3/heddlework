@@ -51,14 +51,36 @@ describeNative('sidebar initial session position', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       expect(Math.abs(root.renderer.getScrollOffset(list.id)?.[1] ?? 0)).toBeLessThanOrEqual(0.01)
+      await Bun.sleep(0)
+      root.renderer.flush()
+      const fadeOpacity = async (edge: 'top' | 'bottom') => {
+        const fade = (await automation.getByTestId(`sidebar-scroll-fade-${edge}`).all())[0]!
+        return (fade.customProps?.motion as { animate: { opacity: number } }).animate.opacity
+      }
+      expect(await fadeOpacity('top')).toBe(0)
+      expect(await fadeOpacity('bottom')).toBe(1)
 
       root.renderer.scrollTo(list.id, 0, -500)
       const userOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
       expect(userOffset).toBeLessThan(-100)
-      render({ ...createInitialState('/tmp/project'), sessions: [...sessions, ...sessions.slice(0, 5).map((session, index) => ({ ...session, id: `later-${index}`, path: `/tmp/later-${index}.jsonl` }))], sessionsLoading: false })
+      const laterSessions = [...sessions, ...sessions.slice(0, 5).map((session, index) => ({ ...session, id: `later-${index}`, path: `/tmp/later-${index}.jsonl` }))]
+      render({ ...createInitialState('/tmp/project'), sessions: laterSessions, sessionsLoading: false })
+      await Bun.sleep(0)
+      root.renderer.flush()
       await Bun.sleep(0)
       root.renderer.flush()
       expect(root.renderer.getScrollOffset(list.id)?.[1] ?? 0).toBeLessThan(-100)
+      expect(await fadeOpacity('top')).toBe(1)
+      expect(await fadeOpacity('bottom')).toBe(1)
+
+      root.renderer.scrollTo(list.id, 0, -10_000)
+      render({ ...createInitialState('/tmp/project'), sessions: [...laterSessions, { ...sessions[0]!, id: 'last', path: '/tmp/last.jsonl' }], sessionsLoading: false })
+      await Bun.sleep(0)
+      root.renderer.flush()
+      await Bun.sleep(0)
+      root.renderer.flush()
+      expect(await fadeOpacity('top')).toBe(1)
+      expect(await fadeOpacity('bottom')).toBe(0)
       await automation.close()
     } finally {
       root.unmount()

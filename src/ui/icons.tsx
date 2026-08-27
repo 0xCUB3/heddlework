@@ -56,7 +56,7 @@ const ICONS: Record<IconName, string> = {
   panel: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/>'),
   panelLeft: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>'),
   panelLeftClose: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m7 9-3 3 3 3"/>'),
-  refresh: svg('<path d="M20 6v5h-5"/><path d="M19 11a7 7 0 1 0 1 5"/>'),
+  refresh: svg('<g transform="translate(0 -1)"><path d="M20 6v5h-5"/><path d="M19 11a7 7 0 1 0 1 5"/></g>'),
   check: svg('<path d="m5 12 4 4L19 6"/>'),
   circle: svg('<circle cx="12" cy="12" r="8"/>'),
   sparkles: svg('<path d="m12 3 1.2 3.3L16.5 7.5l-3.3 1.2L12 12l-1.2-3.3-3.3-1.2 3.3-1.2Z"/><path d="m18 14 .8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8Z"/>'),

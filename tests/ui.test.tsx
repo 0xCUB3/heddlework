@@ -9,7 +9,8 @@ import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { createComposerImage } from '../src/ui/clipboard-media.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
-import { PANEL_TRANSITION_MS, WorkbenchApp } from '../src/ui/app.tsx'
+import { WorkbenchApp } from '../src/ui/app.tsx'
+import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { colors } from '../src/ui/theme.ts'
 
 const controllers: WorkbenchController[] = []
@@ -101,7 +102,7 @@ describeNative('WorkbenchApp', () => {
     const closingSidebarWidth = (await automation.getByTestId('left-sidebar-host').bounds()).width
     expect(closingSidebarWidth).toBeGreaterThan(0)
     expect(closingSidebarWidth).toBeLessThan(256)
-    await Bun.sleep(PANEL_TRANSITION_MS)
+    await Bun.sleep(SPRING_SETTLE_MS)
     root.renderer.flush()
     expect((await automation.getByTestId('left-sidebar-host').bounds()).width).toBeLessThanOrEqual(1)
     const collapsedToggleBounds = await automation.getByTestId('toggle-left-sidebar').bounds()
@@ -113,7 +114,7 @@ describeNative('WorkbenchApp', () => {
     const openingSidebarWidth = (await automation.getByTestId('left-sidebar-host').bounds()).width
     expect(openingSidebarWidth).toBeGreaterThan(0)
     expect(openingSidebarWidth).toBeLessThan(256)
-    await Bun.sleep(PANEL_TRANSITION_MS)
+    await Bun.sleep(SPRING_SETTLE_MS)
     root.renderer.flush()
     expect(Math.abs((await automation.getByTestId('left-sidebar-host').bounds()).width - 256)).toBeLessThanOrEqual(1)
     const longDraft = 'responsive input '.repeat(32).slice(0, 500)
@@ -248,26 +249,32 @@ describeNative('WorkbenchApp', () => {
     const rightPanelTargetWidth = (await automation.getByTestId('diff-panel').bounds()).width
     expect(openingRightWidth).toBeGreaterThan(0)
     expect(openingRightWidth).toBeLessThan(rightPanelTargetWidth)
-    await Bun.sleep(PANEL_TRANSITION_MS)
+    await Bun.sleep(SPRING_SETTLE_MS)
     await waitForDiff(controller)
     root.renderer.flush()
     expect(await automation.getByTestId('diff-panel').count()).toBe(1)
     expect(root.renderer.getPaintedText()).toContain('Working tree')
     expect(root.renderer.getPaintedText()).toContain('README.md')
     expect((await automation.getByTestId('diff-content').all())[0]?.style?.fontFamily).toBe('Menlo')
-    const horizontalDiff = (await automation.getByTestId('diff-horizontal-scroll').all())[0]!
-    root.renderer.scrollTo(horizontalDiff.id, -300, 0)
-    root.renderer.flush()
-    expect(root.renderer.getScrollOffset(horizontalDiff.id)?.[0]).toBeLessThan(0)
+    expect(await automation.getByTestId('diff-native').count()).toBe(1)
+    expect(await automation.getByTestId('diff-horizontal-scroll').count()).toBe(0)
+    expect(await automation.getByTestId('diff-sticky-gutter').count()).toBe(0)
+    const wrapStartedAt = performance.now()
     await automation.getByTestId('diff-wrap-toggle').click()
     root.renderer.flush()
+    expect(performance.now() - wrapStartedAt).toBeLessThan(500)
     expect(await automation.getByTestId('diff-native').count()).toBe(0)
     expect(await automation.getByTestId('diff-wrapped-scroll').count()).toBe(1)
     expect((await automation.getByTestId('diff-wrapped-code').all())[0]?.style?.fontFamily).toBe('Menlo')
     expect((await automation.getByTestId('diff-wrapped-code').all())[0]?.style?.whiteSpace).toBe('normal')
     await automation.getByTestId('diff-wrap-toggle').click()
     await automation.getByTestId('diff-file-list').click()
+    await Bun.sleep(70)
+    root.renderer.flush()
     expect(await automation.getByTestId('diff-file-list-panel').count()).toBe(1)
+    const openingFileListWidth = (await automation.getByTestId('diff-file-list-host').bounds()).width
+    expect(openingFileListWidth).toBeGreaterThan(0)
+    expect(openingFileListWidth).toBeLessThan(212)
     expect((await automation.getByTestId('diff-file-row').all())[0]?.style?.height).toBe(40)
     expect(root.renderer.getPaintedText()).toContain('All changes')
     if (process.platform === 'darwin') {
@@ -275,6 +282,18 @@ describeNative('WorkbenchApp', () => {
       root.renderer.captureScreenshot(screenshot)
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
+    await Bun.sleep(SPRING_SETTLE_MS)
+    root.renderer.flush()
+    expect(Math.abs((await automation.getByTestId('diff-file-list-host').bounds()).width - 212)).toBeLessThanOrEqual(1)
+    await automation.getByTestId('diff-file-list').click()
+    await Bun.sleep(70)
+    root.renderer.flush()
+    const closingFileListWidth = (await automation.getByTestId('diff-file-list-host').bounds()).width
+    expect(closingFileListWidth).toBeGreaterThan(0)
+    expect(closingFileListWidth).toBeLessThan(212)
+    await Bun.sleep(SPRING_SETTLE_MS)
+    root.renderer.flush()
+    expect(await automation.getByTestId('diff-file-list-host').count()).toBe(0)
     const refreshBounds = await automation.getByTestId('right-panel-refresh').bounds()
     const fullscreenBounds = await automation.getByTestId('right-panel-fullscreen').bounds()
     const closeBounds = await automation.getByTestId('close-diff').bounds()
@@ -282,13 +301,25 @@ describeNative('WorkbenchApp', () => {
     expect(Math.abs(closeBounds.y + closeBounds.height / 2 - fullscreenBounds.y - fullscreenBounds.height / 2)).toBeLessThanOrEqual(1)
     const rootBounds = await automation.getByTestId('workbench-root').bounds()
     await automation.getByTestId('right-panel-fullscreen').click()
+    await Bun.sleep(25)
+    root.renderer.flush()
+    const expandingPanelBounds = await automation.getByTestId('diff-panel').bounds()
+    expect(expandingPanelBounds.width).toBeGreaterThan(rightPanelTargetWidth)
+    expect(expandingPanelBounds.width).toBeLessThan(rootBounds.width)
+    await Bun.sleep(SPRING_SETTLE_MS * 2)
     root.renderer.flush()
     const fullscreenPanelBounds = await automation.getByTestId('diff-panel').bounds()
     expect(Math.abs(fullscreenPanelBounds.width - rootBounds.width)).toBeLessThanOrEqual(2)
     expect(Math.abs(fullscreenPanelBounds.height - rootBounds.height)).toBeLessThanOrEqual(2)
-    expect(await automation.getByTestId('sidebar').count()).toBe(0)
+    expect((await automation.getByTestId('left-sidebar-host').bounds()).width).toBeLessThanOrEqual(1)
+    if (process.platform === 'darwin') expect((await automation.getByTestId('right-panel-tab').bounds()).x).toBeGreaterThanOrEqual(rootBounds.x + 100)
     await automation.getByTestId('right-panel-restore').click()
     await Bun.sleep(25)
+    root.renderer.flush()
+    const restoringPanelBounds = await automation.getByTestId('diff-panel').bounds()
+    expect(restoringPanelBounds.width).toBeGreaterThan(rightPanelTargetWidth)
+    expect(restoringPanelBounds.width).toBeLessThan(rootBounds.width)
+    await Bun.sleep(SPRING_SETTLE_MS)
     root.renderer.flush()
     expect(await automation.getByTestId('sidebar').count()).toBe(1)
     await automation.getByTestId('right-panel-new-tab').click()
@@ -315,7 +346,7 @@ describeNative('WorkbenchApp', () => {
     const closingRightWidth = (await automation.getByTestId('right-panel-host').bounds()).width
     expect(closingRightWidth).toBeGreaterThan(0)
     expect(closingRightWidth).toBeLessThan(openRightWidth)
-    await Bun.sleep(PANEL_TRANSITION_MS)
+    await Bun.sleep(SPRING_SETTLE_MS)
     root.renderer.flush()
     expect(await automation.getByTestId('right-panel-host').count()).toBe(0)
 

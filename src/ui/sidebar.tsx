@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
+import { motion, Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
@@ -15,7 +15,7 @@ const SESSION_ROW_INSET = 8
 export const SESSION_SETTLED_AFTER_MS = 7 * 24 * 60 * 60 * 1_000
 const ALL_PROJECTS_SCOPE = '__all-projects__'
 
-export function WorkbenchSidebar({
+export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   state,
   controller,
   settingsActive,
@@ -42,6 +42,8 @@ export function WorkbenchSidebar({
   const [settledExpanded, setSettledExpanded] = useState(false)
   const [clock, setClock] = useState(Date.now())
   const sessionScrollDistance = useRef(0)
+  const sessionLastOffset = useRef(0)
+  const [sessionFades, setSessionFades] = useState({ top: false, bottom: false })
   const sessionListRef = useRef<NativeElementHandle | null>(null)
   const initialSessionScrollApplied = useRef(false)
   const activePath = state.session.sessionFile
@@ -107,6 +109,31 @@ export function WorkbenchSidebar({
   const renderedSettledSessions = settledExpanded
     ? settledSessions
     : settledSessions.filter((session) => session.path === activePath || session.id === state.session.sessionId)
+  const sessionContentHeight = activeSessions.length * 78
+    + (snoozedSessions.length > 0 ? 28 : 0)
+    + snoozedSessions.length * 36
+    + (settledSessions.length > 0 ? 39 : 0)
+    + renderedSettledSessions.length * 36
+    + (visibleSessions.length === 0 && !state.sessionsLoading ? 50 : 0)
+  const updateSessionFades = () => {
+    const list = sessionListRef.current
+    if (!list) return
+    const offset = renderer.getScrollOffset?.(list.id)?.[1] ?? 0
+    const boundsRenderer = renderer as typeof renderer & { getElementBounds?(id: number): number[] | null }
+    const windowHeight = renderer.getWindowSize?.().height ?? 0
+    const fallbackHeight = windowHeight > 184 ? windowHeight - 184 : 616
+    const viewportHeight = boundsRenderer.getElementBounds?.(list.id)?.[3] || fallbackHeight
+    const next = {
+      top: offset < -0.5,
+      bottom: viewportHeight > 0 && sessionContentHeight + offset > viewportHeight + 0.5,
+    }
+    setSessionFades((current) => current.top === next.top && current.bottom === next.bottom ? current : next)
+  }
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => { if (!cancelled) updateSessionFades() })
+    return () => { cancelled = true }
+  }, [sessionContentHeight, state.sessionsLoading])
   const connectionColor = state.connection === 'connected'
     ? colors.success
     : state.connection === 'connecting'
@@ -137,9 +164,12 @@ export function WorkbenchSidebar({
   }
 
   const handleSessionScroll = (event: NativeScrollEvent) => {
-    const delta = event.deltaY ?? 0
-    if (delta <= 0 || !state.sessionsHasMore || state.sessionsLoading) return
-    sessionScrollDistance.current += event.precise ? delta : delta * 32
+    const offset = renderer.getScrollOffset?.(event.elementId)?.[1] ?? sessionLastOffset.current
+    const downwardDistance = Math.max(0, sessionLastOffset.current - offset)
+    sessionLastOffset.current = offset
+    updateSessionFades()
+    if (!state.sessionsHasMore || state.sessionsLoading) return
+    sessionScrollDistance.current += downwardDistance
     if (sessionScrollDistance.current < 640) return
     sessionScrollDistance.current = 0
     void controller.loadMoreSessions()
@@ -182,6 +212,7 @@ export function WorkbenchSidebar({
         </div>
       </div>
 
+      <div testId="sidebar-session-region" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
       <NativeVirtualList testId="sidebar-session-list" elementRef={sessionListRef} alignment="top" estimatedItemHeight={78} overdraw={280} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {activeSessions.map((session) => renderSession(session, 'active'))}
         {snoozedSessions.length > 0 && <SectionLabel label={`Snoozed (${snoozedSessions.length})`} tone="accent" />}
@@ -196,6 +227,9 @@ export function WorkbenchSidebar({
           </div>
         )}
       </NativeVirtualList>
+      <SidebarScrollFade edge="top" visible={sessionFades.top} />
+      <SidebarScrollFade edge="bottom" visible={sessionFades.bottom} />
+      </div>
 
       <div style={{ height: 46, paddingLeft: 8, paddingRight: 8, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         <IconButton icon="settings" label="Settings" testId="sidebar-settings" active={settingsActive} onClick={onSettings} />
@@ -210,6 +244,28 @@ export function WorkbenchSidebar({
         </div>
       </div>
     </div>
+  )
+}, (previous, next) => previous.controller === next.controller
+  && previous.settingsActive === next.settingsActive
+  && previous.notificationsActive === next.notificationsActive
+  && previous.unreadCount === next.unreadCount
+  && previous.state.sessions === next.state.sessions
+  && previous.state.sessionsLoading === next.state.sessionsLoading
+  && previous.state.sessionsHasMore === next.state.sessionsHasMore
+  && previous.state.session === next.state.session
+  && previous.state.connection === next.state.connection
+  && previous.state.threadLifecycle === next.state.threadLifecycle
+  && previous.state.workspacePath === next.state.workspacePath
+  && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch)
+
+function SidebarScrollFade({ edge, visible }: { edge: 'top' | 'bottom'; visible: boolean }) {
+  const bands = edge === 'top'
+    ? ['#090A0B', '#090A0BCC', '#090A0B66', '#090A0B20']
+    : ['#090A0B20', '#090A0B66', '#090A0BCC', '#090A0B']
+  return (
+    <motion.div testId={`sidebar-scroll-fade-${edge}`} initial={false} animate={{ opacity: visible ? 1 : 0 }} transition={{ duration: 0.18, ease: 'easeOut' }} style={{ position: 'absolute', left: 0, right: 0, ...(edge === 'top' ? { top: 0 } : { bottom: 0 }), height: 24, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
+      {bands.map((backgroundColor, index) => <React.Fragment key={index}><div style={{ height: 6, width: '100%', backgroundColor, pointerEvents: 'none' }} /></React.Fragment>)}
+    </motion.div>
   )
 }
 

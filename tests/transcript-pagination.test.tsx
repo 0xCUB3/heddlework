@@ -46,7 +46,8 @@ describeNative('reverse-infinite transcript', () => {
     expect(initialText).toContain('Prompt 80')
     expect(initialText).not.toContain('Prompt 0')
     const list = (await automation.getByTestId('transcript-list').all())[0]!
-    expect(list.events).toContain('scroll')
+    const surface = (await automation.getByTestId('transcript-scroll-surface').all())[0]!
+    expect(surface.events).toContain('scroll')
     expect(await automation.getByTestId('load-earlier-messages').count()).toBe(0)
     expect(root.renderer.getAllText()).not.toContain('Load earlier messages')
 
@@ -58,6 +59,51 @@ describeNative('reverse-infinite transcript', () => {
     root.renderer.flush()
     expect(root.renderer.getAllText()).toContain('Prompt 40')
     expect(root.renderer.getAllText()).not.toContain('Prompt 0')
+
+    await automation.close()
+    root.unmount()
+  })
+
+  it('follows a streaming tail only until the reader scrolls away', async () => {
+    const root = createTestRoot()
+    const base = {
+      ...createInitialState('/tmp/stream-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/stream.jsonl', sessionId: 'stream' },
+      messages: messages.slice(-60),
+      forkMessages: forkMessages.slice(-30),
+      notices: [
+        { id: 1, kind: 'info' as const, message: 'First notice', createdAt: 1 },
+        { id: 2, kind: 'warning' as const, message: 'Second notice', createdAt: 2 },
+      ],
+    }
+    const render = (text: string) => root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={{ ...base, liveAssistant: { id: 'live', blocks: [{ index: 0, kind: 'text', text }] } }} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    render('Streaming answer')
+    const automation = await connectTest(root.renderer)
+    const list = (await automation.getByTestId('transcript-list').all())[0]!
+    expect(list.customProps?.followTail).toBe(true)
+    expect((await automation.getByTestId('composer-spacer').bounds()).height).toBe(260)
+    const beforeGrowth = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+
+    render(Array.from({ length: 30 }, (_, index) => `Streaming line ${index}`).join('\n'))
+    root.renderer.flush()
+    const afterGrowth = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+    expect(afterGrowth).toBeLessThanOrEqual(beforeGrowth)
+
+    const surfaceBounds = await automation.getByTestId('transcript-scroll-surface').bounds()
+    await automation.call('scrollWheel', { x: surfaceBounds.x + surfaceBounds.width / 2, y: surfaceBounds.y + 40, deltaX: 0, deltaY: 600 })
+    await Bun.sleep(25)
+    root.renderer.flush()
+    const userOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
+    expect((await automation.getByTestId('transcript-list').all())[0]!.customProps?.followTail).toBe(false)
+
+    render(Array.from({ length: 60 }, (_, index) => `Streaming line ${index}`).join('\n'))
+    root.renderer.flush()
+    expect(Math.abs((root.renderer.getScrollOffset(list.id)?.[1] ?? 0) - userOffset)).toBeLessThan(2)
 
     await automation.close()
     root.unmount()

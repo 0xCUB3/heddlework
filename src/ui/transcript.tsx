@@ -8,6 +8,7 @@ import { colors, nativeTheme } from './theme.ts'
 import { openExternal } from './open-external.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
+import { composerNotificationStackHeight } from './notifications.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
 
 const MAX_TOOL_OUTPUT = 24_000
@@ -60,6 +61,7 @@ export const Transcript = memo(function Transcript({
   const listRef = useRef<NativeElementHandle | null>(null)
   const paging = useRef(false)
   const upwardScrollDistance = useRef(0)
+  const lastScrollOffset = useRef<number | undefined>(undefined)
   const sessionKey = state.session.sessionFile ?? state.session.sessionId ?? state.workspacePath
   const [page, setPage] = useState({ sessionKey, count: TRANSCRIPT_PAGE_MESSAGES })
   const [tail, setTail] = useState({ sessionKey, following: true })
@@ -73,6 +75,12 @@ export const Transcript = memo(function Transcript({
     paging.current = false
     upwardScrollDistance.current = 0
   }, [visibleCount])
+  useEffect(() => {
+    lastScrollOffset.current = undefined
+    queueMicrotask(() => {
+      lastScrollOffset.current = renderer.getScrollOffset?.(listRef.current?.id ?? -1)?.[1]
+    })
+  }, [renderer, sessionKey])
 
   const windowed = useMemo(
     () => transcriptMessageWindow(state.messages, state.forkMessages, visibleCount),
@@ -89,8 +97,8 @@ export const Transcript = memo(function Transcript({
     setPage({ sessionKey, count: Math.min(state.messages.length, visibleCount + TRANSCRIPT_PAGE_MESSAGES) })
   }
   const handleScroll = (event: NativeScrollEvent) => {
-    if (followTail) setTail({ sessionKey, following: false })
     const delta = event.deltaY ?? 0
+    if (delta > 0 && followTail) setTail({ sessionKey, following: false })
     if (delta > 0) {
       upwardScrollDistance.current += event.precise ? delta : delta * 32
       if (upwardScrollDistance.current >= 320) loadEarlier()
@@ -100,7 +108,12 @@ export const Transcript = memo(function Transcript({
     queueMicrotask(() => {
       const offset = renderer.getScrollOffset?.(listRef.current?.id ?? event.elementId)
       const y = offset?.[1]
-      if (typeof y === 'number' && y >= -180) loadEarlier()
+      if (typeof y === 'number') {
+        const previous = lastScrollOffset.current
+        lastScrollOffset.current = y
+        if (delta < 0 && previous !== undefined && Math.abs(y - previous) < 0.5 && !followTail) setTail({ sessionKey, following: true })
+        if (y >= -180) loadEarlier()
+      }
     })
   }
 
@@ -110,10 +123,9 @@ export const Transcript = memo(function Transcript({
         testId="transcript-list"
         elementRef={listRef}
         alignment="top"
-        followTail={followTail}
+        followTail={followTail && state.session.isStreaming}
         overdraw={440}
         estimatedItemHeight={108}
-        onScroll={handleScroll}
         style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
       >
         {items.length === 0 ? (
@@ -122,12 +134,22 @@ export const Transcript = memo(function Transcript({
           <TimelineRow key={item.id} item={item} presenters={presenters} onOpenDiff={onOpenDiff} onRevert={onRevert} />
         ))}
         {state.session.isStreaming && <WorkingRow activity={state.activity} />}
-        <ComposerSpacer />
+        <ComposerSpacer noticeCount={state.notices.length} />
       </NativeVirtualList>
 
     </div>
   )
-})
+}, (previous, next) => previous.presenters === next.presenters
+  && previous.state.messages === next.state.messages
+  && previous.state.forkMessages === next.state.forkMessages
+  && previous.state.liveAssistant === next.state.liveAssistant
+  && previous.state.liveTools === next.state.liveTools
+  && previous.state.activity === next.state.activity
+  && previous.state.workspacePath === next.state.workspacePath
+  && previous.state.session.sessionFile === next.state.session.sessionFile
+  && previous.state.session.sessionId === next.state.session.sessionId
+  && previous.state.session.isStreaming === next.state.session.isStreaming
+  && previous.state.notices.length === next.state.notices.length)
 
 function TimelineRow({ item, presenters, onOpenDiff, onRevert }: { item: DisplayTimelineItem; presenters: ReadonlyMap<string, ToolPresenter>; onOpenDiff(): void; onRevert(entryId: string): void }) {
   return (
@@ -489,8 +511,8 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   )
 }
 
-function ComposerSpacer() {
-  return <div style={{ width: '100%', height: 194 }} />
+function ComposerSpacer({ noticeCount }: { noticeCount: number }) {
+  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) }} />
 }
 
 function Timestamp({ value }: { value: number }) {
