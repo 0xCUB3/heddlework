@@ -1,0 +1,8 @@
+packages:
+  - '.'
+
+# GPUIX's JSX declarations import React types without declaring the type peer.
+packageExtensions:
+  '@gpuix/react@0.5.1':
+    peerDependencies:
+      '@types/react': '>=18'

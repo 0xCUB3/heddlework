@@ -66,33 +66,34 @@ Heddlework currently launches Pi as an RPC sidecar. The transport boundary in `s
 
 Requirements:
 
-- [Bun](https://bun.sh) 1.3+
+- [pnpm](https://pnpm.io) 11+
+- [Bun](https://bun.sh) 1.3+ as the application runtime
 - a working `pi` executable on `PATH`
 - a platform supported by GPUIX: macOS, Linux, or Windows
 
 ```bash
 git clone https://github.com/monotykamary/heddlework.git
 cd heddlework
-bun install --frozen-lockfile
-bun run start -- /path/to/repository
+pnpm install --frozen-lockfile
+pnpm start -- /path/to/repository
 ```
 
 For UI development without credentials or a Pi process:
 
 ```bash
-bun run demo -- /path/to/repository
+pnpm demo -- /path/to/repository
 ```
 
 For hot reload:
 
 ```bash
-bun run dev -- /path/to/repository
+pnpm dev -- /path/to/repository
 ```
 
 Build the current unsigned executable:
 
 ```bash
-bun run build
+pnpm build
 ./dist/heddlework /path/to/repository
 ```
 
@@ -122,7 +123,7 @@ The desktop application remains the primary environment for local repositories, 
 If Pi is not discoverable from the desktop application environment:
 
 ```bash
-HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
+HEDDLEWORK_PI=/absolute/path/to/pi pnpm start -- /path/to/repository
 ```
 
 | Variable | Purpose |
@@ -175,10 +176,10 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 ## Development
 
 ```bash
-bun install --frozen-lockfile
-bun run typecheck
-bun test
-bun run build
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
 The native test suite exercises the real GPUIX reconciler and covers shell interactions, session paging, transcript following, clipboard media, extension dialogs, notifications, native diff virtualization, deep-scroll performance, and spring panel geometry.
