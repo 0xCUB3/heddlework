@@ -9,6 +9,7 @@ import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
+import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 class ManualTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
@@ -64,7 +65,7 @@ class ManualTransport implements AgentTransport {
 describe('Pi extension UI projection', () => {
   it('projects fire-and-forget surfaces and responds to dialogs', async () => {
     const transport = new ManualTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace', new PiSessionCatalog({ scope: 'cwd' }))
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     try {
       await controller.start()
       transport.emit({ type: 'extension_ui_request', id: 'notify-1', method: 'notify', message: 'Heads up', notifyType: 'warning' })
@@ -106,7 +107,7 @@ describe('Pi extension UI projection', () => {
 
   it('cancels an active dialog when a new session begins', async () => {
     const transport = new ManualTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace', new PiSessionCatalog({ scope: 'cwd' }))
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     try {
       await controller.start()
       transport.emit({
@@ -136,9 +137,9 @@ const describeNative = hasNativeTestRenderer ? describe : describe.skip
 describeNative('Pi extension dialog layout', () => {
   it('wraps a long title inside the composer panel', async () => {
     const transport = new ManualTransport()
-    const controller = new WorkbenchController(transport, '/tmp/workspace', new PiSessionCatalog({ scope: 'cwd' }))
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     const root = createTestRoot()
-    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map() }))
+    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
     await controller.start()
     const automation = await connectTest(root.renderer)
     try {

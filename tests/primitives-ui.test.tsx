@@ -46,9 +46,9 @@ describeNative('bounded select content', () => {
     await automation.getByTestId('overflow-model-picker').click()
     await Bun.sleep(20)
     root.renderer.flush()
-    const content = (await automation.getByTestId('overflow-model-picker-content').all())[0]!
-    expect(content.style?.overflow).toBe('scroll')
-    expect(content.bounds?.height).toBeLessThanOrEqual(340)
+    const content = root.renderer.findByTestId('overflow-model-picker-content')!
+    expect(content.style.overflow).toBe('scroll')
+    expect((await automation.getByTestId('overflow-model-picker-content').bounds()).height).toBeLessThanOrEqual(340)
     expect(await automation.getByTestId('overflow-model-picker-option').count()).toBe(24)
 
     root.renderer.scrollTo(content.id, 0, -10_000)

@@ -3,6 +3,7 @@ import { PiSessionCatalog, type PiSessionSummary } from '../src/pi/session-catal
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
+import { testControllerDependencies } from './helpers/workbench.ts'
 
 const sessions = Array.from({ length: 260 }, (_, index): PiSessionSummary => ({
   id: `session-${index}`,
@@ -61,7 +62,7 @@ describe('session history startup and paging', () => {
   it('publishes persisted sessions before the Pi process finishes starting', async () => {
     const transport = new DeferredTransport()
     const catalog = new PagedCatalog()
-    const controller = new WorkbenchController(transport, '/tmp/project-0', catalog)
+    const controller = new WorkbenchController(transport, '/tmp/project-0', testControllerDependencies(catalog))
     const starting = controller.start()
     try {
       await waitFor(() => controller.getSnapshot().sessions.length > 0)
@@ -80,7 +81,7 @@ describe('session history startup and paging', () => {
   it('loads the global catalog in bounded pages', async () => {
     const transport = new DeferredTransport()
     const catalog = new PagedCatalog()
-    const controller = new WorkbenchController(transport, '/tmp/project-0', catalog)
+    const controller = new WorkbenchController(transport, '/tmp/project-0', testControllerDependencies(catalog))
     transport.release()
     try {
       await controller.start()

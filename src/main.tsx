@@ -3,10 +3,14 @@ import { render } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
+import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
+import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from './ui/tool-presenters.ts'
 import {
   createAgentTransportPlugin,
+  createSessionCatalogPlugin,
   createWorkbenchControllerPlugin,
+  localWorkspaceDiffPlugin,
   workbenchControllerToken,
 } from './workbench/plugins.ts'
 
@@ -26,15 +30,20 @@ if (previous) await previous.dispose()
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
+kernel.mount(createWorkbenchControllerPlugin(workspacePath))
+kernel.mount(createCoreUiExtensionPlugin())
+kernel.mount(workbenchUiHostPlugin)
+kernel.mount(createSessionCatalogPlugin())
+kernel.mount(localWorkspaceDiffPlugin)
 kernel.mount(createAgentTransportPlugin({
   cwd: workspacePath,
   demo: process.env.HEDDLEWORK_DEMO === '1',
   ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
   piArgs: piArgumentsFromEnvironment(),
 }))
-kernel.mount(createWorkbenchControllerPlugin(workspacePath))
 
 const controller = kernel.get(workbenchControllerToken)
+const ui = kernel.get(workbenchUiRegistryToken)
 const runtime: RuntimeHandle = {
   kernel,
   dispose: async () => kernel.dispose(),
@@ -42,7 +51,7 @@ const runtime: RuntimeHandle = {
 globalThis.__heddleworkRuntime = runtime
 
 render(
-  <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} />,
+  <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} />,
   {
     title: 'Heddlework',
     width: 1240,

@@ -337,7 +337,7 @@ function chipTriggerStyle(open: boolean, width: number) {
     borderRadius: 7,
     borderWidth: 0,
     backgroundColor: open ? colors.hover : colors.transparent,
-    cursor: 'pointer',
+    cursor: 'pointer' as const,
     userSelect: 'none' as const,
     hover: { backgroundColor: colors.hover },
   }
@@ -356,7 +356,7 @@ function optionStyle(active: boolean) {
     paddingRight: 9,
     borderRadius: 7,
     backgroundColor: active ? colors.hover : '#171719',
-    cursor: 'pointer',
+    cursor: 'pointer' as const,
   }
 }
 

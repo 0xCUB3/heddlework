@@ -1,7 +1,6 @@
 import { resolve } from 'node:path'
-import { PiSessionCatalog, type PiSessionSummary } from '../pi/session-catalog.ts'
+import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
-import { loadWorkspaceDiff } from '../workspace/git-diff.ts'
 import {
   errorMessage,
   isExtensionUiRequest,
@@ -23,12 +22,22 @@ import {
   type ExtensionWidget,
   type WorkbenchState,
 } from './state.ts'
+import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 
 const SESSION_PAGE_SIZE = 120
 
+export interface WorkbenchControllerDependencies {
+  sessionCatalog: SessionCatalogService
+  workspaceDiff: WorkspaceDiffService
+  transportEvents?: 'direct' | 'external'
+  transportOwnership?: 'controller' | 'provider'
+}
+
 export class WorkbenchController {
   readonly #transport: AgentTransport
-  readonly #sessionCatalog: PiSessionCatalog
+  readonly #sessionCatalog: SessionCatalogService
+  readonly #workspaceDiff: WorkspaceDiffService
+  readonly #stopTransportOnDispose: boolean
   readonly #listeners = new Set<() => void>()
   #state: WorkbenchState
   #started = false
@@ -37,15 +46,23 @@ export class WorkbenchController {
   #dialogTimer: ReturnType<typeof setTimeout> | undefined
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
+  #sessionTransitionDepth = 0
   #unsubscribeEvent: () => void
   #unsubscribeStatus: () => void
 
-  constructor(transport: AgentTransport, workspacePath: string, sessionCatalog = new PiSessionCatalog()) {
+  constructor(transport: AgentTransport, workspacePath: string, dependencies: WorkbenchControllerDependencies) {
     this.#transport = transport
-    this.#sessionCatalog = sessionCatalog
+    this.#sessionCatalog = dependencies.sessionCatalog
+    this.#workspaceDiff = dependencies.workspaceDiff
+    this.#stopTransportOnDispose = dependencies.transportOwnership !== 'provider'
     this.#state = createInitialState(workspacePath)
-    this.#unsubscribeEvent = transport.onEvent((event) => this.#handleEvent(event))
-    this.#unsubscribeStatus = transport.onStatus((status) => this.#handleStatus(status))
+    if (dependencies.transportEvents === 'external') {
+      this.#unsubscribeEvent = () => undefined
+      this.#unsubscribeStatus = () => undefined
+    } else {
+      this.#unsubscribeEvent = transport.onEvent(this.acceptAgentEvent)
+      this.#unsubscribeStatus = transport.onStatus(this.acceptAgentStatus)
+    }
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -54,6 +71,9 @@ export class WorkbenchController {
   }
 
   readonly getSnapshot = (): WorkbenchState => this.#state
+
+  readonly acceptAgentEvent = (event: RpcRecord): void => this.#handleEvent(event)
+  readonly acceptAgentStatus = (status: TransportStatus): void => this.#handleStatus(status)
 
   async start(): Promise<void> {
     if (this.#started || this.#connecting) return
@@ -150,6 +170,7 @@ export class WorkbenchController {
       session.path === this.#state.session.sessionFile ||
       session.id === this.#state.session.sessionId
     ) return
+    this.#sessionTransitionDepth += 1
     try {
       this.#patch({ activity: 'Opening thread' })
       const result = await this.#transport.request<{ cancelled?: boolean }>({
@@ -179,6 +200,8 @@ export class WorkbenchController {
     } catch (error) {
       this.#patch({ activity: 'Ready' })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    } finally {
+      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
     }
   }
 
@@ -349,7 +372,7 @@ export class WorkbenchController {
         deletions: this.#state.workspaceDiff.deletions,
       },
     })
-    const workspaceDiff = await loadWorkspaceDiff(workspacePath)
+    const workspaceDiff = await this.#workspaceDiff.load(workspacePath)
     if (this.#state.workspacePath === workspacePath) this.#patch({ workspaceDiff })
   }
 
@@ -370,7 +393,7 @@ export class WorkbenchController {
     this.#clearDialogTimer()
     this.#unsubscribeEvent()
     this.#unsubscribeStatus()
-    await this.#transport.stop()
+    if (this.#stopTransportOnDispose) await this.#transport.stop()
     this.#listeners.clear()
   }
 
@@ -450,6 +473,7 @@ export class WorkbenchController {
 
   #handleExtensionUi(request: ExtensionUiRequest): void {
     if (request.method === 'notify') {
+      if (this.#sessionTransitionDepth > 0) return
       this.#setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification'))
       return
     }

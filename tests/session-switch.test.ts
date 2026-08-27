@@ -3,6 +3,7 @@ import { PiSessionCatalog, type PiSessionSummary } from '../src/pi/session-catal
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { PiMessage, RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
+import { testControllerDependencies } from './helpers/workbench.ts'
 
 const sessions: PiSessionSummary[] = [
   { id: 'one', path: '/tmp/one.jsonl', cwd: '/tmp/project', title: 'First thread', firstMessage: 'First', messageCount: 1, createdAt: 1, modifiedAt: 1 },
@@ -19,6 +20,7 @@ class SwitchingTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
   readonly statuses = new Set<(status: TransportStatus) => void>()
   active = sessions[0]!
+  #notifyDuringBootstrap = false
 
   async start(): Promise<void> { this.emitStatus({ state: 'running', pid: 1 }) }
   async stop(): Promise<void> { this.emitStatus({ state: 'stopped' }) }
@@ -30,9 +32,15 @@ class SwitchingTransport implements AgentTransport {
   async request<T = unknown>(command: RpcCommand): Promise<T> {
     if (command.type === 'switch_session') {
       this.active = sessions.find((session) => session.path === command.sessionPath) ?? this.active
+      this.emit({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
+      this.#notifyDuringBootstrap = true
       return { cancelled: false } as T
     }
     if (command.type === 'get_state') {
+      if (this.#notifyDuringBootstrap) {
+        this.#notifyDuringBootstrap = false
+        this.emit({ type: 'extension_ui_request', id: 'bootstrap-wizard', method: 'notify', message: 'Bootstrap wizard' })
+      }
       return {
         model: null,
         thinkingLevel: 'off',
@@ -52,6 +60,10 @@ class SwitchingTransport implements AgentTransport {
     return undefined as T
   }
 
+  private emit(event: RpcRecord): void {
+    for (const listener of this.events) listener(event)
+  }
+
   private emitStatus(status: TransportStatus): void {
     for (const listener of this.statuses) listener(status)
   }
@@ -60,11 +72,16 @@ class SwitchingTransport implements AgentTransport {
 describe('clickable session switching', () => {
   it('switches the Pi RPC session and rehydrates the selected transcript', async () => {
     const transport = new SwitchingTransport()
-    const controller = new WorkbenchController(transport, '/tmp/project', new StaticCatalog())
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
     try {
       await controller.start()
       expect(controller.getSnapshot().sessions.map((session) => session.title)).toEqual(['First thread', 'Second thread'])
+      const observedNoticeCounts: number[] = []
+      const unsubscribe = controller.subscribe(() => { observedNoticeCounts.push(controller.getSnapshot().notices.length) })
       await controller.switchSession(sessions[1]!)
+      unsubscribe()
+      expect(observedNoticeCounts).not.toContain(1)
+      expect(controller.getSnapshot().notices).toEqual([])
       expect(controller.getSnapshot().session.sessionId).toBe('two')
       expect(controller.getSnapshot().workspacePath).toBe('/tmp/project-two')
       expect(controller.getSnapshot().messages[0]?.content).toBe('Second')

@@ -10,6 +10,7 @@ import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { createInitialState } from '../src/workbench/state.ts'
 import { ComposerNotificationStack, NotificationLedgerView, composerNotificationStackHeight } from '../src/ui/notifications.tsx'
+import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 const controllers: WorkbenchController[] = []
 afterEach(async () => {
@@ -20,10 +21,10 @@ const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('notification surfaces', () => {
   it('pins the latest notice above the composer and keeps an immutable balanced ledger', async () => {
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp/notification-workspace', new PiSessionCatalog({ scope: 'cwd' }))
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/notification-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     controllers.push(controller)
     const root = createTestRoot()
-    root.render(<WorkbenchApp controller={controller} presenters={new Map()} />)
+    root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} />)
     await controller.start()
     const automation = await connectTest(root.renderer)
 
@@ -146,15 +147,19 @@ describeNative('notification surfaces', () => {
 
     await automation.getByTestId('dismiss-notification:4').click()
     root.renderer.flush()
-    const exiting = (await automation.getByTestId('notification-toast').all())[0]!
-    expect((exiting.customProps?.motion as { animate: { opacity: number; left: number } }).animate).toEqual({ opacity: 0, left: 18 })
+    const exiting = root.renderer.findByTestId('notification-toast')!
+    const exitMotion = (exiting.customProps?.motion as { animate: { opacity: number; top: number; left?: number } }).animate
+    expect(exitMotion).toEqual({ opacity: 0, top: 18 })
+    expect(exitMotion.left).toBeUndefined()
     expect(root.renderer.getPaintedText()).not.toContain('Notification 1')
     await Bun.sleep(220)
     root.renderer.flush()
     expect(root.renderer.getPaintedText()).not.toContain('Notification 4')
     expect(root.renderer.getPaintedText()).toContain('Notification 1')
-    const replacement = (await automation.getByTestId('notification-stack-item').all())[0]!
-    expect((replacement.customProps?.motion as { initial: { opacity: number; left: number } }).initial).toEqual({ opacity: 0, left: -10 })
+    const replacement = root.renderer.findByType('div').find((element) => element.testId === 'notification-stack-item')!
+    const entryMotion = (replacement.customProps?.motion as { initial: { opacity: number; top: number; left?: number } }).initial
+    expect(entryMotion).toEqual({ opacity: 0, top: 10 })
+    expect(entryMotion.left).toBeUndefined()
 
     await Bun.sleep(2_500)
     root.renderer.flush()
@@ -175,8 +180,8 @@ describeNative('notification surfaces', () => {
       </div>,
     )
     const automation = await connectTest(root.renderer)
-    const text = (await automation.getByTestId('notification-toast-message').all())[0]!
-    expect(text.style?.textOverflow).toBe('ellipsis')
+    const text = root.renderer.findByTestId('notification-toast-message')!
+    expect(text.style.textOverflow).toBe('ellipsis')
     await Bun.sleep(1_100)
     root.renderer.flush()
     const viewport = (await automation.getByTestId('notification-toast-scroll').all())[0]!

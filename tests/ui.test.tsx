@@ -12,6 +12,7 @@ import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { colors } from '../src/ui/theme.ts'
+import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 const controllers: WorkbenchController[] = []
 const workspaces: string[] = []
@@ -55,10 +56,10 @@ describeNative('WorkbenchApp', () => {
   it('renders and operates the T3-style native workbench shell', async () => {
     const workspace = createWorkspaceFixture()
     const project = basename(workspace)
-    const controller = new WorkbenchController(new DemoTransport(), workspace, new PiSessionCatalog({ scope: 'cwd' }))
+    const controller = new WorkbenchController(new DemoTransport(), workspace, testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     controllers.push(controller)
     const root = createTestRoot()
-    root.render(<WorkbenchApp controller={controller} presenters={new Map()} />)
+    root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} />)
     await controller.start()
     await waitForDiff(controller)
     root.renderer.flush()
@@ -192,19 +193,20 @@ describeNative('WorkbenchApp', () => {
     expect(Math.abs(surfaceBottom - contextBarBounds.y - 21)).toBeLessThanOrEqual(1)
     expect(Math.abs(contextBottom - surfaceBottom - 27)).toBeLessThanOrEqual(1)
     expect(Math.abs(contextBarBounds.width - composerSurfaceBounds.width + 44)).toBeLessThanOrEqual(2)
-    const contextShadow = (await automation.getByTestId('composer-context-shadow').all())[0]!
-    const contextShadowBounds = contextShadow.bounds!
-    const checkoutLabel = (await automation.getByTestId('composer-checkout-label').all())[0]!
-    const branchLabel = (await automation.getByTestId('composer-branch-label').all())[0]!
-    expect(contextShadowBounds.y + contextShadowBounds.height).toBeLessThanOrEqual(checkoutLabel.bounds!.y + 1)
+    const contextShadow = root.renderer.findByTestId('composer-context-shadow')!
+    const contextShadowBounds = await automation.getByTestId('composer-context-shadow').bounds()
+    const checkoutLabel = root.renderer.findByTestId('composer-checkout-label')!
+    const checkoutLabelBounds = await automation.getByTestId('composer-checkout-label').bounds()
+    const branchLabel = root.renderer.findByTestId('composer-branch-label')!
+    expect(contextShadowBounds.y + contextShadowBounds.height).toBeLessThanOrEqual(checkoutLabelBounds.y + 1)
     expect(contextShadowBounds.height).toBe(10)
-    expect(contextShadow.style?.bottom).toBe(26)
-    expect(contextShadow.style?.left).toBe(14)
-    expect(contextShadow.style?.right).toBe(14)
-    expect(checkoutLabel.style?.fontSize).toBe(12)
-    expect(checkoutLabel.style?.color).toBe('#767679')
-    expect(branchLabel.style?.fontSize).toBe(12)
-    expect(branchLabel.style?.color).toBe('#767679')
+    expect(contextShadow.style.bottom).toBe(26)
+    expect(contextShadow.style.left).toBe(14)
+    expect(contextShadow.style.right).toBe(14)
+    expect(checkoutLabel.style.fontSize).toBe(12)
+    expect(checkoutLabel.style.color).toBe('#767679')
+    expect(branchLabel.style.fontSize).toBe(12)
+    expect(branchLabel.style.color).toBe('#767679')
     const contextMeterBounds = await automation.getByTestId('context-meter').bounds()
     const sendBounds = await automation.getByTestId('send').bounds()
     expect(sendBounds.x - contextMeterBounds.x - contextMeterBounds.width).toBeGreaterThanOrEqual(8)
@@ -234,8 +236,8 @@ describeNative('WorkbenchApp', () => {
     }
     await automation.getByTestId('tool-row').click()
     expect(root.renderer.getPaintedText()).toContain('Ran 1 command')
-    expect((await automation.getByTestId('tool-row').all())[0]?.style?.fontFamily).toBe('Menlo')
-    expect((await automation.getByTestId('tool-summary-label').all())[0]?.style?.fontFamily).toBe('Menlo')
+    expect(root.renderer.findByTestId('tool-row')?.style.fontFamily).toBe('Menlo')
+    expect(root.renderer.findByTestId('tool-summary-label')?.style.fontFamily).toBe('Menlo')
     await automation.getByTestId('tool-detail-row').click()
     root.renderer.flush()
     expect(root.renderer.findByType('code').length).toBeGreaterThan(0)
@@ -255,7 +257,7 @@ describeNative('WorkbenchApp', () => {
     expect(await automation.getByTestId('diff-panel').count()).toBe(1)
     expect(root.renderer.getPaintedText()).toContain('Working tree')
     expect(root.renderer.getPaintedText()).toContain('README.md')
-    expect((await automation.getByTestId('diff-content').all())[0]?.style?.fontFamily).toBe('Menlo')
+    expect(root.renderer.findByTestId('diff-content')?.style.fontFamily).toBe('Menlo')
     expect(await automation.getByTestId('diff-native').count()).toBe(1)
     expect(await automation.getByTestId('diff-horizontal-scroll').count()).toBe(0)
     expect(await automation.getByTestId('diff-sticky-gutter').count()).toBe(0)
@@ -265,8 +267,8 @@ describeNative('WorkbenchApp', () => {
     expect(performance.now() - wrapStartedAt).toBeLessThan(500)
     expect(await automation.getByTestId('diff-native').count()).toBe(0)
     expect(await automation.getByTestId('diff-wrapped-scroll').count()).toBe(1)
-    expect((await automation.getByTestId('diff-wrapped-code').all())[0]?.style?.fontFamily).toBe('Menlo')
-    expect((await automation.getByTestId('diff-wrapped-code').all())[0]?.style?.whiteSpace).toBe('normal')
+    expect(root.renderer.findByTestId('diff-wrapped-code')?.style.fontFamily).toBe('Menlo')
+    expect(root.renderer.findByTestId('diff-wrapped-code')?.style.whiteSpace).toBe('normal')
     await automation.getByTestId('diff-wrap-toggle').click()
     await automation.getByTestId('diff-file-list').click()
     await Bun.sleep(70)
@@ -275,7 +277,7 @@ describeNative('WorkbenchApp', () => {
     const openingFileListWidth = (await automation.getByTestId('diff-file-list-host').bounds()).width
     expect(openingFileListWidth).toBeGreaterThan(0)
     expect(openingFileListWidth).toBeLessThan(212)
-    expect((await automation.getByTestId('diff-file-row').all())[0]?.style?.height).toBe(40)
+    expect(root.renderer.findByTestId('diff-file-row')?.style.height).toBe(40)
     expect(root.renderer.getPaintedText()).toContain('All changes')
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-diff.png')
@@ -362,14 +364,14 @@ describeNative('WorkbenchApp', () => {
     root.renderer.flush()
     const sessionCardAfterHover = await automation.getByTestId('sidebar-session-card-active').bounds()
     expect(sessionCardAfterHover).toEqual(sessionCardBeforeHover)
-    expect((await automation.getByTestId('sidebar-settle').all())[0]?.style?.backgroundColor ?? colors.transparent).toBe(colors.transparent)
-    expect((await automation.getByTestId('sidebar-settle-label').all())[0]?.style?.color).toBe(colors.textFaint)
+    expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor ?? colors.transparent).toBe(colors.transparent)
+    expect(root.renderer.findByTestId('sidebar-settle-label')?.style.color).toBe(colors.textFaint)
     const settleBounds = await automation.getByTestId('sidebar-settle').bounds()
     await automation.call('mouseMove', { x: settleBounds.x + settleBounds.width / 2, y: settleBounds.y + settleBounds.height / 2 })
     await Bun.sleep(30)
     root.renderer.flush()
-    expect((await automation.getByTestId('sidebar-settle-label').all())[0]?.style?.color).toBe(colors.text)
-    expect((await automation.getByTestId('sidebar-settle').all())[0]?.style?.backgroundColor ?? colors.transparent).toBe(colors.transparent)
+    expect(root.renderer.findByTestId('sidebar-settle-label')?.style.color).toBe(colors.text)
+    expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor ?? colors.transparent).toBe(colors.transparent)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-thread-hover.png')
       root.renderer.captureScreenshot(screenshot)

@@ -3,31 +3,41 @@ import { useGpuixRequired } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
-import { DiffPanel } from './diff-panel.tsx'
 import { NotificationLedgerView } from './notifications.tsx'
 import { SettingsView } from './settings-view.tsx'
 import { WorkbenchSidebar } from './sidebar.tsx'
-import { SurfacePickerPanel, SurfacePlaceholderPanel, type SurfaceKind } from './surface-picker.tsx'
+import { SurfacePickerPanel } from './surface-picker.tsx'
 import { Transcript } from './transcript.tsx'
+import type { WorkbenchUiRegistry } from './extensions.ts'
 import type { ToolPresenter } from './tool-presenters.ts'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
 import { SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
 
 type Surface = 'chat' | 'settings'
-type DeferredSurface = Exclude<SurfaceKind, 'diff'>
-type RightPanel = 'diff' | 'notifications' | 'surfaces' | DeferredSurface
+type RightPanel = 'notifications' | 'surfaces' | `surface:${string}`
 
 const LEFT_SIDEBAR_WIDTH = 256
+
+function surfacePanelId(surfaceId: string): `surface:${string}` {
+  return `surface:${surfaceId}`
+}
+
+function workbenchSurfaceId(panel: RightPanel | undefined): string | undefined {
+  return panel?.startsWith('surface:') ? panel.slice('surface:'.length) : undefined
+}
 
 export function WorkbenchApp({
   controller,
   presenters,
+  ui,
 }: {
   controller: WorkbenchController
   presenters: ReadonlyMap<string, ToolPresenter>
+  ui: WorkbenchUiRegistry
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
   const renderer = useGpuixRequired()
   const [surface, setSurface] = useState<Surface>('chat')
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true)
@@ -37,7 +47,7 @@ export function WorkbenchApp({
   const rightPanelProgress = useSpringProgress(Boolean(rightPanel))
   const [panelFullscreen, setPanelFullscreen] = useState(false)
   const fullscreenProgress = Math.min(1, useSpringProgress(panelFullscreen))
-  const diffOpen = rightPanel === 'diff'
+  const diffOpen = rightPanel === surfacePanelId('diff')
   const notificationsOpen = rightPanel === 'notifications'
   const [lastSeenNoticeId, setLastSeenNoticeId] = useState(0)
   const latestNoticeId = state.notices.at(-1)?.id ?? 0
@@ -68,6 +78,11 @@ export function WorkbenchApp({
     setPanelFullscreen(false)
   }
 
+  useEffect(() => {
+    const surfaceId = workbenchSurfaceId(rightPanel)
+    if (surfaceId && !uiSnapshot.surfaces.some((candidate) => candidate.id === surfaceId)) closeRightPanel()
+  }, [rightPanel, uiSnapshot.surfaces])
+
   const returnToConversation = () => {
     setSurface('chat')
     closeRightPanel()
@@ -85,13 +100,18 @@ export function WorkbenchApp({
     setRightPanel('notifications')
   }
 
-  const openDiff = (preserveFullscreen = false) => {
-    if (!diffOpen) void controller.refreshWorkspaceDiff()
+  const openWorkbenchSurface = (surfaceId: string, preserveFullscreen = false) => {
+    const contribution = uiSnapshot.surfaces.find((candidate) => candidate.id === surfaceId)
+    if (!contribution) return
+    contribution.onOpen?.()
     setSurface('chat')
     if (!preserveFullscreen) setPanelFullscreen(false)
-    setDisplayedRightPanel('diff')
-    setRightPanel('diff')
+    const panelId = surfacePanelId(surfaceId)
+    setDisplayedRightPanel(panelId)
+    setRightPanel(panelId)
   }
+
+  const openDiff = (preserveFullscreen = false) => openWorkbenchSurface('diff', preserveFullscreen)
 
   const toggleDiff = () => {
     if (diffOpen) closeRightPanel()
@@ -104,13 +124,7 @@ export function WorkbenchApp({
     setRightPanel('surfaces')
   }
 
-  const selectSurface = (selection: SurfaceKind) => {
-    if (selection === 'diff') openDiff(true)
-    else {
-      setDisplayedRightPanel(selection)
-      setRightPanel(selection)
-    }
-  }
+  const selectSurface = (surfaceId: string) => openWorkbenchSurface(surfaceId, true)
 
   const togglePanelFullscreen = () => setPanelFullscreen((value) => !value)
 
@@ -121,15 +135,16 @@ export function WorkbenchApp({
   const animatedSidebarProgress = leftSidebarProgress * (1 - fullscreenProgress)
   const fullscreenVisible = panelFullscreen || fullscreenProgress > 0.001
   const sidebarToggleLeft = process.platform === 'darwin' ? 90 : 10 + 54 * animatedSidebarProgress
-  const panel = displayedRightPanel === 'diff'
-    ? <DiffPanel diff={state.workspaceDiff} controller={controller} fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
-    : displayedRightPanel === 'notifications'
-      ? <NotificationLedgerView state={state} panelWidth={panelWidth} onClear={() => controller.clearNotices()} />
-      : displayedRightPanel === 'surfaces'
-        ? <SurfacePickerPanel fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
-        : displayedRightPanel === 'browser' || displayedRightPanel === 'terminal' || displayedRightPanel === 'files' || displayedRightPanel === 'agents'
-          ? <SurfacePlaceholderPanel surface={displayedRightPanel} fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNew={openSurfacePicker} onClose={closeRightPanel} />
-          : null
+  const displayedSurfaceId = workbenchSurfaceId(displayedRightPanel)
+  const displayedSurface = uiSnapshot.surfaces.find((candidate) => candidate.id === displayedSurfaceId)
+  const SurfaceComponent = displayedSurface?.component
+  const panel = displayedRightPanel === 'notifications'
+    ? <NotificationLedgerView state={state} panelWidth={panelWidth} onClear={() => controller.clearNotices()} />
+    : displayedRightPanel === 'surfaces'
+      ? <SurfacePickerPanel surfaces={uiSnapshot.surfaces} fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
+      : SurfaceComponent
+        ? <SurfaceComponent fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
+        : null
 
   return (
     <div testId="workbench-root" style={{ position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>

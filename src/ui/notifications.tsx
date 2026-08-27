@@ -64,8 +64,8 @@ function NotificationCard({ notice, newest, depth, stacked, exiting, onDismiss, 
   return (
     <MotionDiv
       testId={newest ? 'notification-toast' : 'notification-stack-item'}
-      initial={{ opacity: 0, left: -10 }}
-      animate={{ opacity: exiting ? 0 : baseOpacity, left: exiting ? 18 : 0 }}
+      initial={{ opacity: 0, top: 10 }}
+      animate={{ opacity: exiting ? 0 : baseOpacity, top: exiting ? 18 : 0 }}
       transition={{ duration: NOTIFICATION_EXIT_MS / 1_000, ease: 'easeOut' }}
       style={{
         position: 'relative',

@@ -45,9 +45,9 @@ describeNative('reverse-infinite transcript', () => {
     const initialText = root.renderer.getAllText()
     expect(initialText).toContain('Prompt 80')
     expect(initialText).not.toContain('Prompt 0')
-    const list = (await automation.getByTestId('transcript-list').all())[0]!
-    const surface = (await automation.getByTestId('transcript-scroll-surface').all())[0]!
-    expect(surface.events).toContain('scroll')
+    const list = root.renderer.findByTestId('transcript-list')!
+    const surface = root.renderer.findByTestId('transcript-scroll-surface')!
+    expect(surface.events.has('scroll')).toBe(true)
     expect(await automation.getByTestId('load-earlier-messages').count()).toBe(0)
     expect(root.renderer.getAllText()).not.toContain('Load earlier messages')
 
@@ -84,7 +84,7 @@ describeNative('reverse-infinite transcript', () => {
     )
     render('Streaming answer')
     const automation = await connectTest(root.renderer)
-    const list = (await automation.getByTestId('transcript-list').all())[0]!
+    const list = root.renderer.findByTestId('transcript-list')!
     expect(list.customProps?.followTail).toBe(true)
     expect((await automation.getByTestId('composer-spacer').bounds()).height).toBe(260)
     const beforeGrowth = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
@@ -99,7 +99,7 @@ describeNative('reverse-infinite transcript', () => {
     await Bun.sleep(25)
     root.renderer.flush()
     const userOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
-    expect((await automation.getByTestId('transcript-list').all())[0]!.customProps?.followTail).toBe(false)
+    expect(root.renderer.findByTestId('transcript-list')?.customProps?.followTail).toBe(false)
 
     render(Array.from({ length: 60 }, (_, index) => `Streaming line ${index}`).join('\n'))
     root.renderer.flush()

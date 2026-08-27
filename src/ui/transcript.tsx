@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { useGpuixRequired } from '@gpuix/react'
+import { useGpuixRequired, type StyleDesc } from '@gpuix/react'
 import type { PiForkMessage, PiImageContent, PiMessage } from '../pi/types.ts'
 import type { WorkbenchState, ToolRun } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
@@ -13,6 +13,17 @@ import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolP
 
 const MAX_TOOL_OUTPUT = 24_000
 const TRANSCRIPT_PAGE_MESSAGES = 80
+const CODE_SURFACE_STYLE = {
+  width: '100%',
+  paddingTop: 10,
+  paddingRight: 12,
+  paddingBottom: 10,
+  paddingLeft: 12,
+  borderRadius: 9,
+  borderWidth: 1,
+  borderColor: colors.border,
+  backgroundColor: colors.code,
+} satisfies StyleDesc
 
 type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'tool' }> | {
   id: string
@@ -319,16 +330,15 @@ function ToolRow({ item, presenters, onRevert }: { item: Extract<TimelineItem, {
         <FabricToolBody fabric={presentation.fabric} output={content} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 7, paddingLeft: 31, paddingTop: 4, paddingBottom: 6 }}>
-          {args && <code code={args} language="json" showHeader={false} theme={nativeTheme} style={{ width: '100%' }} />}
+          {args && <code code={args} language="json" theme={nativeTheme} style={CODE_SURFACE_STYLE} />}
           {content ? (
             presentation.kind === 'diff'
               ? <diff patch={content} wordDiff maxLines={500} theme={nativeTheme} style={{ width: '100%', fontFamily: nativeTheme.fontMono }} />
               : (
                 <code
                   code={content}
-                  showHeader={false}
                   theme={nativeTheme}
-                  style={{ width: '100%' }}
+                  style={CODE_SURFACE_STYLE}
                   {...(presentation.language ? { language: presentation.language } : {})}
                   {...(presentation.path ? { path: presentation.path } : {})}
                 />
@@ -355,7 +365,7 @@ function FabricToolBody({ fabric, output }: { fabric: FabricToolPresentation; ou
         </div>
         {fabric.description && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, fontFamily: nativeTheme.fontMono }}>{fabric.description}</text>}
       </div>
-      {fabric.code && <code code={fabric.code} language="typescript" showHeader theme={nativeTheme} style={{ width: '100%' }} />}
+      {fabric.code && <code code={fabric.code} language="typescript" theme={nativeTheme} style={CODE_SURFACE_STYLE} />}
       {fabric.audits.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
           {fabric.audits.map((audit, index) => <FabricAuditCard key={`${audit.ref}-${index}`} audit={audit} />)}
@@ -364,7 +374,7 @@ function FabricToolBody({ fabric, output }: { fabric: FabricToolPresentation; ou
       {output && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           <text style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, fontFamily: nativeTheme.fontMono }}>RESULT</text>
-          <code code={output} language={fabric.outputLanguage ?? 'text'} showHeader={false} theme={nativeTheme} style={{ width: '100%' }} />
+          <code code={output} language={fabric.outputLanguage ?? 'text'} theme={nativeTheme} style={CODE_SURFACE_STYLE} />
         </div>
       )}
     </div>
@@ -384,13 +394,12 @@ function FabricAuditCard({ audit }: { audit: FabricAuditPresentation }) {
         <div style={{ flexGrow: 1 }} />
         {audit.durationMs !== undefined && <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>{formatDuration(audit.durationMs)}</text>}
       </div>
-      {audit.args && <code code={formatFabricValue(audit.args)} language="json" showHeader={false} theme={nativeTheme} style={{ width: '100%' }} />}
+      {audit.args && <code code={formatFabricValue(audit.args)} language="json" theme={nativeTheme} style={CODE_SURFACE_STYLE} />}
       {result && (
         <code
           code={result}
-          showHeader={false}
           theme={nativeTheme}
-          style={{ width: '100%' }}
+          style={CODE_SURFACE_STYLE}
           {...(language ? { language } : {})}
           {...(path ? { path } : {})}
         />

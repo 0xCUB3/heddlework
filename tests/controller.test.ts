@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
+import { testControllerDependencies } from './helpers/workbench.ts'
 
 function waitForSettled(controller: WorkbenchController): Promise<void> {
   if (isFullySettled(controller)) return Promise.resolve()
@@ -21,7 +22,7 @@ function isFullySettled(controller: WorkbenchController): boolean {
 
 describe('WorkbenchController', () => {
   it('boots, streams a task, and rehydrates the authoritative transcript', async () => {
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace', new PiSessionCatalog({ scope: 'cwd' }))
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     try {
       await controller.start()
       expect(controller.getSnapshot().connection).toBe('connected')

@@ -7,6 +7,7 @@ import type { PiSessionSummary } from '../src/pi/session-catalog.ts'
 import { WorkbenchSidebar } from '../src/ui/sidebar.tsx'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createInitialState } from '../src/workbench/state.ts'
+import { testControllerDependencies } from './helpers/workbench.ts'
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const now = Date.now()
@@ -23,7 +24,7 @@ const sessions = Array.from({ length: 40 }, (_, index): PiSessionSummary => ({
 
 describeNative('sidebar initial session position', () => {
   it('resets to the top after initial hydration without disrupting later user scrolling', async () => {
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp/project')
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/project', testControllerDependencies())
     const root = createTestRoot()
     const render = (state: ReturnType<typeof createInitialState>) => root.render(
       <WorkbenchSidebar
@@ -43,7 +44,7 @@ describeNative('sidebar initial session position', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       const automation = await connectTest(root.renderer)
-      const list = (await automation.getByTestId('sidebar-session-list').all())[0]!
+      const list = root.renderer.findByTestId('sidebar-session-list')!
       root.renderer.scrollTo(list.id, 0, -1_000)
       expect(root.renderer.getScrollOffset(list.id)?.[1] ?? 0).toBeLessThan(-100)
 
@@ -53,12 +54,12 @@ describeNative('sidebar initial session position', () => {
       expect(Math.abs(root.renderer.getScrollOffset(list.id)?.[1] ?? 0)).toBeLessThanOrEqual(0.01)
       await Bun.sleep(0)
       root.renderer.flush()
-      const fadeOpacity = async (edge: 'top' | 'bottom') => {
-        const fade = (await automation.getByTestId(`sidebar-scroll-fade-${edge}`).all())[0]!
+      const fadeOpacity = (edge: 'top' | 'bottom') => {
+        const fade = root.renderer.findByTestId(`sidebar-scroll-fade-${edge}`)!
         return (fade.customProps?.motion as { animate: { opacity: number } }).animate.opacity
       }
-      expect(await fadeOpacity('top')).toBe(0)
-      expect(await fadeOpacity('bottom')).toBe(1)
+      expect(fadeOpacity('top')).toBe(0)
+      expect(fadeOpacity('bottom')).toBe(1)
 
       root.renderer.scrollTo(list.id, 0, -500)
       const userOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
@@ -70,8 +71,8 @@ describeNative('sidebar initial session position', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       expect(root.renderer.getScrollOffset(list.id)?.[1] ?? 0).toBeLessThan(-100)
-      expect(await fadeOpacity('top')).toBe(1)
-      expect(await fadeOpacity('bottom')).toBe(1)
+      expect(fadeOpacity('top')).toBe(1)
+      expect(fadeOpacity('bottom')).toBe(1)
 
       root.renderer.scrollTo(list.id, 0, -10_000)
       render({ ...createInitialState('/tmp/project'), sessions: [...laterSessions, { ...sessions[0]!, id: 'last', path: '/tmp/last.jsonl' }], sessionsLoading: false })
@@ -79,8 +80,8 @@ describeNative('sidebar initial session position', () => {
       root.renderer.flush()
       await Bun.sleep(0)
       root.renderer.flush()
-      expect(await fadeOpacity('top')).toBe(1)
-      expect(await fadeOpacity('bottom')).toBe(0)
+      expect(fadeOpacity('top')).toBe(1)
+      expect(fadeOpacity('bottom')).toBe(0)
       await automation.close()
     } finally {
       root.unmount()
@@ -89,7 +90,7 @@ describeNative('sidebar initial session position', () => {
   })
 
   it('keeps settled history collapsed until its muted shelf is expanded', async () => {
-    const controller = new WorkbenchController(new DemoTransport(), '/tmp/project')
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/project', testControllerDependencies())
     const root = createTestRoot()
     const settledSessions = sessions.slice(0, 3).map((session, index) => ({
       ...session,
@@ -121,8 +122,8 @@ describeNative('sidebar initial session position', () => {
       expect(root.renderer.getPaintedText()).toContain('Settled')
       expect(root.renderer.getPaintedText()).not.toContain('Settled (3)')
       expect(await automation.getByTestId('sidebar-settled-row').count()).toBe(3)
-      const titles = await automation.getByTestId('sidebar-settled-title').all()
-      expect(titles.every((title) => title.style?.color === '#595A5D')).toBe(true)
+      const titles = root.renderer.findByType('text').filter((element) => element.testId === 'sidebar-settled-title')
+      expect(titles.every((title) => title.style.color === '#595A5D')).toBe(true)
 
       await automation.getByTestId('sidebar-settled-toggle').click()
       await Bun.sleep(0)

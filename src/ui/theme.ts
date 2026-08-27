@@ -78,9 +78,9 @@ export const nativeTheme = {
   metrics: {
     codeTextSize: 12,
     codeLineHeight: 19,
-    codeRadius: 9,
-    codePaddingX: 12,
-    codePaddingY: 10,
+    mdCodeRadius: 9,
+    mdCodePaddingX: 12,
+    mdCodePaddingY: 10,
     mdTextSize: 14,
     mdLineHeight: 22,
     mdBlockGap: 12,

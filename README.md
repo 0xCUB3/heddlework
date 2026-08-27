@@ -140,14 +140,17 @@ HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
 
 Heddlework follows a small supervised component model inspired by Cordis:
 
-- `src/core/kernel.ts` owns services, keyed contribution slots, plugin scopes, and reverse-order cleanup.
-- `src/pi/transport.ts` defines the application-facing harness transport seam.
-- `src/pi/rpc-transport.ts` implements the current Pi RPC adapter with strict LF-only JSONL framing.
-- `src/pi/session-catalog.ts` performs bounded scans of Pi's persisted session metadata.
-- `src/workspace/git-diff.ts` loads tracked and untracked patches through argument-safe Git processes.
+- `src/core/kernel.ts` owns deferred service injection, typed events, keyed contributions, dependent lifetimes, and reverse-order cleanup.
+- `src/workbench/plugins.ts` composes transport, session discovery, workspace diff, and controller capabilities without giving the controller concrete providers to construct.
+- `src/pi/transport.ts` defines the application-facing harness transport seam; Pi RPC is its first provider.
 - `src/workbench/controller.ts` projects harness events into UI state and rehydrates from authoritative transcripts.
-- `src/ui/tool-presenters.ts` is a keyed and reversible presentation contribution slot.
-- `src/ui/` contains the GPUIX shell and never owns harness execution truth.
+- `src/plugin-api.ts` is the narrow source-level facade for feature authors.
+- `src/ui/extensions.ts` hosts observable, reversible feature manifests; one plugin can contribute several native workbench surfaces.
+- `src/ui/core-extension.tsx` registers the shipped surfaces through the same contract available to future user plugins.
+- `src/ui/tool-presenters.ts` remains a keyed presentation contribution slot.
+- `src/ui/` contains the shared GPUIX shell and never owns harness execution truth.
+
+The UI boundary is intentionally not a microfrontend platform: extensions share one React/GPUIX runtime and register coarse feature surfaces rather than independent applications or a plugin per visual element. See [UI extensions](docs/ui-extensions.md).
 
 Pi remains authoritative for Pi messages and sessions. Streaming state is temporary and replaced by `get_messages` after completion. Future adapters must preserve the same authority rule for their harnesses.
 
@@ -158,6 +161,8 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [x] Streaming conversation, tools, images, extension UI, and notifications
 - [x] Virtualized transcript and large-diff paths
 - [x] Diff, settings, notification, and surface shells
+- [x] Cordis-style service/event lifetimes and in-process UI surface manifests
+- [ ] External plugin discovery and compatibility metadata
 - [ ] Stable harness adapter protocol
 - [ ] Codex and Claude adapters
 - [ ] Durable task and dependency graphs
