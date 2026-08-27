@@ -201,7 +201,7 @@ export interface PiExecutableResolutionOptions {
 }
 
 export function resolvePiExecutable(options: PiExecutableResolutionOptions = {}): string {
-  const configured = options.configured ?? process.env.PI_WORKBENCH_PI
+  const configured = options.configured ?? process.env.HEDDLEWORK_PI
   if (configured) return configured
 
   const exists = options.exists ?? existsSync

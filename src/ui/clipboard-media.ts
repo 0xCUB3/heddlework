@@ -5,7 +5,7 @@ import { basename, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import type { ComposerImage, PiContentBlock, PiMessage } from '../pi/types.ts'
 
-const IMAGE_CACHE_DIRECTORY = join(tmpdir(), 'pi-workbench-images-v1')
+const IMAGE_CACHE_DIRECTORY = join(tmpdir(), 'heddlework-images-v1')
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024
 const APPLE_FILE_SCRIPT = `set clipboardFile to the clipboard as alias
 return POSIX path of clipboardFile

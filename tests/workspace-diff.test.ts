@@ -11,7 +11,7 @@ afterEach(() => {
 
 describe('loadWorkspaceDiff', () => {
   it('loads tracked and untracked working tree patches without a shell', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'pi-workbench-diff-'))
+    const directory = mkdtempSync(join(tmpdir(), 'heddlework-diff-'))
     directories.push(directory)
     mkdirSync(join(directory, 'src'))
     writeFileSync(join(directory, 'README.md'), '# Fixture\n')

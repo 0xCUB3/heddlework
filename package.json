@@ -1,12 +1,32 @@
 {
-  "name": "pi-workbench",
+  "name": "heddlework",
   "version": "0.1.0",
+  "description": "A native, harness-neutral workspace for agent sessions, task graphs, diffs, and durable work.",
   "private": true,
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/monotykamary/heddlework.git"
+  },
+  "bugs": {
+    "url": "https://github.com/monotykamary/heddlework/issues"
+  },
+  "homepage": "https://github.com/monotykamary/heddlework#readme",
+  "keywords": [
+    "agentic-development",
+    "coding-agent",
+    "desktop-app",
+    "gpuix",
+    "pi"
+  ],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
   "scripts": {
     "dev": "bun --hot src/main.tsx",
     "start": "bun src/main.tsx",
-    "demo": "PI_WORKBENCH_DEMO=1 bun --hot src/main.tsx",
+    "demo": "HEDDLEWORK_DEMO=1 bun --hot src/main.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "check": "bun run typecheck && bun test",

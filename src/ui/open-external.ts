@@ -26,9 +26,9 @@ export function launchWorkspaceWindow(path: string, sessionPath?: string): void 
   const standalone = typeof Bun !== 'undefined' && Bun.isStandaloneExecutable
   const script = process.argv[1]
   const args = standalone || !script ? [workspace] : [script, workspace]
-  const env: NodeJS.ProcessEnv = { ...process.env, PI_WORKBENCH_CWD: workspace }
-  if (sessionPath) env.PI_WORKBENCH_SESSION = sessionPath
-  else delete env.PI_WORKBENCH_SESSION
+  const env: NodeJS.ProcessEnv = { ...process.env, HEDDLEWORK_CWD: workspace }
+  if (sessionPath) env.HEDDLEWORK_SESSION = sessionPath
+  else delete env.HEDDLEWORK_SESSION
   const child = spawn(process.execPath, args, { stdio: 'ignore', detached: true, env })
   child.unref()
 }
@@ -37,19 +37,19 @@ export function directoryPickerCommand(platform: NodeJS.Platform = process.platf
   if (platform === 'darwin') {
     return {
       command: '/usr/bin/osascript',
-      args: ['-e', 'POSIX path of (choose folder with prompt "Open project in π Code")'],
+      args: ['-e', 'POSIX path of (choose folder with prompt "Open project in Heddlework")'],
     }
   }
   if (platform === 'win32') {
     const script = [
       'Add-Type -AssemblyName System.Windows.Forms',
       '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
-      '$dialog.Description = "Open project in π Code"',
+      '$dialog.Description = "Open project in Heddlework"',
       'if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $dialog.SelectedPath } else { exit 1 }',
     ].join('; ')
     return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', script] }
   }
-  return { command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in π Code'] }
+  return { command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in Heddlework'] }
 }
 
 export async function pickWorkspaceDirectory(): Promise<string | undefined> {

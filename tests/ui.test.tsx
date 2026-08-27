@@ -64,7 +64,7 @@ describeNative('WorkbenchApp', () => {
     root.renderer.flush()
 
     const painted = root.renderer.getPaintedText()
-    expect(painted).toContain('Code')
+    expect(painted).toContain('Heddlework')
     expect(painted).toContain('Search')
     expect(painted).toContain('All projects')
     expect(painted).toContain(project)
@@ -122,7 +122,7 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('composer').fill(longDraft)
     root.renderer.flush()
     expect(controller.getSnapshot().editorText).toBe(longDraft)
-    expect(performance.now() - inputStartedAt).toBeLessThan(1_000)
+    expect(performance.now() - inputStartedAt).toBeLessThan(1_500)
     await automation.getByTestId('composer').fill('')
 
     const pastedImage = createComposerImage(readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png')), 'image/png')

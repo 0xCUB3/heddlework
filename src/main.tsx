@@ -17,19 +17,19 @@ interface RuntimeHandle {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __piWorkbenchRuntime: RuntimeHandle | undefined
+  var __heddleworkRuntime: RuntimeHandle | undefined
 }
 
 const workspacePath = resolveWorkspacePath()
-const previous = globalThis.__piWorkbenchRuntime
+const previous = globalThis.__heddleworkRuntime
 if (previous) await previous.dispose()
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
 kernel.mount(createAgentTransportPlugin({
   cwd: workspacePath,
-  demo: process.env.PI_WORKBENCH_DEMO === '1',
-  ...(process.env.PI_WORKBENCH_PI ? { command: process.env.PI_WORKBENCH_PI } : {}),
+  demo: process.env.HEDDLEWORK_DEMO === '1',
+  ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
   piArgs: piArgumentsFromEnvironment(),
 }))
 kernel.mount(createWorkbenchControllerPlugin(workspacePath))
@@ -39,12 +39,12 @@ const runtime: RuntimeHandle = {
   kernel,
   dispose: async () => kernel.dispose(),
 }
-globalThis.__piWorkbenchRuntime = runtime
+globalThis.__heddleworkRuntime = runtime
 
 render(
   <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} />,
   {
-    title: 'π Code',
+    title: 'Heddlework',
     width: 1240,
     height: 820,
     titlebarTransparent: true,
@@ -64,21 +64,21 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 function resolveWorkspacePath(): string {
-  if (process.env.PI_WORKBENCH_CWD) return resolve(process.env.PI_WORKBENCH_CWD)
+  if (process.env.HEDDLEWORK_CWD) return resolve(process.env.HEDDLEWORK_CWD)
   const argument = process.argv.slice(2).find((value) => value !== '--' && !value.startsWith('-'))
   return resolve(argument ?? process.cwd())
 }
 
 function piArgumentsFromEnvironment(): string[] {
   const args: string[] = []
-  if (process.env.PI_WORKBENCH_PROVIDER) args.push('--provider', process.env.PI_WORKBENCH_PROVIDER)
-  if (process.env.PI_WORKBENCH_MODEL) args.push('--model', process.env.PI_WORKBENCH_MODEL)
-  if (process.env.PI_WORKBENCH_SESSION) args.push('--session', process.env.PI_WORKBENCH_SESSION)
-  if (process.env.PI_WORKBENCH_NO_SESSION === '1') args.push('--no-session')
+  if (process.env.HEDDLEWORK_PROVIDER) args.push('--provider', process.env.HEDDLEWORK_PROVIDER)
+  if (process.env.HEDDLEWORK_MODEL) args.push('--model', process.env.HEDDLEWORK_MODEL)
+  if (process.env.HEDDLEWORK_SESSION) args.push('--session', process.env.HEDDLEWORK_SESSION)
+  if (process.env.HEDDLEWORK_NO_SESSION === '1') args.push('--no-session')
   return args
 }
 
 function debugOverlay(): 'hidden' | 'minimal' | 'full' {
-  const value = process.env.PI_WORKBENCH_DEBUG_OVERLAY
+  const value = process.env.HEDDLEWORK_DEBUG_OVERLAY
   return value === 'minimal' || value === 'full' ? value : 'hidden'
 }

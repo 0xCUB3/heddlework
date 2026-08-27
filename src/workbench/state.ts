@@ -128,7 +128,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     dialog: undefined,
     editorText: '',
     editorImages: [],
-    windowTitle: 'π Code',
+    windowTitle: 'Heddlework',
   }
 }
 

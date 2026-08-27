@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 
 const root = resolve(import.meta.dir, '..')
 const dist = resolve(root, 'dist')
-const output = resolve(dist, process.platform === 'win32' ? 'pi-workbench.exe' : 'pi-workbench')
+const output = resolve(dist, process.platform === 'win32' ? 'heddlework.exe' : 'heddlework')
 
 rmSync(dist, { recursive: true, force: true })
 mkdirSync(dist, { recursive: true })
@@ -20,7 +20,7 @@ const result = await Bun.build({
 
 if (!result.success) {
   for (const log of result.logs) console.error(log)
-  throw new Error('Failed to compile Pi Workbench')
+  throw new Error('Failed to compile Heddlework')
 }
 
 if (process.platform !== 'win32') chmodSync(output, 0o755)

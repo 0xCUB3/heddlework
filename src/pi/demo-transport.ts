@@ -2,7 +2,7 @@ import type { AgentTransport, TransportStatus } from './transport.ts'
 import type { PiForkMessage, PiImageContent, PiMessage, PiModel, PiSessionState, RpcCommand, RpcRecord, ThinkingLevel } from './types.ts'
 
 const models: PiModel[] = [
-  { provider: 'demo', id: 'pi-workbench', name: 'Pi Workbench Demo', reasoning: true, contextWindow: 200_000, input: ['text', 'image'] },
+  { provider: 'demo', id: 'heddlework', name: 'Heddlework Demo', reasoning: true, contextWindow: 200_000, input: ['text', 'image'] },
   { provider: 'demo', id: 'fast', name: 'Demo Fast', reasoning: false, contextWindow: 128_000 },
 ]
 

@@ -11,7 +11,7 @@ afterEach(async () => {
 
 describe('PiSessionCatalog', () => {
   it('lists persisted sessions with latest names and user-message fallback titles', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'pi-workbench-catalog-'))
+    const root = await mkdtemp(join(tmpdir(), 'heddlework-catalog-'))
     roots.push(root)
     const agentDir = join(root, 'agent')
     const cwd = join(root, 'project')
@@ -41,7 +41,7 @@ describe('PiSessionCatalog', () => {
   })
 
   it('loads every project and skips large message bodies after the first prompt', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'pi-workbench-catalog-all-'))
+    const root = await mkdtemp(join(tmpdir(), 'heddlework-catalog-all-'))
     roots.push(root)
     const agentDir = join(root, 'agent')
     const currentCwd = join(root, 'project-a')

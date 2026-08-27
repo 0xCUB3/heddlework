@@ -316,9 +316,11 @@ export function sessionLifecycleBucket(session: PiSessionSummary, lifecycle: Thr
 
 function BrandHeader() {
   return (
-    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingLeft: process.platform === 'darwin' ? 90 : 0, backgroundColor: colors.sidebar }}>
-      <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 750 }}>π</text>
-      <text style={{ color: colors.textMuted, fontSize: 13, fontWeight: 550 }}>Code</text>
+    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingLeft: process.platform === 'darwin' ? 90 : 0, backgroundColor: colors.sidebar }}>
+      <div style={{ width: 18, height: 18, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised }}>
+        <text style={{ color: colors.info, fontSize: 10, fontWeight: 800 }}>H</text>
+      </div>
+      <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 650 }}>Heddlework</text>
     </div>
   )
 }

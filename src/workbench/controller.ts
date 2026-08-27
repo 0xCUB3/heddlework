@@ -478,7 +478,7 @@ export class WorkbenchController {
       return
     }
     if (request.method === 'setTitle') {
-      this.#patch({ windowTitle: request.title ?? 'π Code' })
+      this.#patch({ windowTitle: request.title ?? 'Heddlework' })
       return
     }
     if (request.method === 'set_editor_text') {

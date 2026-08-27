@@ -7,6 +7,6 @@ describe('workspace directory picker', () => {
     expect(directoryPickerCommand('darwin')?.args.join(' ')).toContain('choose folder')
     expect(directoryPickerCommand('win32')).toMatchObject({ command: 'powershell.exe' })
     expect(directoryPickerCommand('win32')?.args.join(' ')).toContain('FolderBrowserDialog')
-    expect(directoryPickerCommand('linux')).toEqual({ command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in π Code'] })
+    expect(directoryPickerCommand('linux')).toEqual({ command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in Heddlework'] })
   })
 })

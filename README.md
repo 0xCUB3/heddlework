@@ -1,101 +1,192 @@
-# Pi Workbench
+<div align="center">
 
-A first native desktop workbench for [pi](https://github.com/earendil-works/pi), rendered with [GPUIX](https://github.com/remorses/gpuix).
+# Heddlework
 
-The desktop experience closely adapts the MIT-licensed [T3 Code](https://github.com/pingdotgg/t3code) control surface for Pi: searchable threads, project-oriented navigation, a centered conversation timeline, compact tool disclosures, and a floating composer. Browser integration remains out of scope.
+**Agent work, woven across harnesses.**
 
-## Features
+_A native workspace for conversations, code changes, durable work, and review — Pi first, harness-neutral by design._
 
-- Native shell reproduced against a locally run T3 Code reference: neutral chrome, centered draft composer, top-aligned threads, and compact header actions
-- Searchable, clickable persisted Pi sessions discovered across Pi's global JSONL session directory with bounded fast-path scans
-- Hover copy/revert actions, macOS clipboard-image prompts, and functional Active, Snoozed, and Settled thread groups
-- Streaming markdown, expandable reasoning, and collapsed “Worked for” tool summaries
-- Specialized `bash`, `read`, `edit`, and `write` tool details, rich nested `fabric_exec` audit disclosures, and changed-file summaries with direct Diff access
-- Functional split-pane Git working-tree review with native unified diff rendering
-- Opaque two-second notification toasts with an unread badge and a dedicated right-side notification ledger
-- Persistent Pi sessions through `pi --mode rpc`
-- New/switch/export session, prompt, steer, abort, model, thinking, and compaction controls
-- Open a second project in a separate native workbench process
-- Pi extension `select`, `confirm`, `input`, `editor`, notification, status, widget, title, and editor-text requests
-- Reconnect behavior and process error reporting
-- A no-credentials demo transport for UI development
+<p>
+  <img src="https://raw.githubusercontent.com/monotykamary/heddlework/main/media/banner.svg" alt="Animated Heddlework banner showing Pi, Codex, and Claude harness threads woven into sessions, task graphs, and review surfaces" width="100%">
+</p>
 
-## Requirements
+[![status](https://img.shields.io/badge/status-active%20development-f59e0b?style=for-the-badge)](#project-status)
+[![checks](https://img.shields.io/github/actions/workflow/status/monotykamary/heddlework/check.yml?branch=main&style=for-the-badge&label=checks)](https://github.com/monotykamary/heddlework/actions/workflows/check.yml)
+[![current harness](https://img.shields.io/badge/current%20harness-Pi-8b5cf6?style=for-the-badge)](https://github.com/earendil-works/pi-coding-agent)
+[![runtime](https://img.shields.io/badge/native%20UI-GPUIX-2563eb?style=for-the-badge)](https://github.com/remorses/gpuix)
+[![license](https://img.shields.io/badge/license-MIT-f4c430?style=for-the-badge)](LICENSE)
 
-- Bun 1.3+
-- A working `pi` command on `PATH`
-- A platform supported by GPUIX (`macOS`, Linux, or Windows)
+</div>
 
-On macOS, the prebuilt GPUIX package is sufficient. Building GPUIX itself requires Xcode and the Metal toolchain.
+---
 
-## Run
+Heddlework is an agent development environment built around a simple idea: **the workspace should outlive any one agent harness**. Conversations, diffs, tasks, artifacts, review state, and workspace safety belong to the product; Pi, Codex, Claude, and future runtimes connect through adapters.
 
-```sh
-bun install
-bun run dev -- /path/to/repository
-```
+Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/earendil-works/pi-coding-agent), rendered with [GPUIX](https://github.com/remorses/gpuix). The longer-term direction adds durable dependency-aware work, safe checkout lanes, scheduling, triage, and Fabric-powered orchestration without introducing another hidden agent loop.
 
-Use the non-hot entry point when validating process lifecycle:
+## Project status
 
-```sh
+> [!WARNING]
+> **Heddlework is under active development.** The interaction model, persistence format, adapter API, and packaging story may change. It is useful today as a source-built Pi desktop client, but it is not yet a signed or supported desktop release.
+
+| Area | Status |
+| --- | --- |
+| Native desktop shell | **Available** — macOS, Linux, and Windows through GPUIX |
+| Pi adapter | **Available** — Pi RPC, persisted sessions, models, thinking, compaction, and extension UI |
+| Diff and review surfaces | **Available** — native virtualized diffs, wrapping, file filtering, and changed-file entry points |
+| Fabric presentation | **Available** — rich nested `fabric_exec` activity and audit disclosures |
+| Durable work graph | **In design** — dependencies, schedules, checkout lanes, retries, triage, and artifacts |
+| Codex adapter | **Planned** |
+| Claude adapter | **Planned** |
+| Signed desktop distribution | **Planned** |
+| Web and mobile companions | **Longer term** |
+
+## Why Heddlework?
+
+A heddle guides one thread inside a loom harness. Heddlework applies that model to agentic development: harness adapters carry execution, while one workspace keeps the human-visible pattern coherent.
+
+| | Capability | What it unlocks |
+| :-: | --- | --- |
+| 🧵 | **Harness-neutral core** | Pi is the first adapter, not the product boundary. Codex and Claude can join without replacing session, workspace, or review concepts. |
+| 💬 | **Durable conversations** | Searchable project-scoped sessions, streaming responses, reasoning, tool activity, forks, queued steering, and compaction. |
+| 🧭 | **Work lifecycle** | Active, snoozed, and settled threads with persistent navigation designed to grow into scheduled and dependency-aware work. |
+| 🧩 | **Native surfaces** | Conversation, settings, notifications, changed files, and extensible right-side work surfaces in one GPU-rendered shell. |
+| 🔎 | **Review without context switching** | Native virtualized diffs, wrapped lines, file filtering, mutation summaries, and artifact-oriented direction. |
+| 🛡️ | **Explicit authority** | Harnesses remain authoritative for their execution and transcripts; Heddlework projects them instead of inventing a second agent loop. |
+
+## How it fits
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/monotykamary/heddlework/main/media/architecture.svg" alt="Animated Heddlework architecture showing neutral workspace services connected to multiple harness adapters and native, web, and mobile surfaces" width="100%">
+</p>
+
+Heddlework currently launches Pi as an RPC sidecar. The transport boundary in `src/pi/transport.ts` is intentionally small; future harness adapters can implement the same application-facing contract while preserving their own execution semantics.
+
+## Install today: source preview
+
+Requirements:
+
+- [Bun](https://bun.sh) 1.3+
+- a working `pi` executable on `PATH`
+- a platform supported by GPUIX: macOS, Linux, or Windows
+
+```bash
+git clone https://github.com/monotykamary/heddlework.git
+cd heddlework
+bun install --frozen-lockfile
 bun run start -- /path/to/repository
 ```
 
-Run the UI without starting Pi:
+For UI development without credentials or a Pi process:
 
-```sh
+```bash
 bun run demo -- /path/to/repository
 ```
 
-If `pi` is not discoverable from the application environment:
+For hot reload:
 
-```sh
-PI_WORKBENCH_PI=/absolute/path/to/pi bun run start -- /path/to/repository
+```bash
+bun run dev -- /path/to/repository
 ```
 
-Optional environment variables:
+Build the current unsigned executable:
+
+```bash
+bun run build
+./dist/heddlework /path/to/repository
+```
+
+## Install later: product channels
+
+These channels describe the intended distribution path; they are **not available yet**.
+
+| Channel | Intended path |
+| --- | --- |
+| Desktop | Signed and notarized macOS, Windows, and Linux downloads from GitHub Releases, followed by native package-manager channels |
+| Web | An installable browser/PWA client connected to a local or remote Heddlework host |
+| Mobile | Companion clients for steering, approvals, notifications, task triage, and artifact review |
+
+The desktop application remains the primary environment for local repositories, terminals, worktrees, and native agent processes. Web and mobile are planned as additional surfaces over the same workspace model, not separate products.
+
+## Current workflow
+
+1. **Open a repository** — pass a path or use the native directory picker.
+2. **Choose or resume work** — Heddlework discovers persisted Pi sessions across projects without eagerly loading full transcripts.
+3. **Collaborate** — prompt, steer, abort, switch models, adjust thinking, paste images, and answer extension dialogs.
+4. **Inspect execution** — expand reasoning, ordinary tools, and nested Fabric activity without leaving the timeline.
+5. **Review changes** — open the working-tree diff, filter files, wrap long lines, and keep large patches virtualized.
+6. **Organize the result** — snooze or settle threads and review persistent notification history.
+
+## Configuration
+
+If Pi is not discoverable from the desktop application environment:
+
+```bash
+HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
+```
 
 | Variable | Purpose |
-|---|---|
-| `PI_WORKBENCH_CWD` | Workspace path instead of the positional argument |
-| `PI_WORKBENCH_PI` | Absolute Pi executable path |
-| `PI_WORKBENCH_PROVIDER` | Initial provider passed to Pi |
-| `PI_WORKBENCH_MODEL` | Initial model passed to Pi |
-| `PI_WORKBENCH_NO_SESSION=1` | Disable Pi session persistence |
-| `PI_WORKBENCH_DEMO=1` | Use the deterministic demo transport |
-| `PI_WORKBENCH_DEBUG_OVERLAY=full` | Show GPUIX frame timings |
-
-## Verify
-
-```sh
-bun run check
-bun run build
-```
-
-The compiled executable is written to `dist/pi-workbench`. It still launches the installed `pi` executable as a sidecar; bundling Pi itself is deliberately deferred.
+| --- | --- |
+| `HEDDLEWORK_CWD` | Workspace path instead of the positional argument |
+| `HEDDLEWORK_PI` | Absolute Pi executable path |
+| `HEDDLEWORK_PROVIDER` | Initial provider passed to Pi |
+| `HEDDLEWORK_MODEL` | Initial model passed to Pi |
+| `HEDDLEWORK_SESSION` | Pi session file to resume |
+| `HEDDLEWORK_NO_SESSION=1` | Disable Pi session persistence |
+| `HEDDLEWORK_DEMO=1` | Use the deterministic no-credentials demo transport |
+| `HEDDLEWORK_DEBUG_OVERLAY=full` | Show GPUIX frame timings (`minimal` is also supported) |
 
 ## Architecture
 
-The desktop shell follows a small subset of Cordis's design:
+Heddlework follows a small supervised component model inspired by Cordis:
 
 - `src/core/kernel.ts` owns services, keyed contribution slots, plugin scopes, and reverse-order cleanup.
-- `src/pi/transport.ts` is the provider-neutral agent transport seam.
-- `src/pi/rpc-transport.ts` is the real Pi provider and implements strict LF-only JSONL framing.
-- `src/pi/session-catalog.ts` performs bounded global scans of Pi's persisted session metadata for the clickable thread sidebar.
+- `src/pi/transport.ts` defines the application-facing harness transport seam.
+- `src/pi/rpc-transport.ts` implements the current Pi RPC adapter with strict LF-only JSONL framing.
+- `src/pi/session-catalog.ts` performs bounded scans of Pi's persisted session metadata.
 - `src/workspace/git-diff.ts` loads tracked and untracked patches through argument-safe Git processes.
-- `src/workbench/controller.ts` projects RPC events into UI state, switches sessions, tracks thread lifecycle metadata, and rehydrates from Pi's authoritative transcript.
-- `src/ui/tool-presenters.ts` is a keyed, reversible UI contribution slot.
-- `src/ui/` contains the GPUIX shell; it does not own agent or session truth.
+- `src/workbench/controller.ts` projects harness events into UI state and rehydrates from authoritative transcripts.
+- `src/ui/tool-presenters.ts` is a keyed and reversible presentation contribution slot.
+- `src/ui/` contains the GPUIX shell and never owns harness execution truth.
 
-Pi remains the source of truth for messages and sessions. Streaming state is temporary and is replaced by `get_messages` after completion.
+Pi remains authoritative for Pi messages and sessions. Streaming state is temporary and replaced by `get_messages` after completion. Future adapters must preserve the same authority rule for their harnesses.
 
-## Current limitations
+## Roadmap
 
-- Each window owns one active project and Pi process; opening another project starts another window.
-- Project selection currently uses an absolute-path input rather than a native file picker.
-- No terminal emulator or code editor yet.
-- Snooze/settle metadata and notification history currently live for the lifetime of the workbench process.
-- Pi TUI-only custom components cannot be represented over RPC; the standard extension UI protocol is supported.
-- Packaging is an unsigned executable, not a notarized installer.
+- [x] Native GPU-rendered desktop shell
+- [x] Pi RPC adapter and persisted-session browser
+- [x] Streaming conversation, tools, images, extension UI, and notifications
+- [x] Virtualized transcript and large-diff paths
+- [x] Diff, settings, notification, and surface shells
+- [ ] Stable harness adapter protocol
+- [ ] Codex and Claude adapters
+- [ ] Durable task and dependency graphs
+- [ ] Scheduled and recurring work with safe checkout lanes
+- [ ] Triage, mutation receipts, and artifact review
+- [ ] Signed desktop installers and automatic updates
+- [ ] Web workspace client
+- [ ] Mobile companion clients
 
-See [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) for T3 Code and icon attributions.
+## Development
+
+```bash
+bun install --frozen-lockfile
+bun run typecheck
+bun test
+bun run build
+```
+
+The native test suite exercises the real GPUIX reconciler and covers shell interactions, session paging, transcript following, clipboard media, extension dialogs, notifications, native diff virtualization, deep-scroll performance, and spring panel geometry.
+
+## Acknowledgments
+
+- The desktop layout and interaction language adapt the MIT-licensed [T3 Code](https://github.com/pingdotgg/t3code) interface.
+- Icons include paths adapted from [Lucide](https://github.com/lucide-icons/lucide).
+- Pi integration targets [Pi](https://github.com/earendil-works/pi-coding-agent).
+- Native rendering is provided by [GPUIX](https://github.com/remorses/gpuix).
+
+See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for complete attribution.
+
+## License
+
+MIT
