@@ -5,6 +5,7 @@ import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createQueueState } from '../src/workbench/queue.ts'
+import { Composer } from '../src/ui/composer.tsx'
 import { QueueDock, queueDockReserveHeight } from '../src/ui/queue-dock.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
@@ -12,6 +13,43 @@ import { testControllerDependencies } from './helpers/workbench.ts'
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('queue dock', () => {
+  it('queues with Option/Alt+Enter while stopped and resumes with empty Enter', async () => {
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/queue-ui-stopped', testControllerDependencies())
+    await controller.start()
+
+    function Fixture() {
+      const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+      return <div style={{ width: 820, padding: 20 }}><Composer state={state} controller={controller} draft /></div>
+    }
+
+    const root = createTestRoot({ width: 900, height: 620 })
+    root.render(<Fixture />)
+    const automation = await connectTest(root.renderer)
+    try {
+      await automation.getByTestId('composer').fill('/fabric prewalk')
+      const composer = root.renderer.findByTestId('composer')!
+      root.renderer.nativeSimulateKeystrokes(composer.id, 'alt-enter')
+      await Bun.sleep(0)
+      root.renderer.flush()
+      expect(controller.getSnapshot().session.isStreaming).toBe(false)
+      expect(controller.getSnapshot().queue.pauseReason).toBe('manual')
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/fabric prewalk'])
+      expect(await automation.getByTestId('queue-resume').count()).toBe(1)
+      expect(root.renderer.getPaintedText()).toContain(process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue')
+
+      const emptyComposer = root.renderer.findByTestId('composer')!
+      root.renderer.nativeSimulateKeystrokes(emptyComposer.id, 'enter')
+      await Bun.sleep(0)
+      expect(controller.getSnapshot().queue.paused).toBe(false)
+      expect(controller.getSnapshot().queue.items).toEqual([])
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
+    } finally {
+      await automation.close()
+      root.unmount()
+      await controller.dispose()
+    }
+  })
+
   it('stacks twenty rows, springs upward, scrolls, edits, and drag-reorders from the left handle', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/queue-ui', testControllerDependencies())
     for (let index = 1; index <= 20; index += 1) controller.queueInput(index === 1 ? '/compact focus on decisions' : `Queued task ${String(index).padStart(2, '0')}`)

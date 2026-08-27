@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import type { ComposerImage, PiModel, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { ExtensionDialog, ExtensionWidget, WorkbenchState } from '../workbench/state.ts'
@@ -11,6 +11,7 @@ import { QueueDock } from './queue-dock.tsx'
 
 export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
   const [pastingImage, setPastingImage] = useState(false)
+  const queuedByKeyDown = useRef(false)
   const connected = state.connection === 'connected'
   const modelOptions: SelectOption[] = state.models.map((model) => ({
     value: modelKey(model),
@@ -23,9 +24,12 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
   const below = Object.values(state.widgets).filter((widget) => widget.placement === 'belowEditor')
   const contextPercent = state.stats?.contextUsage?.percent
 
-  const send = (value: string) => {
-    if (!value.trim() && state.editorImages.length === 0) return
-    void controller.submit(value)
+  const send = (value: string, queue = false) => {
+    if (!value.trim() && state.editorImages.length === 0) {
+      if (!queue && state.queue.paused && state.queue.items.length > 0) controller.resumeQueue()
+      return
+    }
+    void controller.submit(value, { queue })
   }
 
   const pasteClipboardImage = async (editorTextBeforePaste: string) => {
@@ -43,8 +47,13 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
     }
   }
 
-  const handleComposerKeyDown = (event: { key?: string; modifiers?: { cmd?: boolean; ctrl?: boolean } }) => {
+  const handleComposerKeyDown = (event: { key?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean } }) => {
     if (event.key?.toLowerCase() === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
+    if (event.key?.toLowerCase() === 'enter' && event.modifiers?.alt) {
+      queuedByKeyDown.current = true
+      send(state.editorText, true)
+      queueMicrotask(() => { queuedByKeyDown.current = false })
+    }
   }
 
   return (
@@ -111,7 +120,13 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
           }}
           onChange={(event) => controller.setEditorText(String(event.value ?? ''))}
           onKeyDown={handleComposerKeyDown}
-          onSubmit={(event) => send(String(event.value ?? state.editorText))}
+          onSubmit={(event) => {
+            if (queuedByKeyDown.current) {
+              queuedByKeyDown.current = false
+              return
+            }
+            send(String(event.value ?? state.editorText), Boolean(event.modifiers?.alt))
+          }}
         />
 
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 10, paddingLeft: 10, paddingRight: 11, overflow: 'visible', userSelect: 'none' }}>
@@ -137,6 +152,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
           />
           <div style={{ flexGrow: 1 }} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+            {connected && !state.session.isStreaming && <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue'}</text>}
             {typeof contextPercent === 'number' && <ContextMeter percent={contextPercent} />}
             <PrimaryAction
               running={state.session.isStreaming}

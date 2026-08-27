@@ -54,6 +54,29 @@ class QueueTransport implements AgentTransport {
 }
 
 describe('owned workbench queue', () => {
+  it('stages stopped submissions without starting Pi and resumes from the parked head', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-stopped', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('/new', { queue: true })
+      await controller.submit('Start only when resumed', { queue: true })
+      expect(controller.getSnapshot().session.isStreaming).toBe(false)
+      expect(controller.getSnapshot().queue.paused).toBe(true)
+      expect(controller.getSnapshot().queue.pauseReason).toBe('manual')
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/new', 'Start only when resumed'])
+      expect(transport.commands.filter((command) => command.type === 'prompt')).toHaveLength(0)
+
+      controller.resumeQueue()
+      await Bun.sleep(10)
+      expect(transport.commands.some((command) => command.type === 'new_session')).toBe(true)
+      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: 'Start only when resumed' })
+      expect(controller.getSnapshot().queue.items).toEqual([])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('keeps twenty raw rows editable and reorderable, steers explicitly, and pauses across abort', async () => {
     const transport = new QueueTransport()
     const controller = new WorkbenchController(transport, '/tmp/queue-workspace', testControllerDependencies())

@@ -41,7 +41,7 @@ export interface WorkbenchQueueState {
   steering: string[]
   followUp: string[]
   paused: boolean
-  pauseReason: 'abort' | 'error' | undefined
+  pauseReason: 'abort' | 'error' | 'manual' | undefined
   dispatchingId: string | undefined
 }
 

@@ -104,20 +104,20 @@ export class WorkbenchController {
     await this.start()
   }
 
-  async submit(text: string): Promise<void> {
+  async submit(text: string, options: { queue?: boolean } = {}): Promise<void> {
     const message = text.trim()
     const editorImages = this.#state.editorImages
     if ((!message && editorImages.length === 0) || this.#state.connection !== 'connected') return
-    if (this.#state.session.isStreaming) {
+    if (this.#state.session.isStreaming || options.queue) {
       this.#patch({ editorText: '', editorImages: [] })
-      this.queueInput(message, editorImages)
+      this.queueInput(message, editorImages, { paused: Boolean(options.queue && !this.#state.session.isStreaming) })
       return
     }
     this.#patch({ editorText: '', editorImages: [] })
     await this.#sendPrompt(message, editorImages, true)
   }
 
-  queueInput(text: string, images: readonly ComposerImage[] = []): QueuedInput | undefined {
+  queueInput(text: string, images: readonly ComposerImage[] = [], options: { paused?: boolean } = {}): QueuedInput | undefined {
     const message = text.trim()
     if (!message && images.length === 0) return undefined
     const item: QueuedInput = {
@@ -126,7 +126,15 @@ export class WorkbenchController {
       images: images.map((image) => ({ ...image })),
       createdAt: Date.now(),
     }
-    this.#patch({ queue: { ...this.#state.queue, items: [...this.#state.queue.items, item], ...(this.#state.queue.items.length === 0 ? { paused: false, pauseReason: undefined } : {}) } })
+    const resetPause = this.#state.queue.items.length === 0 && !options.paused
+    this.#patch({
+      queue: {
+        ...this.#state.queue,
+        items: [...this.#state.queue.items, item],
+        ...(options.paused ? { paused: true, pauseReason: 'manual' as const } : {}),
+        ...(resetPause ? { paused: false, pauseReason: undefined } : {}),
+      },
+    })
     return item
   }
 
