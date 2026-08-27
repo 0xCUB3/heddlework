@@ -124,17 +124,37 @@ describeNative('notification surfaces', () => {
       message: `Notification ${index + 1}`,
       createdAt: Date.now() + index,
     }))
-    root.render(<ComposerNotificationStack notices={notices} onClear={() => { clears += 1 }} />)
+    function StackFixture() {
+      const [current, setCurrent] = React.useState(notices)
+      return <ComposerNotificationStack notices={current} onDismiss={(id) => setCurrent((items) => items.filter((item) => item.id !== id))} onClear={() => { clears += 1; setCurrent([]) }} />
+    }
+    root.render(<StackFixture />)
     const automation = await connectTest(root.renderer)
 
     expect(await automation.getByTestId('notification-stack-item').count()).toBe(2)
     expect(await automation.getByTestId('notification-toast').count()).toBe(1)
     expect(root.renderer.getPaintedText()).not.toContain('Notification 1')
     expect(root.renderer.getPaintedText()).toContain('Notification 2')
+    expect(await automation.getByTestId('clear-notifications-icon').count()).toBe(1)
+    expect(await automation.getByTestId('dismiss-notification:2').count()).toBe(1)
+    expect(await automation.getByTestId('dismiss-notification:3').count()).toBe(1)
+    expect(await automation.getByTestId('dismiss-notification:4').count()).toBe(1)
     const cards = await automation.getByTestId('notification-stack-item').all()
     const newestBounds = await automation.getByTestId('notification-toast').bounds()
     expect(newestBounds.y - cards[0]!.bounds!.y).toBeLessThan(40)
     expect(composerNotificationStackHeight(4)).toBe(84)
+
+    await automation.getByTestId('dismiss-notification:4').click()
+    root.renderer.flush()
+    const exiting = (await automation.getByTestId('notification-toast').all())[0]!
+    expect((exiting.customProps?.motion as { animate: { opacity: number; left: number } }).animate).toEqual({ opacity: 0, left: 18 })
+    expect(root.renderer.getPaintedText()).not.toContain('Notification 1')
+    await Bun.sleep(220)
+    root.renderer.flush()
+    expect(root.renderer.getPaintedText()).not.toContain('Notification 4')
+    expect(root.renderer.getPaintedText()).toContain('Notification 1')
+    const replacement = (await automation.getByTestId('notification-stack-item').all())[0]!
+    expect((replacement.customProps?.motion as { initial: { opacity: number; left: number } }).initial).toEqual({ opacity: 0, left: -10 })
 
     await Bun.sleep(2_500)
     root.renderer.flush()
@@ -151,7 +171,7 @@ describeNative('notification surfaces', () => {
     const message = 'This overflowing notification remains compact without continuously mutating native scroll state.'
     root.render(
       <div style={{ width: 300 }}>
-        <ComposerNotificationStack notices={[{ id: 1, kind: 'info', message, createdAt: Date.now() }]} onClear={() => {}} />
+        <ComposerNotificationStack notices={[{ id: 1, kind: 'info', message, createdAt: Date.now() }]} onDismiss={() => {}} onClear={() => {}} />
       </div>,
     )
     const automation = await connectTest(root.renderer)

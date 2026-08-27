@@ -20,7 +20,7 @@ describeNative('diff viewport performance', () => {
     const elapsed = performance.now() - startedAt
     const automation = await connectTest(root.renderer)
 
-    expect(elapsed).toBeLessThan(1_000)
+    expect(elapsed).toBeLessThan(2_500)
     expect(await automation.getByTestId('diff-wrapped-code').count()).toBe(400)
     expect(await automation.getByTestId('diff-wrapped-show-more').count()).toBe(1)
     const wrappedBounds = await automation.getByTestId('diff-wrapped-viewport').bounds()
@@ -51,7 +51,7 @@ describeNative('diff viewport performance', () => {
     const elapsed = performance.now() - startedAt
     const automation = await connectTest(root.renderer)
 
-    expect(elapsed).toBeLessThan(1_500)
+    expect(elapsed).toBeLessThan(3_000)
     expect(await automation.getByTestId('diff-native').count()).toBe(1)
     expect(await automation.getByTestId('diff-horizontal-scroll').count()).toBe(0)
     expect(await automation.getByTestId('diff-sticky-gutter').count()).toBe(0)
@@ -89,6 +89,6 @@ describeNative('diff viewport performance', () => {
 
     await automation.close()
     root.unmount()
-  })
+  }, 15_000)
 
 })

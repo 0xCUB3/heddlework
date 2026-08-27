@@ -62,7 +62,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
         overflow: 'visible',
       }}
     >
-      <ComposerNotificationStack notices={state.notices} onClear={() => controller.clearNotices()} />
+      <ComposerNotificationStack notices={state.notices} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => controller.clearNotices()} />
       {state.dialog && <ExtensionDialogPanel key={state.dialog.id} dialog={state.dialog} controller={controller} />}
       {above.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
 

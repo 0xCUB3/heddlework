@@ -25,6 +25,7 @@ export type IconName =
   | 'eye'
   | 'wrench'
   | 'x'
+  | 'eraser'
   | 'arrowUp'
   | 'stop'
   | 'bell'
@@ -65,6 +66,7 @@ const ICONS: Record<IconName, string> = {
   eye: svg('<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>'),
   wrench: svg('<path d="M14.7 6.3a4 4 0 0 0-5-5l2.2 2.2-2.8 2.8-2.2-2.2a4 4 0 0 0 5 5L20 17.2a2 2 0 0 1-2.8 2.8l-8.1-8.1"/>'),
   x: svg('<path d="m6 6 12 12M18 6 6 18"/>'),
+  eraser: svg('<path d="m7 21-4-4a2.8 2.8 0 0 1 0-4L14 2a2.8 2.8 0 0 1 4 0l3 3a2.8 2.8 0 0 1 0 4L9 21Z"/><path d="m5 11 9 9M7 21h14"/>'),
   arrowUp: svg('<path d="M12 19V5m-6 6 6-6 6 6"/>'),
   stop: svg('<rect x="7" y="7" width="10" height="10" rx="1" fill="currentColor" stroke="none"/>'),
   bell: svg('<path d="M10.3 4.2a2 2 0 0 1 3.4 0A6 6 0 0 1 18 10v4l2 3H4l2-3v-4a6 6 0 0 1 4.3-5.8Z"/><path d="M10 21h4"/>'),

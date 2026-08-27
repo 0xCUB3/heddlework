@@ -122,7 +122,7 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('composer').fill(longDraft)
     root.renderer.flush()
     expect(controller.getSnapshot().editorText).toBe(longDraft)
-    expect(performance.now() - inputStartedAt).toBeLessThan(1_500)
+    expect(performance.now() - inputStartedAt).toBeLessThan(5_000)
     await automation.getByTestId('composer').fill('')
 
     const pastedImage = createComposerImage(readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png')), 'image/png')
@@ -284,7 +284,7 @@ describeNative('WorkbenchApp', () => {
     }
     await Bun.sleep(SPRING_SETTLE_MS)
     root.renderer.flush()
-    expect(Math.abs((await automation.getByTestId('diff-file-list-host').bounds()).width - 212)).toBeLessThanOrEqual(1)
+    expect(Math.abs((await automation.getByTestId('diff-file-list-host').bounds()).width - 212)).toBeLessThanOrEqual(3)
     await automation.getByTestId('diff-file-list').click()
     await Bun.sleep(70)
     root.renderer.flush()

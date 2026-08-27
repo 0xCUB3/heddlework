@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { motion, Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
+import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
@@ -8,6 +8,7 @@ import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
 import { launchWorkspaceWindow, pickWorkspaceDirectory } from './open-external.ts'
 import { colors } from './theme.ts'
+import { MotionDiv } from './motion.ts'
 
 const SIDEBAR_WIDTH = 256
 const SIDEBAR_BORDER_WIDTH = 1
@@ -263,9 +264,9 @@ function SidebarScrollFade({ edge, visible }: { edge: 'top' | 'bottom'; visible:
     ? ['#090A0B', '#090A0BCC', '#090A0B66', '#090A0B20']
     : ['#090A0B20', '#090A0B66', '#090A0BCC', '#090A0B']
   return (
-    <motion.div testId={`sidebar-scroll-fade-${edge}`} initial={false} animate={{ opacity: visible ? 1 : 0 }} transition={{ duration: 0.18, ease: 'easeOut' }} style={{ position: 'absolute', left: 0, right: 0, ...(edge === 'top' ? { top: 0 } : { bottom: 0 }), height: 24, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
+    <MotionDiv testId={`sidebar-scroll-fade-${edge}`} initial={false} animate={{ opacity: visible ? 1 : 0 }} transition={{ duration: 0.18, ease: 'easeOut' }} style={{ position: 'absolute', left: 0, right: 0, ...(edge === 'top' ? { top: 0 } : { bottom: 0 }), height: 24, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
       {bands.map((backgroundColor, index) => <React.Fragment key={index}><div style={{ height: 6, width: '100%', backgroundColor, pointerEvents: 'none' }} /></React.Fragment>)}
-    </motion.div>
+    </MotionDiv>
   )
 }
 
@@ -316,10 +317,7 @@ export function sessionLifecycleBucket(session: PiSessionSummary, lifecycle: Thr
 
 function BrandHeader() {
   return (
-    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingLeft: process.platform === 'darwin' ? 90 : 0, backgroundColor: colors.sidebar }}>
-      <div style={{ width: 18, height: 18, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised }}>
-        <text style={{ color: colors.info, fontSize: 10, fontWeight: 800 }}>H</text>
-      </div>
+    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingLeft: process.platform === 'darwin' ? 90 : 0, backgroundColor: colors.sidebar }}>
       <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 650 }}>Heddlework</text>
     </div>
   )

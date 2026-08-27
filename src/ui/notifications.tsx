@@ -1,15 +1,38 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { NativeVirtualList } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
+import { MotionDiv } from './motion.ts'
 
 export function composerNotificationStackHeight(noticeCount: number): number {
   const visibleCount = Math.min(3, Math.max(0, noticeCount))
   return visibleCount === 0 ? 0 : 48 + (visibleCount - 1) * 18
 }
 
-export function ComposerNotificationStack({ notices, onClear }: { notices: Notice[]; onClear(): void }) {
+const NOTIFICATION_EXIT_MS = 180
+
+export function ComposerNotificationStack({ notices, onDismiss, onClear }: { notices: Notice[]; onDismiss(id: number): void; onClear(): void }) {
+  const [exitingIds, setExitingIds] = useState<Set<number>>(() => new Set())
+  const dismissTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>())
+  useEffect(() => () => {
+    for (const timer of dismissTimers.current.values()) clearTimeout(timer)
+    dismissTimers.current.clear()
+  }, [])
+  const dismiss = (id: number) => {
+    if (dismissTimers.current.has(id)) return
+    setExitingIds((current) => new Set(current).add(id))
+    const timer = setTimeout(() => {
+      dismissTimers.current.delete(id)
+      onDismiss(id)
+      setExitingIds((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
+    }, NOTIFICATION_EXIT_MS)
+    dismissTimers.current.set(id, timer)
+  }
   const visible = notices.slice(-3)
   if (visible.length === 0) return null
 
@@ -25,6 +48,8 @@ export function ComposerNotificationStack({ notices, onClear }: { notices: Notic
             newest={newest}
             depth={depth}
             stacked={index > 0}
+            exiting={exitingIds.has(notice.id)}
+            onDismiss={() => dismiss(notice.id)}
             onClear={onClear}
           />
         )
@@ -33,13 +58,17 @@ export function ComposerNotificationStack({ notices, onClear }: { notices: Notic
   )
 }
 
-function NotificationCard({ notice, newest, depth, stacked, onClear }: { notice: Notice; newest: boolean; depth: number; stacked: boolean; onClear(): void }) {
+function NotificationCard({ notice, newest, depth, stacked, exiting, onDismiss, onClear }: { notice: Notice; newest: boolean; depth: number; stacked: boolean; exiting: boolean; onDismiss(): void; onClear(): void }) {
   const tone = noticeColor(notice.kind)
   const baseOpacity = newest ? 1 : depth === 1 ? 0.55 : 0.28
   return (
-    <div
+    <MotionDiv
       testId={newest ? 'notification-toast' : 'notification-stack-item'}
+      initial={{ opacity: 0, left: -10 }}
+      animate={{ opacity: exiting ? 0 : baseOpacity, left: exiting ? 18 : 0 }}
+      transition={{ duration: NOTIFICATION_EXIT_MS / 1_000, ease: 'easeOut' }}
       style={{
+        position: 'relative',
         height: 40,
         minHeight: 40,
         display: 'flex',
@@ -55,7 +84,6 @@ function NotificationCard({ notice, newest, depth, stacked, onClear }: { notice:
         borderWidth: 1,
         borderColor: colors.borderStrong,
         backgroundColor: colors.popover,
-        opacity: baseOpacity,
         overflow: 'hidden',
         selectionColor: '#4F67D866',
       }}
@@ -65,13 +93,17 @@ function NotificationCard({ notice, newest, depth, stacked, onClear }: { notice:
       </div>
       <AutoScrollingNoticeText message={notice.message} {...(newest ? { testId: 'notification-toast-message', scrollTestId: 'notification-toast-scroll' } : {})} />
       <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontSans, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatDate(notice.createdAt)}</text>
-      {newest && (
-        <div testId="clear-notifications" tabIndex={0} style={{ height: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: 6, paddingRight: 6, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} onClick={onClear}>
-          <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', pointerEvents: 'none' }}>Clear all</text>
-          <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name="x" size={10} color={colors.textFaint} /></div>
+      <div style={{ height: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+        {newest && (
+          <div testId="clear-notifications" tabIndex={0} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} onClick={onClear}>
+            <div testId="clear-notifications-icon" style={{ width: 12, height: 12, pointerEvents: 'none' }}><Icon name="eraser" size={12} color={colors.textFaint} /></div>
+          </div>
+        )}
+        <div testId={`dismiss-notification:${notice.id}`} tabIndex={0} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: exiting ? 'default' : 'pointer', hover: { backgroundColor: colors.hover }, flexShrink: 0 }} onClick={onDismiss}>
+          <div style={{ width: 11, height: 11, pointerEvents: 'none' }}><Icon name="x" size={11} color={colors.textFaint} /></div>
         </div>
-      )}
-    </div>
+      </div>
+    </MotionDiv>
   )
 }
 
@@ -95,7 +127,7 @@ export function NotificationLedgerView({ state, panelWidth = 422, onClear }: { s
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 180, gap: 9 }}>
             <div style={{ width: 38, height: 38, borderRadius: 19, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card }}><Icon name="bell" size={18} color={colors.textFaint} /></div>
             <text style={{ color: colors.text, fontSize: 15, fontWeight: 600 }}>No notifications yet</text>
-            <text style={{ color: colors.textFaint, fontSize: 11 }}>Pi and workbench events will be kept here.</text>
+            <text style={{ color: colors.textFaint, fontSize: 11 }}>Harness and workspace events will be kept here.</text>
           </div>
         ) : notices.map((notice) => <LedgerRow key={notice.id} notice={notice} />)}
       </NativeVirtualList>
