@@ -31,7 +31,7 @@ There is one bottom-aligned native virtual list for every transcript size and li
 
 - Settled sessions start at the newest content but do not follow row-height changes.
 - Streaming sessions enable native `followTail`; GPUIX stops following when the reader scrolls away.
-- The loading skeleton is an overlay, never a list row.
+- Loading older history is intentionally paintless; retained keyed content stays visible until the prepend commits.
 - `onVisibleRange` requests older disk data before the loaded boundary is exposed.
 - If a disk chunk only extends an already collapsed first trace and adds no scrollable row, bounded continuation reads through it until semantic history appears.
 - Prepending semantic rows relies on stable keys and native measured anchoring, not `scrollTo` restoration.

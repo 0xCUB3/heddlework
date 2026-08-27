@@ -19,27 +19,38 @@ class StaticCatalog extends PiSessionCatalog {
 class SwitchingTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
   readonly statuses = new Set<(status: TransportStatus) => void>()
+  readonly sent: RpcRecord[] = []
   active = sessions[0]!
   #notifyDuringBootstrap = false
+  #switchBarrier: Promise<void> | undefined
 
   async start(): Promise<void> { this.emitStatus({ state: 'running', pid: 1 }) }
   async stop(): Promise<void> { this.emitStatus({ state: 'stopped' }) }
-  send(): void {}
+  send(record: RpcRecord): void { this.sent.push(record) }
   getStderr(): string { return '' }
   onEvent(listener: (event: RpcRecord) => void): () => void { this.events.add(listener); return () => this.events.delete(listener) }
   onStatus(listener: (status: TransportStatus) => void): () => void { this.statuses.add(listener); return () => this.statuses.delete(listener) }
 
+  holdNextSwitch(): () => void {
+    let release = () => {}
+    this.#switchBarrier = new Promise<void>((resolve) => { release = resolve })
+    return release
+  }
+
   async request<T = unknown>(command: RpcCommand): Promise<T> {
     if (command.type === 'switch_session') {
       this.active = sessions.find((session) => session.path === command.sessionPath) ?? this.active
-      this.emit({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
+      this.emitEvent({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
       this.#notifyDuringBootstrap = true
+      const barrier = this.#switchBarrier
+      this.#switchBarrier = undefined
+      if (barrier) await barrier
       return { cancelled: false } as T
     }
     if (command.type === 'get_state') {
       if (this.#notifyDuringBootstrap) {
         this.#notifyDuringBootstrap = false
-        this.emit({ type: 'extension_ui_request', id: 'bootstrap-wizard', method: 'notify', message: 'Bootstrap wizard' })
+        this.emitEvent({ type: 'extension_ui_request', id: 'bootstrap-wizard', method: 'notify', message: 'Bootstrap wizard' })
       }
       return {
         model: null,
@@ -60,7 +71,7 @@ class SwitchingTransport implements AgentTransport {
     return undefined as T
   }
 
-  private emit(event: RpcRecord): void {
+  emitEvent(event: RpcRecord): void {
     for (const listener of this.events) listener(event)
   }
 
@@ -85,6 +96,39 @@ describe('clickable session switching', () => {
       expect(controller.getSnapshot().session.sessionId).toBe('two')
       expect(controller.getSnapshot().workspacePath).toBe('/tmp/project-two')
       expect(controller.getSnapshot().messages[0]?.content).toBe('Second')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('removes stale dialogs before an asynchronous session switch can paint', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      transport.emitEvent({ type: 'extension_ui_request', id: 'stale-dialog', method: 'select', title: 'Old session action', options: ['Continue'] })
+      expect(controller.getSnapshot().dialog?.id).toBe('stale-dialog')
+
+      const release = transport.holdNextSwitch()
+      const observedDialogIds: Array<string | undefined> = []
+      const unsubscribe = controller.subscribe(() => { observedDialogIds.push(controller.getSnapshot().dialog?.id) })
+      const switching = controller.switchSession(sessions[1]!)
+      try {
+        expect(controller.getSnapshot().dialog).toBeUndefined()
+        expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'stale-dialog', cancelled: true })
+
+        transport.emitEvent({ type: 'extension_ui_request', id: 'transition-dialog', method: 'confirm', title: 'Transition action' })
+        expect(controller.getSnapshot().dialog).toBeUndefined()
+        expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'transition-dialog', cancelled: true })
+      } finally {
+        release()
+        await switching
+        unsubscribe()
+      }
+
+      expect(observedDialogIds).not.toContain('stale-dialog')
+      expect(observedDialogIds).not.toContain('transition-dialog')
+      expect(controller.getSnapshot().session.sessionId).toBe('two')
     } finally {
       await controller.dispose()
     }

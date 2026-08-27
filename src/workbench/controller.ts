@@ -231,15 +231,18 @@ export class WorkbenchController {
 
   async newSession(): Promise<void> {
     if (this.#state.session.isStreaming) return
+    this.#sessionTransitionDepth += 1
     try {
+      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
-      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
       this.#historyPager = undefined
       this.#patch({ messages: [], messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [], notices: [], dialog: undefined, queue: createQueueState() })
       await this.#bootstrap(false)
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    } finally {
+      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
     }
   }
 
@@ -251,6 +254,7 @@ export class WorkbenchController {
     ) return
     this.#sessionTransitionDepth += 1
     try {
+      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
       this.#patch({ activity: 'Opening thread' })
       const result = await this.#transport.request<{ cancelled?: boolean }>({
         type: 'switch_session',
@@ -261,7 +265,6 @@ export class WorkbenchController {
         return
       }
       const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
-      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
       this.#historyPager = undefined
       this.#patch({
         workspacePath,
@@ -463,9 +466,9 @@ export class WorkbenchController {
     const dialog = this.#state.dialog
     if (!dialog) return
     this.#clearDialogTimer()
+    this.#patch({ dialog: undefined })
     try {
       this.#transport.send({ type: 'extension_ui_response', id: dialog.id, ...response })
-      this.#patch({ dialog: undefined })
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     }
@@ -752,8 +755,17 @@ export class WorkbenchController {
   }
 
   #handleExtensionUi(request: ExtensionUiRequest): void {
+    if (this.#sessionTransitionDepth > 0) {
+      if (request.method === 'select' || request.method === 'confirm' || request.method === 'input' || request.method === 'editor') {
+        try {
+          this.#transport.send({ type: 'extension_ui_response', id: request.id, cancelled: true })
+        } catch {
+          // The abandoned session no longer owns visible UI; switching remains authoritative.
+        }
+      }
+      return
+    }
     if (request.method === 'notify') {
-      if (this.#sessionTransitionDepth > 0) return
       this.#setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification'))
       return
     }

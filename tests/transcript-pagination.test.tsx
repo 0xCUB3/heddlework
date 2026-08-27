@@ -105,7 +105,7 @@ describeNative('reverse-infinite transcript', () => {
 
     expect(loadCalls).toBe(1)
     expect(finishLoad).toBeDefined()
-    expect(await automation.getByTestId('history-loading-skeleton').count()).toBe(1)
+    expect(await automation.getByTestId('history-loading-skeleton').count()).toBe(0)
     expect(root.renderer.findByTestId('transcript-list')?.id).toBe(listId)
     expect(root.renderer.getPaintedText()).toContain('Prompt 83')
     const retainedPromptBefore = await automation.getByText('Prompt 84').bounds()
@@ -135,7 +135,7 @@ describeNative('reverse-infinite transcript', () => {
     root.unmount()
   })
 
-  it('keeps the retained first row in place when a page replaces the exact-top skeleton', async () => {
+  it('keeps the retained first row in place when a page prepends at the exact top', async () => {
     const retained = Array.from({ length: 24 }, (_, index): PiMessage[] => [
       { role: 'user', workbenchEntryId: `retained-user-${index}`, content: `Retained prompt ${index}`, timestamp: 100 + index * 2 },
       { role: 'assistant', workbenchEntryId: `retained-answer-${index}`, content: `Retained answer ${index}`, timestamp: 101 + index * 2 },
@@ -507,13 +507,14 @@ describeNative('reverse-infinite transcript', () => {
     root.unmount()
   })
 
-  it('keeps a 9,397-second failed trace neutral, collapsed, and keyed across a prepend', async () => {
+  it('keeps a long failed trace stable while normalizing its completed duration', async () => {
     const calls = Array.from({ length: 256 }, (_, index) => ({ type: 'toolCall' as const, id: `call-${index}`, name: 'read', arguments: { path: `src/file-${index}.ts` } }))
     const tail: PiMessage[] = [
       { role: 'assistant', workbenchEntryId: 'tail-assistant', timestamp: 9_397_000, content: [{ type: 'thinking', thinking: 'Planning the boundary work.' }, ...calls] },
       ...calls.map((call, index): PiMessage => ({ role: 'toolResult', workbenchEntryId: `tail-result-${index}`, toolCallId: call.id, toolName: call.name, content: `result ${index}`, isError: index === calls.length - 1, timestamp: index === calls.length - 1 ? 9_397_000 : 200 + index })),
     ]
     const older: PiMessage[] = [
+      { role: 'user', workbenchEntryId: 'older-user', timestamp: -1, content: 'Inspect the failed trace' },
       { role: 'assistant', workbenchEntryId: 'older-assistant', timestamp: 0, content: [{ type: 'thinking', thinking: 'Earlier reasoning from the same contiguous run.' }, { type: 'toolCall', id: 'older-call', name: 'read', arguments: { path: 'src/older.ts' } }] },
       { role: 'toolResult', workbenchEntryId: 'older-result', toolCallId: 'older-call', toolName: 'read', content: 'older result', timestamp: 50 },
     ]
@@ -521,6 +522,7 @@ describeNative('reverse-infinite transcript', () => {
       ...createInitialState('/tmp/failed-trace-project'),
       session: { model: null, thinkingLevel: 'off' as const, isStreaming: false, sessionFile: '/tmp/failed-trace.jsonl', sessionId: 'failed-trace' },
       messages: traceMessages,
+      messagesHasOlder: true,
     })
     const root = createTestRoot({ width: 900, height: 640 })
     const render = (traceMessages: PiMessage[]) => root.render(
@@ -535,7 +537,14 @@ describeNative('reverse-infinite transcript', () => {
     expect(await automation.getByTestId('execution-timeline').count()).toBe(0)
     expect(await automation.getByTestId('tool-detail-row').count()).toBe(0)
     expect(root.renderer.findByTestId('execution-trace-label')?.style.color).toBe(colors.textMuted)
+    expect(await automation.getByTestId('execution-trace-label').textContent()).toBe('Worked')
     expect(root.renderer.getAllText().length).toBeLessThan(20)
+
+    await automation.getByTestId('tool-row').hover()
+    await Bun.sleep(0)
+    root.renderer.flush()
+    expect(root.renderer.findByTestId('execution-trace')?.id).toBe(traceId)
+    expect(root.renderer.findByTestId('execution-trace-label')?.style.color).toBe(colors.textMuted)
 
     render([...older, ...tail])
     root.renderer.flush()
@@ -544,7 +553,7 @@ describeNative('reverse-infinite transcript', () => {
     expect(root.renderer.findByTestId('execution-trace')?.id).toBe(traceId)
     expect(await automation.getByTestId('execution-timeline').count()).toBe(0)
     expect(root.renderer.findByTestId('execution-trace-label')?.style.color).toBe(colors.textMuted)
-    expect(root.renderer.getAllText()).toContain('Worked for 9397s')
+    expect(await automation.getByTestId('execution-trace-label').textContent()).toBe('Worked for 2h 36m')
 
     await automation.close()
     root.unmount()

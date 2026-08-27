@@ -121,9 +121,11 @@ describe('Pi extension UI projection', () => {
       expect(controller.getSnapshot().dialog?.id).toBe('stale-dialog')
       expect(controller.getSnapshot().notices).toHaveLength(1)
 
-      await controller.newSession()
-
+      const creatingSession = controller.newSession()
+      expect(controller.getSnapshot().dialog).toBeUndefined()
       expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'stale-dialog', cancelled: true })
+      await creatingSession
+
       expect(controller.getSnapshot().dialog).toBeUndefined()
       expect(controller.getSnapshot().notices).toHaveLength(0)
     } finally {

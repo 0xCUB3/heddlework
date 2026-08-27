@@ -6,6 +6,7 @@ import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon, type IconName } from './icons.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { openExternal } from './open-external.ts'
+import { formatElapsedSeconds } from './duration.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeElementHandle, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { composerNotificationStackHeight } from './notifications.tsx'
@@ -26,7 +27,6 @@ const TRACE_INITIAL_PROJECTED_ROWS = 48
 const TRACE_PROJECTION_CHUNK_ROWS = 48
 const TRACE_PROJECTION_FRAME_MS = 16
 const TRANSCRIPT_ESTIMATED_ROW_HEIGHT = 88
-const HISTORY_SKELETON_HEIGHT = 88
 const CODE_SURFACE_STYLE = {
   width: '100%',
   paddingTop: 10,
@@ -243,6 +243,7 @@ export const Transcript = memo(function Transcript({
             row={row}
             presenters={presenters}
             workspacePath={state.workspacePath}
+            historyHasOlder={state.messagesHasOlder}
             activity={state.activity}
             noticeCount={state.notices.length}
             queue={state.queue}
@@ -254,7 +255,6 @@ export const Transcript = memo(function Transcript({
           />
         ))}
       </NativeVirtualList>
-      {state.messagesLoadingEarlier && <HistoryLoadingSkeleton />}
     </div>
   )
 }, (previous, next) => previous.presenters === next.presenters
@@ -272,41 +272,11 @@ export const Transcript = memo(function Transcript({
   && previous.state.notices.length === next.state.notices.length
   && previous.state.queue === next.state.queue)
 
-function HistoryLoadingSkeleton() {
-  return (
-    <div
-      testId="history-loading-skeleton"
-      style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        pointerEvents: 'none',
-        width: '100%',
-        height: HISTORY_SKELETON_HEIGHT,
-        flexShrink: 0,
-        display: 'flex',
-        flexDirection: 'row',
-        justifyContent: 'center',
-        paddingTop: 20,
-        paddingRight: 20,
-        paddingBottom: 18,
-        paddingLeft: 20,
-      }}
-    >
-      <div style={{ width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', gap: 10, padding: 12, borderRadius: 10, backgroundColor: colors.card }}>
-        <div style={{ width: 92, height: 7, borderRadius: 4, backgroundColor: colors.borderStrong, opacity: 0.72 }} />
-        <div style={{ width: '72%', height: 9, borderRadius: 5, backgroundColor: colors.raised }} />
-        <div style={{ width: '54%', height: 9, borderRadius: 5, backgroundColor: colors.raised, opacity: 0.82 }} />
-      </div>
-    </div>
-  )
-}
-
 function ProjectedTranscriptRow({
   row,
   presenters,
   workspacePath,
+  historyHasOlder,
   activity,
   noticeCount,
   queue,
@@ -319,6 +289,7 @@ function ProjectedTranscriptRow({
   row: TranscriptRenderRow
   presenters: ReadonlyMap<string, ToolPresenter>
   workspacePath: string
+  historyHasOlder: boolean
   activity: string
   noticeCount: number
   queue: WorkbenchState['queue']
@@ -335,7 +306,7 @@ function ProjectedTranscriptRow({
   if (row.kind === 'trace-header') {
     return (
       <TranscriptRowShell>
-        <ExecutionTraceHeader trace={row.trace} expanded={expanded} onToggle={() => onToggleTrace(row.id)} />
+        <ExecutionTraceHeader trace={row.trace} expanded={expanded} durationKnown={Boolean(row.trace.boundaryId) || !historyHasOlder} onToggle={() => onToggleTrace(row.id)} />
       </TranscriptRowShell>
     )
   }
@@ -423,9 +394,9 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
   )
 }
 
-function ExecutionTraceHeader({ trace, expanded, onToggle }: { trace: Extract<DisplayTimelineItem, { kind: 'work-trace' }>; expanded: boolean; onToggle(): void }) {
+function ExecutionTraceHeader({ trace, expanded, durationKnown, onToggle }: { trace: Extract<DisplayTimelineItem, { kind: 'work-trace' }>; expanded: boolean; durationKnown: boolean; onToggle(): void }) {
   const running = trace.items.some((item) => item.kind === 'thinking' ? item.streaming : item.kind === 'tool' ? item.tool.status !== 'complete' : false)
-  const [hovered, setHovered] = useState(false)
+  const duration = durationKnown ? traceDuration(trace.items) : undefined
   const preview = trace.items.at(-1)
   return (
     <div testId="execution-trace" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 5, paddingLeft: 4, paddingRight: 2 }}>
@@ -433,13 +404,11 @@ function ExecutionTraceHeader({ trace, expanded, onToggle }: { trace: Extract<Di
         testId="tool-row"
         tabIndex={0}
         style={{ minHeight: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, cursor: 'pointer' }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         onClick={onToggle}
         onKeyDown={(event) => { if (event.key === 'enter') onToggle() }}
       >
-        <text testId="execution-trace-label" style={{ color: hovered ? colors.text : colors.textMuted, fontSize: 13 }}>{running ? 'Working' : `Worked for ${traceDuration(trace.items)}`}</text>
-        <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={12} color={hovered ? colors.textMuted : colors.textFaint} />
+        <text testId="execution-trace-label" style={{ color: colors.textMuted, fontSize: 13 }}>{running ? 'Working' : duration ? `Worked for ${duration}` : 'Worked'}</text>
+        <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={12} color={colors.textFaint} />
       </div>
       {!expanded && running && preview && <TracePreview item={preview} />}
     </div>
@@ -820,10 +789,17 @@ export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpe
   )
 }
 
-function traceDuration(tools: Array<Pick<TimelineItem, 'timestamp'>>): string {
-  const timestamps = tools.map((item) => item.timestamp).filter((value): value is number => typeof value === 'number')
-  if (timestamps.length > 1) return `${Math.max(1, Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 1_000))}s`
-  return `${Math.max(1, tools.length)}s`
+function traceDuration(items: Array<Pick<TimelineItem, 'timestamp'>>): string | undefined {
+  let earliest = Number.POSITIVE_INFINITY
+  let latest = Number.NEGATIVE_INFINITY
+  let timestampCount = 0
+  for (const item of items) {
+    if (typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp)) continue
+    earliest = Math.min(earliest, item.timestamp)
+    latest = Math.max(latest, item.timestamp)
+    timestampCount += 1
+  }
+  return timestampCount > 1 ? formatElapsedSeconds((latest - earliest) / 1_000) : undefined
 }
 
 function toolIcon(name: string): IconName {
