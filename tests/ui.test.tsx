@@ -156,8 +156,8 @@ describeNative('WorkbenchApp', () => {
     const assistantRows = await automation.getByTestId('assistant-message').all()
     const assistantBounds = assistantRows.at(-1)?.bounds
     expect(assistantBounds).toBeDefined()
-    await automation.call('mouseMove', { x: assistantBounds!.x + 5, y: assistantBounds!.y + assistantBounds!.height - 3 })
-    await Bun.sleep(30)
+    await automation.call('mouseMove', { x: assistantBounds!.x + assistantBounds!.width / 2, y: assistantBounds!.y + assistantBounds!.height / 2 })
+    await Bun.sleep(80)
     root.renderer.flush()
     expect(await automation.getByTestId('copy-message').count()).toBe(1)
     expect(await automation.getByTestId('fork-message').count()).toBe(1)
