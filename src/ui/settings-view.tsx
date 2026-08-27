@@ -5,8 +5,21 @@ import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
+import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 
-export function SettingsView({ state, controller, onClose }: { state: WorkbenchState; controller: WorkbenchController; onClose(): void }) {
+export function SettingsView({
+  state,
+  controller,
+  theme,
+  onThemeModeChange,
+  onClose,
+}: {
+  state: WorkbenchState
+  controller: WorkbenchController
+  theme: ThemeSnapshot
+  onThemeModeChange(mode: ThemeMode): void
+  onClose(): void
+}) {
   return (
     <div testId="settings-view" style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
       <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
@@ -25,6 +38,9 @@ export function SettingsView({ state, controller, onClose }: { state: WorkbenchS
           </SettingsSection>
 
           <SettingsSection title="Interface" description="Application-wide presentation and navigation defaults.">
+            <SettingsControlRow label="Appearance">
+              <ThemeModePicker theme={theme} onChange={onThemeModeChange} />
+            </SettingsControlRow>
             <SettingsRow icon="terminal" label="Code font" value={nativeTheme.fontMono} />
             <SettingsRow icon="bell" label="Notifications" value="Pinned above composer" />
             <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
@@ -59,6 +75,43 @@ function SettingsRow({ icon, label, value, tone = 'normal', testId }: { icon: Pa
       <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>{label}</text>
       <div style={{ flexGrow: 1 }} />
       <text style={{ color: tone === 'success' ? colors.success : colors.textMuted, fontSize: 11, maxWidth: 390, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{value}</text>
+    </div>
+  )
+}
+
+function SettingsControlRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ minHeight: 54, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: 13, paddingRight: 10, borderWidth: 1, borderColor: colors.border }}>
+      <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>{label}</text>
+      <div style={{ flexGrow: 1 }} />
+      {children}
+    </div>
+  )
+}
+
+function ThemeModePicker({ theme, onChange }: { theme: ThemeSnapshot; onChange(mode: ThemeMode): void }) {
+  const options: Array<{ mode: ThemeMode; label: string }> = [
+    { mode: 'system', label: `System (${theme.resolved === 'light' ? 'Light' : 'Dark'})` },
+    { mode: 'light', label: 'Light' },
+    { mode: 'dark', label: 'Dark' },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'row', gap: 3, padding: 3, borderRadius: 9, backgroundColor: colors.raised }}>
+      {options.map(({ mode, label }) => {
+        const active = theme.mode === mode
+        return (
+          <div
+            key={mode}
+            testId={`theme-mode-${mode}`}
+            tabIndex={0}
+            style={{ minHeight: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: active ? colors.card : colors.transparent, borderWidth: 1, borderColor: active ? colors.borderStrong : colors.transparent, cursor: 'pointer', userSelect: 'none', hover: { backgroundColor: active ? colors.card : colors.hover } }}
+            onClick={() => onChange(mode)}
+            onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onChange(mode) }}
+          >
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{label}</text>
+          </div>
+        )
+      })}
     </div>
   )
 }

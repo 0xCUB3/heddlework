@@ -11,7 +11,8 @@ import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
-import { colors } from '../src/ui/theme.ts'
+import { colors, lightColors, nativeTheme } from '../src/ui/theme.ts'
+import { ThemeManager } from '../src/ui/theme-manager.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 const controllers: WorkbenchController[] = []
@@ -59,7 +60,8 @@ describeNative('WorkbenchApp', () => {
     const controller = new WorkbenchController(new DemoTransport(), workspace, testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     controllers.push(controller)
     const root = createTestRoot()
-    root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} />)
+    const themeManager = new ThemeManager({ preferencePath: false, resolveSystemTheme: () => 'dark' })
+    root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} themeManager={themeManager} />)
     await controller.start()
     await waitForDiff(controller)
     root.renderer.flush()
@@ -202,10 +204,11 @@ describeNative('WorkbenchApp', () => {
     const checkoutLabelBounds = await automation.getByTestId('composer-checkout-label').bounds()
     const branchLabel = root.renderer.findByTestId('composer-branch-label')!
     expect(contextShadowBounds.y + contextShadowBounds.height).toBeLessThanOrEqual(checkoutLabelBounds.y + 1)
+    expect(Math.abs(contextShadowBounds.width - contextBarBounds.width)).toBeLessThanOrEqual(1)
     expect(contextShadowBounds.height).toBe(10)
-    expect(contextShadow.style.bottom).toBe(26)
-    expect(contextShadow.style.left).toBe(14)
-    expect(contextShadow.style.right).toBe(14)
+    expect(contextShadow.style.top).toBe(12)
+    expect(contextShadow.style.left).toBe(0)
+    expect(contextShadow.style.right).toBe(0)
     expect(checkoutLabel.style.fontSize).toBe(12)
     expect(checkoutLabel.style.color).toBe('#767679')
     expect(branchLabel.style.fontSize).toBe(12)
@@ -215,9 +218,27 @@ describeNative('WorkbenchApp', () => {
     expect(sendBounds.x - contextMeterBounds.x - contextMeterBounds.width).toBeGreaterThanOrEqual(8)
     await automation.getByTestId('context-meter').hover()
     expect(await automation.getByTestId('context-popover').count()).toBe(1)
-    const contextOverlay = root.renderer.findByType('anchored').find((node) => node.customProps?.priority === 12)
-    expect(contextOverlay?.customProps?.deferred).toBe(true)
-    expect(contextOverlay?.customProps?.occlude).toBe(true)
+    const contextPositioner = root.renderer.findByTestId('context-popover-positioner')!
+    expect(contextPositioner.type).toBe('div')
+    expect(contextPositioner.style.backgroundColor).toBe(colors.transparent)
+    expect(contextPositioner.style).toMatchObject({ position: 'absolute', right: 46, bottom: 84, width: 256 })
+    expect(root.renderer.findByType('anchored').some((node) => node.testId === 'context-popover-layer')).toBe(false)
+    const contextPopoverBounds = await automation.getByTestId('context-popover').bounds()
+    expect(contextPopoverBounds.y + contextPopoverBounds.height).toBeLessThanOrEqual(contextMeterBounds.y - 4)
+    expect(Math.abs(contextPopoverBounds.x + contextPopoverBounds.width - contextMeterBounds.x - contextMeterBounds.width)).toBeLessThanOrEqual(12)
+    const contextPopover = root.renderer.findByTestId('context-popover')!
+    const openMotion = contextPopover.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+    expect(openMotion.initial).toEqual({ opacity: 0, top: 4 })
+    expect(openMotion.animate).toEqual({ opacity: 1, top: 0 })
+    await automation.call('mouseMove', { x: contextMeterBounds.x - 20, y: contextMeterBounds.y + contextMeterBounds.height / 2 })
+    await Bun.sleep(0)
+    root.renderer.flush()
+    expect(await automation.getByTestId('context-popover').count()).toBe(1)
+    const exitMotion = (root.renderer.findByTestId('context-popover')!.customProps?.motion as { animate: { opacity: number; top: number } }).animate
+    expect(exitMotion).toEqual({ opacity: 0, top: 4 })
+    await Bun.sleep(180)
+    root.renderer.flush()
+    expect(await automation.getByTestId('context-popover').count()).toBe(0)
     expect(root.renderer.getPaintedText()).not.toContain(process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue')
     expect(root.renderer.findByType('img').length).toBeGreaterThan(0)
     expect(await automation.getByTestId('transcript-bottom-fade').count()).toBe(1)
@@ -264,6 +285,22 @@ describeNative('WorkbenchApp', () => {
     await waitForDiff(controller)
     root.renderer.flush()
     expect(await automation.getByTestId('diff-panel').count()).toBe(1)
+    themeManager.setMode('light')
+    await Bun.sleep(0)
+    root.renderer.flush()
+    expect(root.renderer.findByTestId('sidebar')?.style.backgroundColor).toBe(lightColors.sidebar)
+    expect(root.renderer.findByTestId('diff-panel')?.style.backgroundColor).toBe(lightColors.panel)
+    expect(root.renderer.findByTestId('composer-context-shadow-strong')?.style.backgroundColor).toBe('#00000012')
+    await automation.getByTestId('diff-wrap-toggle').click()
+    root.renderer.flush()
+    const wrappedCodeColors = root.renderer.findByType('text').filter((node) => node.testId === 'diff-wrapped-code').map((node) => node.style.color)
+    expect(wrappedCodeColors).toContain(nativeTheme.codeText)
+    expect(root.renderer.findByTestId('diff-wrapped-scroll')?.style.selectionColor).toBe(`${lightColors.primary}66`)
+    await automation.getByTestId('diff-wrap-toggle').click()
+    root.renderer.flush()
+    themeManager.setMode('dark')
+    await Bun.sleep(0)
+    root.renderer.flush()
     expect(root.renderer.getPaintedText()).toContain('Working tree')
     expect(root.renderer.getPaintedText()).toContain('README.md')
     expect(root.renderer.findByTestId('diff-content')?.style.fontFamily).toBe('Menlo')
@@ -421,6 +458,16 @@ describeNative('WorkbenchApp', () => {
     expect(root.renderer.getPaintedText()).toContain('Pi executable')
     expect(await automation.getByTestId('settings-global').count()).toBe(1)
     expect(root.renderer.getPaintedText()).toContain('Pinned above composer')
+    expect(await automation.getByTestId('theme-mode-system').count()).toBe(1)
+    await automation.getByTestId('theme-mode-light').click()
+    root.renderer.flush()
+    expect(root.renderer.findByTestId('workbench-root')?.style.backgroundColor).toBe(lightColors.background)
+    expect(root.renderer.findByTestId('sidebar')?.style.backgroundColor).toBe(lightColors.sidebar)
+    expect(nativeTheme.appearance).toBe('light')
+    await automation.getByTestId('theme-mode-dark').click()
+    root.renderer.flush()
+    expect(root.renderer.findByTestId('workbench-root')?.style.backgroundColor).toBe(colors.background)
+    expect(nativeTheme.appearance).toBe('dark')
     expect(root.renderer.getPaintedText()).not.toContain('Saved threads')
     expect(root.renderer.getPaintedText()).not.toContain('Persistence')
     expect(root.renderer.getPaintedText()).toContain('Alpha')
@@ -440,6 +487,7 @@ describeNative('WorkbenchApp', () => {
 
     await automation.close()
     root.unmount()
+    themeManager.dispose()
   }, 20_000)
 })
 

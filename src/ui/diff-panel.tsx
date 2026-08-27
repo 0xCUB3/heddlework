@@ -13,6 +13,7 @@ export const DiffPanel = React.memo(function DiffPanel({
   fullscreen,
   fullscreenProgress,
   panelWidth,
+  appearance,
   onClose,
   onNewSurface,
   onToggleFullscreen,
@@ -22,6 +23,7 @@ export const DiffPanel = React.memo(function DiffPanel({
   fullscreen: boolean
   fullscreenProgress: number
   panelWidth?: number
+  appearance?: 'light' | 'dark'
   onClose(): void
   onNewSurface(): void
   onToggleFullscreen(): void
@@ -95,7 +97,8 @@ export const DiffPanel = React.memo(function DiffPanel({
   && previous.controller === next.controller
   && previous.fullscreen === next.fullscreen
   && previous.fullscreenProgress === next.fullscreenProgress
-  && previous.panelWidth === next.panelWidth)
+  && previous.panelWidth === next.panelWidth
+  && previous.appearance === next.appearance)
 
 const DIFF_HUNK_HEIGHT = 28
 const DIFF_NOTICE_HEIGHT = 24
@@ -271,10 +274,10 @@ export function WrappedDiff({ patch }: { patch: string }) {
   const displayedRows = rows.slice(0, visibleRows)
   return (
     <div testId="diff-wrapped-viewport" style={{ width: '100%', minWidth: 0, minHeight: 0, flexGrow: 1, display: 'flex', overflow: 'hidden' }}>
-    <NativeVirtualList testId="diff-wrapped-scroll" alignment="top" estimatedItemHeight={19} overdraw={300} style={{ width: '100%', flexGrow: 1, minHeight: 0, minWidth: 0, alignSelf: 'stretch', backgroundColor: colors.background, userSelect: 'text', selectionColor: '#4F67D866' }}>
+    <NativeVirtualList testId="diff-wrapped-scroll" alignment="top" estimatedItemHeight={19} overdraw={300} style={{ width: '100%', flexGrow: 1, minHeight: 0, minWidth: 0, alignSelf: 'stretch', backgroundColor: colors.background, userSelect: 'text', selectionColor: `${colors.primary}66` }}>
       {displayedRows.map((row) => {
         const background = row.tone === 'add' ? colors.diffAdd : row.tone === 'delete' ? colors.diffDel : row.tone === 'hunk' ? colors.diffHunkBg : colors.transparent
-        const foreground = row.tone === 'hunk' ? colors.textMuted : row.tone === 'file' ? colors.text : '#D7D7DC'
+        const foreground = row.tone === 'hunk' ? colors.textMuted : row.tone === 'file' ? colors.text : nativeTheme.codeText
         return (
           <React.Fragment key={row.key}>
             <div testId={`diff-wrapped-row:${row.tone}`} style={{ width: '100%', minWidth: 0, minHeight: 19, flexShrink: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'flex-start', backgroundColor: background }}>

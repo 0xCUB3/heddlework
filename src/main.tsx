@@ -3,6 +3,7 @@ import { render } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
+import { ThemeManager } from './ui/theme-manager.ts'
 import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
 import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from './ui/tool-presenters.ts'
@@ -28,6 +29,8 @@ const workspacePath = resolveWorkspacePath()
 const previous = globalThis.__heddleworkRuntime
 if (previous) await previous.dispose()
 
+const themeManager = new ThemeManager()
+
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
 kernel.mount(createWorkbenchControllerPlugin(workspacePath))
@@ -44,14 +47,22 @@ kernel.mount(createAgentTransportPlugin({
 
 const controller = kernel.get(workbenchControllerToken)
 const ui = kernel.get(workbenchUiRegistryToken)
+let disposed = false
 const runtime: RuntimeHandle = {
   kernel,
-  dispose: async () => kernel.dispose(),
+  dispose: async () => {
+    if (disposed) return
+    disposed = true
+    process.off('SIGINT', shutdown)
+    process.off('SIGTERM', shutdown)
+    themeManager.dispose()
+    await kernel.dispose()
+  },
 }
 globalThis.__heddleworkRuntime = runtime
 
 render(
-  <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} />,
+  <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} />,
   {
     title: 'Heddlework',
     width: 1240,
@@ -64,6 +75,7 @@ render(
   },
 )
 
+themeManager.start()
 void controller.start()
 
 const shutdown = () => {

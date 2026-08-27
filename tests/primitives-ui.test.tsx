@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { ChipSelect, matchSelectOptions, type SelectOption } from '../src/ui/primitives.tsx'
+import { applyResolvedTheme, lightColors } from '../src/ui/theme.ts'
 
 describe('select option matching', () => {
   it('uses Localterm-style fuzzy matching across model names and provider IDs', () => {
@@ -60,7 +61,8 @@ describeNative('bounded select content', () => {
     root.unmount()
   })
 
-  it('shows every model and filters them from a focused search field', async () => {
+  it('shows every model in the active theme and filters them from a focused search field', async () => {
+    applyResolvedTheme('light')
     const root = createTestRoot()
     root.render(<SearchableSelectFixture />)
     const automation = await connectTest(root.renderer)
@@ -69,6 +71,7 @@ describeNative('bounded select content', () => {
     await Bun.sleep(20)
     root.renderer.flush()
     expect(await automation.getByTestId('searchable-model-picker-search').count()).toBe(1)
+    expect(root.renderer.findByTestId('searchable-model-picker-content')?.style.backgroundColor).toBe(lightColors.popover)
     expect(await automation.getByTestId('searchable-model-picker-option').count()).toBe(options.length)
     expect(root.renderer.getPaintedText()).toContain(`${options.length} of ${options.length} models`)
 
@@ -82,5 +85,6 @@ describeNative('bounded select content', () => {
     expect(await automation.getByTestId('searchable-model-picker-content').count()).toBe(0)
     await automation.close()
     root.unmount()
+    applyResolvedTheme('dark')
   })
 })

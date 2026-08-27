@@ -54,12 +54,8 @@ describeNative('sidebar initial session position', () => {
       expect(Math.abs(root.renderer.getScrollOffset(list.id)?.[1] ?? 0)).toBeLessThanOrEqual(0.01)
       await Bun.sleep(0)
       root.renderer.flush()
-      const fadeOpacity = (edge: 'top' | 'bottom') => {
-        const fade = root.renderer.findByTestId(`sidebar-scroll-fade-${edge}`)!
-        return (fade.customProps?.motion as { animate: { opacity: number } }).animate.opacity
-      }
-      expect(fadeOpacity('top')).toBe(0)
-      expect(fadeOpacity('bottom')).toBe(1)
+      expect(root.renderer.findByTestId('sidebar-scroll-fade-top')).toBeUndefined()
+      expect(root.renderer.findByTestId('sidebar-scroll-fade-bottom')).toBeUndefined()
 
       root.renderer.scrollTo(list.id, 0, -500)
       const userOffset = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
@@ -71,17 +67,12 @@ describeNative('sidebar initial session position', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       expect(root.renderer.getScrollOffset(list.id)?.[1] ?? 0).toBeLessThan(-100)
-      expect(fadeOpacity('top')).toBe(1)
-      expect(fadeOpacity('bottom')).toBe(1)
-
       root.renderer.scrollTo(list.id, 0, -10_000)
       render({ ...createInitialState('/tmp/project'), sessions: [...laterSessions, { ...sessions[0]!, id: 'last', path: '/tmp/last.jsonl' }], sessionsLoading: false })
       await Bun.sleep(0)
       root.renderer.flush()
       await Bun.sleep(0)
       root.renderer.flush()
-      expect(fadeOpacity('top')).toBe(1)
-      expect(fadeOpacity('bottom')).toBe(0)
       await automation.close()
     } finally {
       root.unmount()

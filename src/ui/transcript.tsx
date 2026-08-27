@@ -27,32 +27,36 @@ const TRACE_INITIAL_PROJECTED_ROWS = 48
 const TRACE_PROJECTION_CHUNK_ROWS = 48
 const TRACE_PROJECTION_FRAME_MS = 16
 const TRANSCRIPT_ESTIMATED_ROW_HEIGHT = 88
-const CODE_SURFACE_STYLE = {
-  width: '100%',
-  paddingTop: 10,
-  paddingRight: 12,
-  paddingBottom: 10,
-  paddingLeft: 12,
-  borderRadius: 9,
-  borderWidth: 1,
-  borderColor: colors.border,
-  backgroundColor: colors.code,
-} satisfies StyleDesc
+function codeSurfaceStyle(): StyleDesc {
+  return {
+    width: '100%',
+    paddingTop: 10,
+    paddingRight: 12,
+    paddingBottom: 10,
+    paddingLeft: 12,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.code,
+  }
+}
 
-const TRACE_MARKDOWN_THEME = {
-  ...nativeTheme,
-  text: colors.textMuted,
-  textMuted: colors.textMuted,
-  metrics: {
-    ...nativeTheme.metrics,
-    mdTextSize: 12,
-    mdLineHeight: 19,
-    mdBlockGap: 7,
-    mdHeadingSizes: [12, 12, 12, 12],
-    mdHeadingLineHeights: [19, 19, 19, 19],
-    codeTextSize: 11,
-    codeLineHeight: 18,
-  },
+function traceMarkdownTheme() {
+  return {
+    ...nativeTheme,
+    text: colors.textMuted,
+    textMuted: colors.textMuted,
+    metrics: {
+      ...nativeTheme.metrics,
+      mdTextSize: 12,
+      mdLineHeight: 19,
+      mdBlockGap: 7,
+      mdHeadingSizes: [12, 12, 12, 12],
+      mdHeadingLineHeights: [19, 19, 19, 19],
+      codeTextSize: 11,
+      codeLineHeight: 18,
+    },
+  }
 }
 
 const FABRIC_COLLAPSED_CALL_LIMIT = 8
@@ -428,7 +432,7 @@ function TraceDisclosure({ label, text, testId, streaming = false, expanded, onT
         <markdown
           testId={`${testId}-markdown`}
           source={text}
-          theme={TRACE_MARKDOWN_THEME}
+          theme={traceMarkdownTheme()}
           style={{ width: '100%', minWidth: 0 }}
           onLinkClick={(event) => openExternal(String(event.value ?? ''))}
         />
@@ -509,7 +513,7 @@ function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { item: Ext
         <FabricToolBody fabric={presentation.fabric} output={content} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 7, paddingLeft: 31, paddingTop: 4, paddingBottom: 6 }}>
-          {args && <code code={args} language="json" theme={nativeTheme} style={CODE_SURFACE_STYLE} />}
+          {args && <code code={args} language="json" theme={nativeTheme} style={codeSurfaceStyle()} />}
           {content ? (
             presentation.kind === 'diff'
               ? <diff patch={content} wordDiff maxLines={500} theme={nativeTheme} style={{ width: '100%', fontFamily: nativeTheme.fontMono }} />
@@ -517,7 +521,7 @@ function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { item: Ext
                 <code
                   code={content}
                   theme={nativeTheme}
-                  style={CODE_SURFACE_STYLE}
+                  style={codeSurfaceStyle()}
                   {...(presentation.language ? { language: presentation.language } : {})}
                   {...(presentation.path ? { path: presentation.path } : {})}
                 />
@@ -550,18 +554,19 @@ function FabricCollapsedCalls({ audits }: { audits: FabricAuditPresentation[] })
 
 function FabricToolBody({ fabric, output }: { fabric: FabricToolPresentation; output: string }) {
   const lineCount = fabric.code ? fabric.code.split('\n').length : 0
+  const summaryPalette = fabricSummaryPalette()
   return (
     <div testId="fabric-tool-body" style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 9, paddingLeft: 31, paddingTop: 5, paddingBottom: 8 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 11, borderRadius: 10, borderWidth: 1, borderColor: '#313543', backgroundColor: '#141722' }}>
+      <div testId="fabric-summary-card" style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 11, borderRadius: 10, borderWidth: 1, borderColor: summaryPalette.border, backgroundColor: summaryPalette.background }}>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7 }}>
           <Icon name="sparkles" size={14} color={colors.info} />
-          <text style={{ color: colors.text, fontSize: 12, fontWeight: 650, fontFamily: nativeTheme.fontMono }}>{fabric.name}</text>
+          <text testId="fabric-summary-name" style={{ color: summaryPalette.name, fontSize: 12, fontWeight: 650, fontFamily: nativeTheme.fontMono }}>{fabric.name}</text>
           <div style={{ flexGrow: 1 }} />
           <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>{`TypeScript · ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`}</text>
         </div>
-        {fabric.description && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, fontFamily: nativeTheme.fontMono }}>{fabric.description}</text>}
+        {fabric.description && <text testId="fabric-summary-description" style={{ color: summaryPalette.description, fontSize: 11, lineHeight: 17, fontFamily: nativeTheme.fontMono }}>{fabric.description}</text>}
       </div>
-      {fabric.code && <code code={fabric.code} language="typescript" theme={nativeTheme} style={CODE_SURFACE_STYLE} />}
+      {fabric.code && <code code={fabric.code} language="typescript" theme={nativeTheme} style={codeSurfaceStyle()} />}
       {fabric.audits.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
           {fabric.audits.map((audit, index) => <FabricAuditCard key={`${audit.ref}-${index}`} audit={audit} />)}
@@ -570,11 +575,20 @@ function FabricToolBody({ fabric, output }: { fabric: FabricToolPresentation; ou
       {output && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           <text style={{ color: colors.textFaint, fontSize: 10, fontWeight: 600, fontFamily: nativeTheme.fontMono }}>RESULT</text>
-          <code code={output} language={fabric.outputLanguage ?? 'text'} theme={nativeTheme} style={CODE_SURFACE_STYLE} />
+          <code code={output} language={fabric.outputLanguage ?? 'text'} theme={nativeTheme} style={codeSurfaceStyle()} />
         </div>
       )}
     </div>
   )
+}
+
+export function fabricSummaryPalette() {
+  return {
+    background: colors.card,
+    border: colors.borderStrong,
+    name: colors.text,
+    description: colors.textMuted,
+  }
 }
 
 function FabricAuditCard({ audit }: { audit: FabricAuditPresentation }) {
@@ -590,12 +604,12 @@ function FabricAuditCard({ audit }: { audit: FabricAuditPresentation }) {
         <div style={{ flexGrow: 1 }} />
         {audit.durationMs !== undefined && <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>{formatDuration(audit.durationMs)}</text>}
       </div>
-      {audit.args && <code code={formatFabricValue(audit.args)} language="json" theme={nativeTheme} style={CODE_SURFACE_STYLE} />}
+      {audit.args && <code code={formatFabricValue(audit.args)} language="json" theme={nativeTheme} style={codeSurfaceStyle()} />}
       {result && (
         <code
           code={result}
           theme={nativeTheme}
-          style={CODE_SURFACE_STYLE}
+          style={codeSurfaceStyle()}
           {...(language ? { language } : {})}
           {...(path ? { path } : {})}
         />
@@ -724,7 +738,7 @@ function WorkingRow({ activity }: { activity: string }) {
 
 function StatusMessage({ text, error, timestamp }: { text: string; error: boolean; timestamp?: number | undefined }) {
   return (
-    <div style={{ padding: 8, borderRadius: 7, backgroundColor: error ? '#261418' : colors.card }}>
+    <div style={{ padding: 8, borderRadius: 7, backgroundColor: error ? colors.diffDel : colors.card }}>
       <text style={{ color: error ? colors.error : colors.textMuted, fontSize: 12, lineHeight: 18 }}>{text}</text>
       {timestamp && <Timestamp value={timestamp} />}
     </div>

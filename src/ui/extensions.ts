@@ -1,11 +1,13 @@
 import type { ComponentType } from 'react'
 import { serviceToken, type Cleanup, type WorkbenchPlugin } from '../core/kernel.ts'
 import type { IconName } from './icons.tsx'
+import type { ResolvedTheme } from './theme.ts'
 
 export interface WorkbenchSurfaceProps {
   fullscreen: boolean
   fullscreenProgress: number
   panelWidth: number
+  appearance?: ResolvedTheme
   onToggleFullscreen(): void
   onNewSurface(): void
   onClose(): void

@@ -12,6 +12,7 @@ import type { WorkbenchUiRegistry } from './extensions.ts'
 import type { ToolPresenter } from './tool-presenters.ts'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
+import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
 import { SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
 
 type Surface = 'chat' | 'settings'
@@ -31,12 +32,15 @@ export function WorkbenchApp({
   controller,
   presenters,
   ui,
+  themeManager = defaultThemeManager,
 }: {
   controller: WorkbenchController
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
+  themeManager?: ThemeManager
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const theme = useSyncExternalStore(themeManager.subscribe, themeManager.getSnapshot)
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
   const renderer = useGpuixRequired()
   const [surface, setSurface] = useState<Surface>('chat')
@@ -143,7 +147,7 @@ export function WorkbenchApp({
     : displayedRightPanel === 'surfaces'
       ? <SurfacePickerPanel surfaces={uiSnapshot.surfaces} fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
       : SurfaceComponent
-        ? <SurfaceComponent fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
+        ? <SurfaceComponent fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} appearance={theme.resolved} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
         : null
 
   return (
@@ -157,6 +161,7 @@ export function WorkbenchApp({
                 settingsActive={surface === 'settings'}
                 notificationsActive={notificationsOpen}
                 unreadCount={unreadCount}
+                appearance={theme.resolved}
                 onSelectSession={returnToConversation}
                 onSettings={() => {
                   closeRightPanel()
@@ -167,7 +172,7 @@ export function WorkbenchApp({
             </div>
           </div>
           {surface === 'settings' ? (
-            <SettingsView state={state} controller={controller} onClose={() => setSurface('chat')} />
+            <SettingsView state={state} controller={controller} theme={theme} onThemeModeChange={(mode) => themeManager.setMode(mode)} onClose={() => setSurface('chat')} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background }}>
               <div style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: 1 - fullscreenProgress, minWidth: 0, height: '100%', overflow: 'hidden' }}>

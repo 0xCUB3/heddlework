@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { ComposerImage, PiModel, PiSessionStats, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { ExtensionDialog, ExtensionWidget, WorkbenchState } from '../workbench/state.ts'
@@ -7,11 +7,32 @@ import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
 import { ComposerNotificationStack } from './notifications.tsx'
+import { MotionDiv } from './motion.ts'
 import { QueueDock } from './queue-dock.tsx'
 
 export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
   const [pastingImage, setPastingImage] = useState(false)
+  const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
+  const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
+  const contextPopoverExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queuedByKeyDown = useRef(false)
+  useEffect(() => () => {
+    if (contextPopoverExitTimer.current) clearTimeout(contextPopoverExitTimer.current)
+  }, [])
+  const showContextPopover = () => {
+    if (contextPopoverExitTimer.current) clearTimeout(contextPopoverExitTimer.current)
+    contextPopoverExitTimer.current = undefined
+    setContextPopoverMounted(true)
+    setContextPopoverOpen(true)
+  }
+  const hideContextPopover = () => {
+    setContextPopoverOpen(false)
+    if (contextPopoverExitTimer.current) clearTimeout(contextPopoverExitTimer.current)
+    contextPopoverExitTimer.current = setTimeout(() => {
+      contextPopoverExitTimer.current = undefined
+      setContextPopoverMounted(false)
+    }, CONTEXT_POPOVER_MOTION_MS)
+  }
   const connected = state.connection === 'connected'
   const modelOptions: SelectOption[] = state.models.map((model) => ({
     value: modelKey(model),
@@ -152,7 +173,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
           />
           <div style={{ flexGrow: 1 }} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-            {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} />}
+            {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} popoverOpen={contextPopoverOpen} onMouseEnter={showContextPopover} onMouseLeave={hideContextPopover} />}
             <PrimaryAction
               running={state.session.isStreaming}
               disabled={!connected || (!state.session.isStreaming && !state.editorText.trim() && state.editorImages.length === 0)}
@@ -163,7 +184,11 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
         </div>
         <div testId="composer-seam-mask" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 2, backgroundColor: colors.composer, pointerEvents: 'none' }} />
       </div>
-      <ComposerContextShadow />
+      {contextPopoverMounted && state.stats && (
+        <div testId="context-popover-positioner" style={{ position: 'absolute', right: 46, bottom: 84, width: 256, display: 'flex', backgroundColor: colors.transparent }}>
+          <ContextPopover stats={state.stats} open={contextPopoverOpen} />
+        </div>
+      )}
       </div>
 
       {below.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
@@ -175,45 +200,55 @@ function ToolbarSeparator() {
   return <div style={{ width: 1, height: 16, backgroundColor: colors.borderStrong, marginLeft: 1, marginRight: 1 }} />
 }
 
-function ContextMeter({ stats }: { stats: PiSessionStats }) {
-  const [hovered, setHovered] = useState(false)
+const CONTEXT_POPOVER_MOTION_MS = 160
+
+function ContextMeter({ stats, popoverOpen, onMouseEnter, onMouseLeave }: { stats: PiSessionStats; popoverOpen: boolean; onMouseEnter(): void; onMouseLeave(): void }) {
+  const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
+  const rounded = Math.round(percent * 10) / 10
+  const tone = percent > 80 ? colors.warning : percent > 60 ? '#D8A95B' : colors.textMuted
+  return (
+    <div testId="context-meter" style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 8, borderRadius: 9, marginRight: 9, backgroundColor: popoverOpen ? colors.hover : colors.transparent, cursor: 'default' }} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <text style={{ color: popoverOpen ? colors.text : colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
+      <div style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
+    </div>
+  )
+}
+
+function ContextPopover({ stats, open }: { stats: PiSessionStats; open: boolean }) {
   const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
   const rounded = Math.round(percent * 10) / 10
   const tokens = stats.contextUsage?.tokens ?? 0
   const contextWindow = stats.contextUsage?.contextWindow ?? 0
-  const tone = percent > 80 ? colors.warning : percent > 60 ? '#D8A95B' : colors.textMuted
   return (
-    <div testId="context-meter" style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 8, borderRadius: 9, marginRight: 9, backgroundColor: hovered ? colors.hover : colors.transparent, cursor: 'default' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <text style={{ color: hovered ? colors.text : colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
-      <div style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
-      {hovered && (
-        <anchored side="top" align="end" gap={8} offset={{ x: 8, y: 0 }} fit="snap" snapMargin={8} deferred priority={12} occlude>
-        <div testId="context-popover" style={{ width: 256, display: 'flex', flexDirection: 'column', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14 }}>
-            <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
-              <text style={{ color: colors.text, fontSize: 13, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
-              <div style={{ flexGrow: 1 }} />
-              <text style={{ color: colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${formatTokenCount(tokens)} / ${formatTokenCount(contextWindow)}`}</text>
-            </div>
-            <div style={{ position: 'relative', width: '100%', height: 8, borderRadius: 4, backgroundColor: colors.hover, overflow: 'hidden' }}>
-              <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 226 * percent / 100, backgroundColor: percent > 80 ? colors.warning : colors.primary }} />
-            </div>
-          </div>
-          <div style={{ height: 1, backgroundColor: colors.borderStrong }} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 14 }}>
-            <ContextStat label="Messages" value={String(stats.totalMessages ?? 0)} />
-            <ContextStat label="Tool calls" value={String(stats.toolCalls ?? 0)} />
-          </div>
-          <div style={{ height: 1, backgroundColor: colors.borderStrong }} />
-          <div style={{ display: 'flex', flexDirection: 'row', padding: 14, backgroundColor: colors.card }}>
-            <text style={{ color: colors.textMuted, fontSize: 11 }}>Total cost</text>
-            <div style={{ flexGrow: 1 }} />
-            <text style={{ color: colors.text, fontSize: 12, fontFamily: nativeTheme.fontMono }}>{`$${(stats.cost ?? 0).toFixed(2)}`}</text>
-          </div>
+    <MotionDiv
+      testId="context-popover"
+      initial={{ opacity: 0, top: 4 }}
+      animate={{ opacity: open ? 1 : 0, top: open ? 0 : 4 }}
+      transition={{ duration: CONTEXT_POPOVER_MOTION_MS / 1_000, ease: 'easeOut' }}
+      style={{ position: 'relative', width: 256, display: 'flex', flexDirection: 'column', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14 }}>
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
+          <text style={{ color: colors.text, fontSize: 13, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
+          <div style={{ flexGrow: 1 }} />
+          <text style={{ color: colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${formatTokenCount(tokens)} / ${formatTokenCount(contextWindow)}`}</text>
         </div>
-        </anchored>
-      )}
-    </div>
+        <div style={{ position: 'relative', width: '100%', height: 8, borderRadius: 4, backgroundColor: colors.hover, overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 226 * percent / 100, backgroundColor: percent > 80 ? colors.warning : colors.primary }} />
+        </div>
+      </div>
+      <div style={{ height: 1, backgroundColor: colors.borderStrong }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 14 }}>
+        <ContextStat label="Messages" value={String(stats.totalMessages ?? 0)} />
+        <ContextStat label="Tool calls" value={String(stats.toolCalls ?? 0)} />
+      </div>
+      <div style={{ height: 1, backgroundColor: colors.borderStrong }} />
+      <div style={{ display: 'flex', flexDirection: 'row', padding: 14, backgroundColor: colors.card }}>
+        <text style={{ color: colors.textMuted, fontSize: 11 }}>Total cost</text>
+        <div style={{ flexGrow: 1 }} />
+        <text style={{ color: colors.text, fontSize: 12, fontFamily: nativeTheme.fontMono }}>{`$${(stats.cost ?? 0).toFixed(2)}`}</text>
+      </div>
+    </MotionDiv>
   )
 }
 
@@ -228,18 +263,16 @@ function formatTokenCount(value: number): string {
 }
 
 function ComposerContextShadow() {
+  const alphas = nativeTheme.appearance === 'light'
+    ? ['12', '10', '0E', '0C', '0A', '08', '06', '04', '02', '01']
+    : ['28', '24', '20', '1C', '18', '14', '10', '0C', '08', '04']
   return (
-    <div testId="composer-context-shadow" style={{ position: 'absolute', left: 14, right: 14, bottom: 26, height: 10, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
-      <div style={{ height: 1, backgroundColor: '#00000028' }} />
-      <div style={{ height: 1, backgroundColor: '#00000024' }} />
-      <div style={{ height: 1, backgroundColor: '#00000020' }} />
-      <div style={{ height: 1, backgroundColor: '#0000001C' }} />
-      <div style={{ height: 1, backgroundColor: '#00000018' }} />
-      <div style={{ height: 1, backgroundColor: '#00000014' }} />
-      <div style={{ height: 1, backgroundColor: '#00000010' }} />
-      <div style={{ height: 1, backgroundColor: '#0000000C' }} />
-      <div style={{ height: 1, backgroundColor: '#00000008' }} />
-      <div style={{ height: 1, backgroundColor: '#00000004' }} />
+    <div testId="composer-context-shadow" style={{ position: 'absolute', left: 0, right: 0, top: 12, height: 10, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
+      {alphas.map((alpha, index) => (
+        <React.Fragment key={alpha}>
+          <div {...(index === 0 ? { testId: 'composer-context-shadow-strong' } : {})} style={{ height: 1, backgroundColor: `#000000${alpha}` }} />
+        </React.Fragment>
+      ))}
     </div>
   )
 }
@@ -251,6 +284,7 @@ function ComposerContextBar({ branch }: { branch: string }) {
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 16, backgroundColor: colors.contextBar }} />
       <div style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 16, backgroundColor: colors.composerOutline }} />
       <div style={{ position: 'absolute', right: 0, top: 0, width: 1, height: 16, backgroundColor: colors.composerOutline }} />
+      <ComposerContextShadow />
       <Icon name="folder" size={13} color={colors.contextIcon} />
       <text testId="composer-checkout-label" style={{ color: colors.contextText, fontSize: 12 }}>Local checkout</text>
       <div style={{ flexGrow: 1 }} />

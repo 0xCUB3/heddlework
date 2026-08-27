@@ -213,7 +213,7 @@ export function ChipSelect({
           borderRadius: 10,
           borderWidth: 1,
           borderColor: colors.borderStrong,
-          backgroundColor: '#171719',
+          backgroundColor: colors.popover,
           overflow: 'scroll',
         }}
       >
@@ -265,7 +265,7 @@ function SearchableChipSelect({ value, label, options, onChange, testId, width, 
         {...(testId ? { testId: `${testId}-content` } : {})}
         side="top"
         sideOffset={7}
-        style={{ width, minHeight: 0, padding: 5, gap: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: '#171719' }}
+        style={{ width, minHeight: 0, padding: 5, gap: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}
       >
         <div style={{ height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
           <Icon name="search" size={13} color={colors.textFaint} />
@@ -363,7 +363,7 @@ function optionStyle(active: boolean) {
     paddingLeft: 9,
     paddingRight: 9,
     borderRadius: 7,
-    backgroundColor: active ? colors.hover : '#171719',
+    backgroundColor: active ? colors.hover : colors.popover,
     cursor: 'pointer' as const,
   }
 }

@@ -34,6 +34,7 @@ export function createCoreUiExtension(controller: WorkbenchController): Workbenc
         fullscreen={props.fullscreen}
         fullscreenProgress={props.fullscreenProgress}
         panelWidth={props.panelWidth}
+        {...(props.appearance ? { appearance: props.appearance } : {})}
         onToggleFullscreen={props.onToggleFullscreen}
         onNewSurface={props.onNewSurface}
         onClose={props.onClose}
