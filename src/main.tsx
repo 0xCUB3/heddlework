@@ -7,6 +7,7 @@ import { ThemeManager } from './ui/theme-manager.ts'
 import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
 import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from './ui/tool-presenters.ts'
+import { sessionSidebarCachePath } from './pi/session-catalog.ts'
 import {
   createAgentTransportPlugin,
   createSessionCatalogPlugin,
@@ -36,7 +37,7 @@ kernel.mount(coreToolPresentersPlugin)
 kernel.mount(createWorkbenchControllerPlugin(workspacePath))
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
-kernel.mount(createSessionCatalogPlugin())
+kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
 kernel.mount(localWorkspaceDiffPlugin)
 kernel.mount(createAgentTransportPlugin({
   cwd: workspacePath,

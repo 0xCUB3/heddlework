@@ -1,7 +1,9 @@
-import { open, readdir, stat } from 'node:fs/promises'
+import { mkdir, open, readdir, stat, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { asRecord, contentText } from '../workbench/state.ts'
 
 export interface PiSessionSummary {
@@ -21,6 +23,7 @@ export interface SessionCatalogOptions {
   limit?: number
   scope?: 'all' | 'cwd'
   concurrency?: number
+  cachePath?: string | false
 }
 
 interface SessionFileMeta {
@@ -56,14 +59,37 @@ const SESSION_META_CONCURRENCY = 64
 export class PiSessionCatalog {
   readonly #options: SessionCatalogOptions
   readonly #cache = new Map<string, SessionCacheEntry>()
+  #persisted: PiSessionSummary[]
 
   constructor(options: SessionCatalogOptions = {}) {
     this.#options = options
+    this.#persisted = readPersistedSessions(options.cachePath)
   }
 
-  list(cwd: string, limit = this.#options.limit): Promise<PiSessionSummary[]> {
+  cached(cwd: string, limit = this.#options.limit): PiSessionSummary[] {
+    const sessions = (this.#options.scope ?? 'all') === 'cwd'
+      ? this.#persisted.filter((session) => resolve(session.cwd) === resolve(cwd))
+      : this.#persisted
+    return limit === undefined ? sessions : sessions.slice(0, Math.max(0, limit))
+  }
+
+  async list(cwd: string, limit = this.#options.limit): Promise<PiSessionSummary[]> {
     const options = limit === undefined ? this.#options : { ...this.#options, limit }
-    return listPiSessionsCached(cwd, options, this.#cache)
+    const sessions = await listPiSessionsCached(cwd, options, this.#cache)
+    this.#persisted = sessions
+    await persistSessions(this.#options.cachePath, sessions)
+    return sessions
+  }
+
+  async createWorkspaceSession(cwd: string): Promise<PiSessionSummary> {
+    const workspace = resolve(cwd)
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+    const directory = getPiSessionDirectory(workspace, this.#options.agentDir)
+    const path = join(directory, `${timestamp.replace(/[:.]/g, '-')}_${id}.jsonl`)
+    await mkdir(directory, { recursive: true })
+    await writeFile(path, `${JSON.stringify({ type: 'session', version: 3, id, timestamp, cwd: workspace })}\n`, { encoding: 'utf8', flag: 'wx' })
+    return { id, path, cwd: workspace, title: '(no messages)', firstMessage: '', messageCount: 0, createdAt: Date.parse(timestamp), modifiedAt: Date.parse(timestamp) }
   }
 }
 
@@ -123,6 +149,39 @@ async function sessionMeta(path: string): Promise<SessionFileMeta | null> {
   } catch {
     return null
   }
+}
+
+export function sessionSidebarCachePath(platform: NodeJS.Platform = process.platform, environment: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'Heddlework', 'sessions.json')
+  if (platform === 'win32') return join(environment.APPDATA ?? join(home, 'AppData', 'Roaming'), 'Heddlework', 'sessions.json')
+  return join(environment.XDG_CACHE_HOME ?? join(home, '.cache'), 'heddlework', 'sessions.json')
+}
+
+function readPersistedSessions(path: string | false | undefined): PiSessionSummary[] {
+  if (!path) return []
+  try {
+    const value = JSON.parse(readFileSync(path, 'utf8')) as { sessions?: unknown }
+    if (!Array.isArray(value.sessions)) return []
+    return value.sessions.filter(isSessionSummary).sort((left, right) => right.modifiedAt - left.modifiedAt)
+  } catch {
+    return []
+  }
+}
+
+async function persistSessions(path: string | false | undefined, sessions: PiSessionSummary[]): Promise<void> {
+  if (!path) return
+  try {
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `${JSON.stringify({ version: 1, sessions })}\n`, 'utf8')
+  } catch {
+    // A fresh filesystem scan still populates the current run when persistence is unavailable.
+  }
+}
+
+function isSessionSummary(value: unknown): value is PiSessionSummary {
+  if (!value || typeof value !== 'object') return false
+  const session = value as Record<string, unknown>
+  return typeof session.id === 'string' && typeof session.path === 'string' && typeof session.cwd === 'string' && typeof session.title === 'string' && typeof session.firstMessage === 'string' && typeof session.messageCount === 'number' && typeof session.createdAt === 'number' && typeof session.modifiedAt === 'number'
 }
 
 export function getPiSessionRoot(configuredAgentDir?: string): string {
@@ -193,7 +252,7 @@ async function readPiSessionSummary(
     if (tail.nameFound) accumulator.name = tail.name
     accumulator.lastResponseAt = Math.max(accumulator.lastResponseAt, tail.lastResponseAt)
   }
-  const fallback = accumulator.firstMessage || '(image or attachment)'
+  const fallback = accumulator.firstMessage || (accumulator.messageCount === 0 ? 'New thread' : '(image or attachment)')
   const summary: PiSessionSummary = {
     id: accumulator.id,
     path: meta.path,

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { getPiSessionDirectory, listPiSessions } from '../src/pi/session-catalog.ts'
+import { getPiSessionDirectory, listPiSessions, PiSessionCatalog } from '../src/pi/session-catalog.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -10,6 +10,24 @@ afterEach(async () => {
 })
 
 describe('PiSessionCatalog', () => {
+  it('creates blank target-workspace sessions and persists fresh sidebar summaries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'heddlework-catalog-cache-'))
+    roots.push(root)
+    const agentDir = join(root, 'agent')
+    const cachePath = join(root, 'sessions.json')
+    const cwd = join(root, 'target-project')
+    const catalog = new PiSessionCatalog({ agentDir, cachePath })
+
+    const created = await catalog.createWorkspaceSession(cwd)
+    expect(JSON.parse(await readFile(created.path, 'utf8'))).toMatchObject({ type: 'session', version: 3, id: created.id, cwd })
+    const scanned = await catalog.list(cwd)
+    expect(scanned).toHaveLength(1)
+    expect(scanned[0]).toMatchObject({ id: created.id, cwd, title: 'New thread', messageCount: 0 })
+
+    const hydrated = new PiSessionCatalog({ agentDir, cachePath }).cached(cwd)
+    expect(hydrated).toEqual(scanned)
+  })
+
   it('lists persisted sessions with latest names and user-message fallback titles', async () => {
     const root = await mkdtemp(join(tmpdir(), 'heddlework-catalog-'))
     roots.push(root)

@@ -25,6 +25,22 @@ class PagedCatalog extends PiSessionCatalog {
   }
 }
 
+class CachedDeferredCatalog extends PiSessionCatalog {
+  #releaseList: (() => void) | undefined
+  #listGate = new Promise<void>((resolve) => { this.#releaseList = resolve })
+
+  override cached(_cwd: string, limit?: number): PiSessionSummary[] {
+    return sessions.slice(0, limit)
+  }
+
+  override async list(_cwd: string, limit?: number): Promise<PiSessionSummary[]> {
+    await this.#listGate
+    return sessions.slice(0, limit)
+  }
+
+  release(): void { this.#releaseList?.() }
+}
+
 class DeferredTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
   readonly statuses = new Set<(status: TransportStatus) => void>()
@@ -59,6 +75,27 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe('session history startup and paging', () => {
+  it('hydrates muted cached sessions before transport or filesystem startup completes', async () => {
+    const transport = new DeferredTransport()
+    const catalog = new CachedDeferredCatalog()
+    const controller = new WorkbenchController(transport, '/tmp/project-0', testControllerDependencies(catalog))
+    expect(controller.getSnapshot()).toMatchObject({ sessionsLoading: true, sessions: sessions.slice(0, 120) })
+    const starting = controller.start()
+    try {
+      await Bun.sleep(0)
+      expect(controller.getSnapshot()).toMatchObject({ connection: 'connecting', sessionsLoading: true, sessions: sessions.slice(0, 120) })
+      catalog.release()
+      await waitFor(() => !controller.getSnapshot().sessionsLoading)
+      transport.release()
+      await starting
+    } finally {
+      catalog.release()
+      transport.release()
+      await starting.catch(() => undefined)
+      await controller.dispose()
+    }
+  })
+
   it('publishes persisted sessions before the Pi process finishes starting', async () => {
     const transport = new DeferredTransport()
     const catalog = new PagedCatalog()

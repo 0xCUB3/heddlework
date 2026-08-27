@@ -21,18 +21,6 @@ export function openPath(path: string): void {
   openSystemTarget(resolve(path))
 }
 
-export function launchWorkspaceWindow(path: string, sessionPath?: string): void {
-  const workspace = resolve(path)
-  const standalone = typeof Bun !== 'undefined' && Bun.isStandaloneExecutable
-  const script = process.argv[1]
-  const args = standalone || !script ? [workspace] : [script, workspace]
-  const env: NodeJS.ProcessEnv = { ...process.env, HEDDLEWORK_CWD: workspace }
-  if (sessionPath) env.HEDDLEWORK_SESSION = sessionPath
-  else delete env.HEDDLEWORK_SESSION
-  const child = spawn(process.execPath, args, { stdio: 'ignore', detached: true, env })
-  child.unref()
-}
-
 export function directoryPickerCommand(platform: NodeJS.Platform = process.platform): DirectoryPickerCommand | undefined {
   if (platform === 'darwin') {
     return {

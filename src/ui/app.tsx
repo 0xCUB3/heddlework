@@ -3,6 +3,7 @@ import { useGpuixRequired } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
+import { DraftWorkspaceChooser } from './workspace-chooser.tsx'
 import { NotificationLedgerView } from './notifications.tsx'
 import { SettingsView } from './settings-view.tsx'
 import { WorkbenchSidebar } from './sidebar.tsx'
@@ -57,7 +58,6 @@ export function WorkbenchApp({
   const latestNoticeId = state.notices.at(-1)?.id ?? 0
   const unreadCount = state.notices.filter((notice) => notice.id > lastSeenNoticeId).length
   const draft = state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
-  const projectName = state.workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? state.workspacePath
 
   useEffect(() => {
     renderer.setWindowTitle?.(state.windowTitle)
@@ -179,10 +179,7 @@ export function WorkbenchApp({
                 <ChatHeader state={state} controller={controller} diffOpen={diffOpen} leftSidebarProgress={animatedSidebarProgress} onToggleDiff={toggleDiff} />
                 <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
                   {draft ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 25, paddingLeft: 20, paddingRight: 20, paddingBottom: 74 }}>
-                      <text style={{ color: colors.text, fontSize: 26, fontWeight: 500, maxWidth: 900, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{`What should we build in ${projectName}?`}</text>
-                      <Composer state={state} controller={controller} draft />
-                    </div>
+                    <DraftWorkspaceChooser state={state} controller={controller} />
                   ) : (
                     <>
                       <Transcript state={state} presenters={presenters} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.forkFrom(entryId)} onLoadEarlier={controller.loadEarlierMessages} />

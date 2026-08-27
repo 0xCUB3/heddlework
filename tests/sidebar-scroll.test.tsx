@@ -44,6 +44,7 @@ describeNative('sidebar initial session position', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       const automation = await connectTest(root.renderer)
+      expect(root.renderer.findByTestId('sidebar-session-region')?.style.opacity).toBe(0.55)
       const list = root.renderer.findByTestId('sidebar-session-list')!
       root.renderer.scrollTo(list.id, 0, -1_000)
       expect(root.renderer.getScrollOffset(list.id)?.[1] ?? 0).toBeLessThan(-100)
@@ -51,6 +52,7 @@ describeNative('sidebar initial session position', () => {
       render({ ...createInitialState('/tmp/project'), sessions, sessionsLoading: false })
       await Bun.sleep(0)
       root.renderer.flush()
+      expect(root.renderer.findByTestId('sidebar-session-region')?.style.opacity).toBe(1)
       expect(Math.abs(root.renderer.getScrollOffset(list.id)?.[1] ?? 0)).toBeLessThanOrEqual(0.01)
       await Bun.sleep(0)
       root.renderer.flush()

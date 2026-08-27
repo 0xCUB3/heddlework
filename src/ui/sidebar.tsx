@@ -6,7 +6,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type ThreadLifecycle, type WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
-import { launchWorkspaceWindow, pickWorkspaceDirectory } from './open-external.ts'
+import { pickWorkspaceDirectory } from './open-external.ts'
 import { colors } from './theme.ts'
 
 const SIDEBAR_WIDTH = 256
@@ -180,14 +180,14 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
             onClick={() => {
               setPickingProject(true)
               void pickWorkspaceDirectory().then((path) => {
-                if (path) launchWorkspaceWindow(path)
+                if (path) void controller.switchWorkspace(path)
               }).finally(() => setPickingProject(false))
             }}
           />
         </div>
       </div>
 
-      <div testId="sidebar-session-region" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div testId="sidebar-session-region" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', opacity: state.sessionsLoading || state.connection === 'connecting' ? 0.55 : 1 }}>
       <NativeVirtualList testId="sidebar-session-list" elementRef={sessionListRef} alignment="top" estimatedItemHeight={78} overdraw={280} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {activeSessions.map((session) => renderSession(session, 'active'))}
         {snoozedSessions.length > 0 && <SectionLabel label={`Snoozed (${snoozedSessions.length})`} tone="accent" />}

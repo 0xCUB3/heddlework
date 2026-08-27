@@ -9,10 +9,16 @@ const sessions: PiSessionSummary[] = [
   { id: 'one', path: '/tmp/one.jsonl', cwd: '/tmp/project', title: 'First thread', firstMessage: 'First', messageCount: 1, createdAt: 1, modifiedAt: 1 },
   { id: 'two', path: '/tmp/two.jsonl', cwd: '/tmp/project-two', title: 'Second thread', firstMessage: 'Second', messageCount: 1, createdAt: 2, modifiedAt: 2 },
 ]
+const workspaceSession: PiSessionSummary = { id: 'three', path: '/tmp/three.jsonl', cwd: '/tmp/project-three', title: '(no messages)', firstMessage: '', messageCount: 0, createdAt: 3, modifiedAt: 3 }
 
 class StaticCatalog extends PiSessionCatalog {
   override async list(): Promise<PiSessionSummary[]> {
     return sessions
+  }
+
+  override async createWorkspaceSession(cwd: string): Promise<PiSessionSummary> {
+    expect(cwd).toBe('/tmp/project-three')
+    return workspaceSession
   }
 }
 
@@ -20,11 +26,13 @@ class SwitchingTransport implements AgentTransport {
   readonly events = new Set<(event: RpcRecord) => void>()
   readonly statuses = new Set<(status: TransportStatus) => void>()
   readonly sent: RpcRecord[] = []
+  readonly requests: RpcCommand[] = []
   active = sessions[0]!
+  startCalls = 0
   #notifyDuringBootstrap = false
   #switchBarrier: Promise<void> | undefined
 
-  async start(): Promise<void> { this.emitStatus({ state: 'running', pid: 1 }) }
+  async start(): Promise<void> { this.startCalls += 1; this.emitStatus({ state: 'running', pid: 1 }) }
   async stop(): Promise<void> { this.emitStatus({ state: 'stopped' }) }
   send(record: RpcRecord): void { this.sent.push(record) }
   getStderr(): string { return '' }
@@ -38,8 +46,9 @@ class SwitchingTransport implements AgentTransport {
   }
 
   async request<T = unknown>(command: RpcCommand): Promise<T> {
+    this.requests.push(command)
     if (command.type === 'switch_session') {
-      this.active = sessions.find((session) => session.path === command.sessionPath) ?? this.active
+      this.active = [...sessions, workspaceSession].find((session) => session.path === command.sessionPath) ?? this.active
       this.emitEvent({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
       this.#notifyDuringBootstrap = true
       const barrier = this.#switchBarrier
@@ -62,7 +71,7 @@ class SwitchingTransport implements AgentTransport {
       } as T
     }
     if (command.type === 'get_messages') {
-      const messages: PiMessage[] = [{ role: 'user', content: this.active.firstMessage, timestamp: this.active.modifiedAt }]
+      const messages: PiMessage[] = this.active.messageCount > 0 ? [{ role: 'user', content: this.active.firstMessage, timestamp: this.active.modifiedAt }] : []
       return { messages } as T
     }
     if (command.type === 'get_available_models') return { models: [] } as T
@@ -96,6 +105,21 @@ describe('clickable session switching', () => {
       expect(controller.getSnapshot().session.sessionId).toBe('two')
       expect(controller.getSnapshot().workspacePath).toBe('/tmp/project-two')
       expect(controller.getSnapshot().messages[0]?.content).toBe('Second')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('opens a blank workspace in the current Pi process and window', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      await controller.switchWorkspace('/tmp/project-three')
+      expect(transport.startCalls).toBe(1)
+      expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/three.jsonl' })
+      expect(controller.getSnapshot()).toMatchObject({ workspacePath: '/tmp/project-three', messages: [] })
+      expect(controller.getSnapshot().session).toMatchObject({ sessionId: 'three', sessionFile: '/tmp/three.jsonl' })
     } finally {
       await controller.dispose()
     }

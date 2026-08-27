@@ -71,6 +71,10 @@ export class WorkbenchController {
     this.#workspaceDiff = dependencies.workspaceDiff
     this.#stopTransportOnDispose = dependencies.transportOwnership !== 'provider'
     this.#state = createInitialState(workspacePath)
+    const cachedSessions = this.#sessionCatalog.cached?.(workspacePath, this.#sessionLimit + 1) ?? []
+    if (cachedSessions.length > 0) {
+      this.#state = { ...this.#state, sessions: cachedSessions.slice(0, this.#sessionLimit), sessionsLoading: true, sessionsHasMore: cachedSessions.length > this.#sessionLimit }
+    }
     if (dependencies.transportEvents === 'external') {
       this.#unsubscribeEvent = () => undefined
       this.#unsubscribeStatus = () => undefined
@@ -253,6 +257,19 @@ export class WorkbenchController {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
     } finally {
       this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+    }
+  }
+
+  async switchWorkspace(workspacePath: string): Promise<void> {
+    const target = resolve(workspacePath)
+    if (this.#state.session.isStreaming || target === resolve(this.#state.workspacePath)) return
+    this.#patch({ activity: 'Opening project' })
+    try {
+      const session = await this.#sessionCatalog.createWorkspaceSession(target)
+      await this.switchSession(session)
+    } catch (error) {
+      this.#patch({ activity: 'Ready' })
+      this.#setState((state) => addNotice(state, 'error', `Could not open project: ${errorMessage(error)}`))
     }
   }
 

@@ -91,6 +91,33 @@ describeNative('WorkbenchApp', () => {
     }
 
     const automation = await connectTest(root.renderer)
+    await automation.getByTestId('workspace-chooser-trigger').click()
+    root.renderer.flush()
+    expect(await automation.getByTestId('workspace-menu').count()).toBe(1)
+    expect(await automation.getByTestId('workspace-choice-current').count()).toBe(1)
+    expect(await automation.getByTestId('workspace-new-project').count()).toBe(1)
+    expect(await automation.getByTestId('workspace-search').count()).toBe(1)
+    expect(await automation.getByTestId('workspace-project-list').count()).toBe(1)
+    expect(Number(root.renderer.findByTestId('workspace-project-list')?.style.height)).toBeLessThanOrEqual(210)
+    expect(root.renderer.getPaintedText()).toContain('New project')
+    expect(root.renderer.getPaintedText()).toContain('1 of 1 projects')
+    await automation.getByTestId('workspace-search').fill('definitely missing workspace')
+    root.renderer.flush()
+    expect(await automation.getByTestId('workspace-search-empty').count()).toBe(1)
+    expect(root.renderer.getPaintedText()).toContain('No projects match your search')
+    await automation.getByTestId('workspace-search').fill('')
+    root.renderer.flush()
+    const workspaceTrigger = root.renderer.findByTestId('workspace-chooser-trigger')!
+    expect(workspaceTrigger.style).toMatchObject({ height: 32, borderBottomWidth: 1 })
+    const workspacePositioner = root.renderer.findByTestId('workspace-menu-positioner')!
+    expect(workspacePositioner.style.backgroundColor).toBe(colors.transparent)
+    expect(root.renderer.findByType('anchored').some((node) => node.testId === 'workspace-menu')).toBe(false)
+    const workspaceStack = root.renderer.findByTestId('draft-workspace-stack')!
+    const composerLayer = root.renderer.findByTestId('draft-composer-layer')!
+    expect(workspaceStack.children.indexOf(workspacePositioner.id)).toBeGreaterThan(workspaceStack.children.indexOf(composerLayer.id))
+    await automation.getByTestId('workspace-chooser-trigger').click()
+    root.renderer.flush()
+    expect(await automation.getByTestId('workspace-menu').count()).toBe(0)
     expect(await automation.getByTestId('sidebar-session-active').count()).toBe(0)
     expect(await automation.getByTestId('sidebar-session-card').count()).toBe(0)
     const sidebarList = (await automation.getByTestId('sidebar-session-list').all())[0]!
