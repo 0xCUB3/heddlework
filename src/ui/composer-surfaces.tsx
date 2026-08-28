@@ -1,5 +1,5 @@
 import React from 'react'
-import type { RpcSlashCommand } from '../pi/types.ts'
+import type { SlashCommand } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { AskUserQuestionnaire } from '../workbench/ask-user.ts'
 import type { ExtensionWidget } from '../workbench/state.ts'
@@ -52,12 +52,13 @@ function DockAction({ label, testId, tone = 'muted', onClick }: { label: string;
   )
 }
 
-export function CommandPalette({ commands, activeIndex, onChoose }: { commands: RpcSlashCommand[]; activeIndex: number; onChoose(command: RpcSlashCommand): void }) {
+export function CommandPalette({ commands, activeIndex, onChoose }: { commands: SlashCommand[]; activeIndex: number; onChoose(command: SlashCommand): void }) {
   return (
     <div testId="command-palette" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, maxHeight: 300, gap: 3, marginBottom: EXTENSION_SURFACE_GAP, padding: 6, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll' }}>
       {commands.map((command, index) => (
         <div key={`${command.source}-${command.name}`} testId={`command-option-${command.name}`} tabIndex={0} style={{ minHeight: 38, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: index === activeIndex ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onChoose(command)} onKeyDown={(event) => { if (event.key === 'enter') onChoose(command) }}>
           <text style={{ color: index === activeIndex ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650, fontFamily: nativeTheme.fontMono }}>{`/${command.name}`}</text>
+          {command.argumentHint && <text style={{ color: colors.textMuted, fontSize: 9, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap' }}>{command.argumentHint}</text>}
           {command.description && <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{command.description}</text>}
           <text style={{ color: colors.textFaint, fontSize: 8 }}>{command.source.toUpperCase()}</text>
         </div>

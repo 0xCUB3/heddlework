@@ -1,34 +1,5 @@
 import type { ComposerImage } from '../pi/types.ts'
 
-export type QueuedControl =
-  | { kind: 'compact'; instructions?: string }
-  | { kind: 'new' }
-  | { kind: 'model'; target?: string }
-  | { kind: 'thinking'; level?: string }
-  | { kind: 'reload' }
-
-export function parseQueuedControl(text: string): QueuedControl | undefined {
-  const trimmed = text.trim()
-  if (trimmed === '/compact') return { kind: 'compact' }
-  if (trimmed.startsWith('/compact ')) {
-    const instructions = trimmed.slice('/compact '.length).trim()
-    return instructions ? { kind: 'compact', instructions } : { kind: 'compact' }
-  }
-  if (trimmed === '/new') return { kind: 'new' }
-  if (trimmed === '/model') return { kind: 'model' }
-  if (trimmed.startsWith('/model ')) {
-    const target = trimmed.slice('/model '.length).trim()
-    return target ? { kind: 'model', target } : { kind: 'model' }
-  }
-  if (trimmed === '/thinking') return { kind: 'thinking' }
-  if (trimmed.startsWith('/thinking ')) {
-    const level = trimmed.slice('/thinking '.length).trim()
-    return level ? { kind: 'thinking', level } : { kind: 'thinking' }
-  }
-  if (trimmed === '/reload') return { kind: 'reload' }
-  return undefined
-}
-
 export interface QueuedInput {
   id: string
   text: string

@@ -29,6 +29,7 @@ export function ChipSelect({
   icon,
   searchable = false,
   onOpenChange,
+  openRequest,
 }: {
   value: string
   label?: string
@@ -40,8 +41,9 @@ export function ChipSelect({
   icon?: IconName
   searchable?: boolean
   onOpenChange?(open: boolean): void
+  openRequest?: number
 }) {
-  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} testId={testId} width={width} triggerMaxWidth={triggerMaxWidth} icon={icon} />
+  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} {...(openRequest === undefined ? {} : { openRequest })} testId={testId} width={width} triggerMaxWidth={triggerMaxWidth} icon={icon} />
   const [open, setOpen] = React.useState(false)
   const selected = options.find((option) => option.value === value)
   const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
@@ -50,6 +52,9 @@ export function ChipSelect({
     setOpen(nextOpen)
     onOpenChange?.(nextOpen)
   }
+  React.useEffect(() => {
+    if (openRequest !== undefined) handleOpenChange(true)
+  }, [openRequest])
   return (
     <Combobox
       items={items}
@@ -84,12 +89,13 @@ export function ChipSelect({
   )
 }
 
-function SearchableChipSelect({ value, label, options, onChange, onOpenChange, testId, width, triggerMaxWidth, icon }: {
+function SearchableChipSelect({ value, label, options, onChange, onOpenChange, openRequest, testId, width, triggerMaxWidth, icon }: {
   value: string
   label?: string | undefined
   options: SelectOption[]
   onChange(value: string): void
   onOpenChange?(open: boolean): void
+  openRequest?: number | undefined
   testId?: string | undefined
   width: number
   triggerMaxWidth: number
@@ -101,6 +107,11 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, t
   const filtered = React.useMemo(() => matchSelectOptions(options, query), [options, query])
   const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
   const items = filtered.map((option) => option.value)
+  React.useEffect(() => {
+    if (openRequest === undefined) return
+    setOpen(true)
+    onOpenChange?.(true)
+  }, [openRequest])
 
   return (
     <Combobox

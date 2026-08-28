@@ -68,7 +68,7 @@ describeNative('conversation extension overlays', () => {
       transport.emit({ type: 'extension_ui_request', id: 'fabric-status', method: 'setStatus', statusKey: 'fabric', statusText: '2 agents · 1 approval pending' })
       transport.emit({ type: 'extension_ui_request', id: 'above-widget', method: 'setWidget', widgetKey: 'fabric-activity', widgetLines: ['Above-editor Fabric activity'], widgetPlacement: 'aboveEditor' })
       transport.emit({ type: 'extension_ui_request', id: 'mesh-status', method: 'setStatus', statusKey: 'mesh', statusText: '12 peers · synchronized' })
-      controller.setEditorText('/')
+      controller.setEditorText('/led')
       await Bun.sleep(380)
       root.renderer.flush()
 

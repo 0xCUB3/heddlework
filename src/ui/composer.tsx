@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import type { ComposerImage, PiModel, PiSessionStats, RpcSlashCommand, ThinkingLevel } from '../pi/types.ts'
+import type { ComposerImage, PiModel, PiSessionStats, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { questionnaireFromTool } from '../workbench/ask-user.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
@@ -31,6 +31,10 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       .map(questionnaireFromTool)
       .find((questionnaire) => questionnaire?.toolCallId === state.questionnaireCollapsed), [state.liveTools, state.questionnaireCollapsed])
   useEffect(() => setActiveCommandIndex(0), [commandQuery])
+  useEffect(() => {
+    const request = state.uiRequest
+    if (request?.kind === 'model' || request?.kind === 'thinking') controller.completeUiRequest(request.id)
+  }, [controller, state.uiRequest])
   useEffect(() => () => {
     if (contextPopoverExitTimer.current) clearTimeout(contextPopoverExitTimer.current)
   }, [])
@@ -87,7 +91,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     }
   }
 
-  const chooseCommand = (command: RpcSlashCommand) => controller.setEditorText(`/${command.name} `)
+  const chooseCommand = (command: SlashCommand) => controller.setEditorText(`/${command.name} `)
   const handleComposerKeyDown = (event: { key?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean } }) => {
     const key = event.key?.toLowerCase()
     if (matchingCommands.length > 0 && commandQuery !== undefined) {
@@ -201,6 +205,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             width={layout.mobile ? layout.popoverWidth : 320}
             triggerMaxWidth={layout.mobile ? 106 : 320}
             searchable
+            {...(state.uiRequest?.kind === 'model' ? { openRequest: state.uiRequest.id } : {})}
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => {
               const model = state.models.find((candidate) => modelKey(candidate) === value)
@@ -214,6 +219,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             options={thinkingOptions}
             width={layout.mobile ? Math.min(180, layout.popoverWidth) : 130}
             triggerMaxWidth={layout.mobile ? 68 : 130}
+            {...(state.uiRequest?.kind === 'thinking' ? { openRequest: state.uiRequest.id } : {})}
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => void controller.setThinkingLevel(value as ThinkingLevel)}
           />
@@ -387,7 +393,7 @@ function composerCommandQuery(value: string): string | undefined {
   return match?.[1]?.toLowerCase()
 }
 
-function matchCommands(commands: readonly RpcSlashCommand[], query: string): RpcSlashCommand[] {
+function matchCommands(commands: readonly SlashCommand[], query: string): SlashCommand[] {
   const normalized = query.toLowerCase()
   return commands
     .map((command, index) => {

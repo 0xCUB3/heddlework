@@ -4,6 +4,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
 import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
+import { copyTextToClipboard } from './clipboard-media.ts'
 import { DraftWorkspaceChooser } from './workspace-chooser.tsx'
 import { NotificationLedgerView } from './notifications.tsx'
 import { SettingsView } from './settings-view.tsx'
@@ -34,11 +35,13 @@ export function WorkbenchApp({
   presenters,
   ui,
   themeManager = defaultThemeManager,
+  onQuit,
 }: {
   controller: WorkbenchController
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
   themeManager?: ThemeManager
+  onQuit?(): void
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const theme = useSyncExternalStore(themeManager.subscribe, themeManager.getSnapshot)
@@ -97,6 +100,32 @@ export function WorkbenchApp({
     setRightPanel(undefined)
     setPanelFullscreen(false)
   }
+
+  useEffect(() => {
+    const request = state.uiRequest
+    if (!request || request.kind === 'model' || request.kind === 'thinking') return
+    controller.completeUiRequest(request.id)
+    if (request.kind === 'settings') {
+      closeRightPanel()
+      if (layout.navigationOverlay) setLeftSidebarOpen(false)
+      setSurface('settings')
+      return
+    }
+    if (request.kind === 'sessions') {
+      closeRightPanel()
+      setSurface('chat')
+      setLeftSidebarOpen(true)
+      return
+    }
+    if (request.kind === 'copy') {
+      void copyTextToClipboard(request.text).then((copied) => {
+        controller.notify(copied ? 'info' : 'warning', copied ? 'Copied last assistant message to clipboard' : 'No system clipboard command is available')
+      })
+      return
+    }
+    if (onQuit) onQuit()
+    else controller.notify('warning', 'Close the window to quit Heddlework')
+  }, [controller, layout.navigationOverlay, onQuit, state.uiRequest])
 
   useEffect(() => {
     const surfaceId = workbenchSurfaceId(rightPanel)

@@ -536,6 +536,45 @@ describeNative('WorkbenchApp', () => {
     root.unmount()
     themeManager.dispose()
   }, 20_000)
+
+  it('opens native surfaces for host-backed slash commands', async () => {
+    const workspace = createWorkspaceFixture()
+    const controller = new WorkbenchController(new DemoTransport(), workspace, testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    controllers.push(controller)
+    const root = createTestRoot({ width: 1_000, height: 700 })
+    const themeManager = new ThemeManager({ preferencePath: false, resolveSystemTheme: () => 'dark' })
+    let quitRequested = false
+    root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} themeManager={themeManager} onQuit={() => { quitRequested = true }} />)
+    await controller.start()
+    const automation = await connectTest(root.renderer)
+    try {
+      await controller.submit('/settings')
+      await Bun.sleep(20)
+      root.renderer.flush()
+      expect(await automation.getByTestId('settings-view').count()).toBe(1)
+
+      await automation.getByText('Done').click()
+      await controller.submit('/model')
+      await Bun.sleep(20)
+      root.renderer.flush()
+      expect(await automation.getByTestId('model-picker-content').count()).toBe(1)
+      expect(await automation.getByTestId('model-picker-search').count()).toBe(1)
+      await automation.getByTestId('model-picker-search').press('escape')
+
+      await controller.submit('/thinking')
+      await Bun.sleep(20)
+      root.renderer.flush()
+      expect(await automation.getByTestId('thinking-picker-content').count()).toBe(1)
+
+      await controller.submit('/quit')
+      await Bun.sleep(20)
+      expect(quitRequested).toBe(true)
+    } finally {
+      await automation.close()
+      root.unmount()
+      themeManager.dispose()
+    }
+  }, 4_000)
 })
 
 function createWorkspaceFixture(): string {

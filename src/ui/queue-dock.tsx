@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { parseBuiltinSlashCommand } from '../pi/slash-commands.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
-import { parseQueuedControl, queueSize, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
+import { queueSize, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { MotionDiv, useSpringProgress } from './motion.ts'
@@ -89,7 +90,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         {rows.map((row) => {
           const ownedIndex = row.item ? state.queue.items.findIndex((item) => item.id === row.id) : -1
           const dispatching = state.queue.dispatchingId === row.id
-          const control = row.item && row.item.images.length === 0 ? parseQueuedControl(row.text) : undefined
+          const control = row.item && row.item.images.length === 0 ? parseBuiltinSlashCommand(row.text) : undefined
           const actionsVisible = compact || hoveredId === row.id
           return (
             <div

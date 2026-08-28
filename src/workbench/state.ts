@@ -1,5 +1,6 @@
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
-import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, RpcSlashCommand, ThinkingLevel } from '../pi/types.ts'
+import { BUILTIN_SLASH_COMMANDS } from '../pi/slash-commands.ts'
+import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import { createQueueState, type WorkbenchQueueState } from './queue.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
@@ -77,6 +78,10 @@ export interface ExtensionWidget {
   placement: 'aboveEditor' | 'belowEditor'
 }
 
+export type WorkbenchUiRequest =
+  | { id: number; kind: 'settings' | 'sessions' | 'model' | 'thinking' | 'quit' }
+  | { id: number; kind: 'copy'; text: string }
+
 export interface WorkbenchState {
   workspacePath: string
   connection: ConnectionState
@@ -103,7 +108,8 @@ export interface WorkbenchState {
   widgets: Record<string, ExtensionWidget>
   dialog: ExtensionDialog | undefined
   dialogQueue: ExtensionDialog[]
-  commands: RpcSlashCommand[]
+  commands: SlashCommand[]
+  uiRequest: WorkbenchUiRequest | undefined
   questionnaireSubmitting: string | undefined
   questionnaireCollapsed: string | undefined
   editorText: string
@@ -140,7 +146,8 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     widgets: {},
     dialog: undefined,
     dialogQueue: [],
-    commands: [],
+    commands: [...BUILTIN_SLASH_COMMANDS],
+    uiRequest: undefined,
     questionnaireSubmitting: undefined,
     questionnaireCollapsed: undefined,
     editorText: '',

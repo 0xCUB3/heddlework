@@ -63,17 +63,18 @@ const runtime: RuntimeHandle = {
 }
 globalThis.__heddleworkRuntime = runtime
 
+const shutdown = () => {
+  void runtime.dispose().finally(() => process.exit(0))
+}
+
 render(
-  <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} />,
+  <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   createWindowOptions(process.platform, debugOverlay()),
 )
 
 themeManager.start()
 void controller.start()
 
-const shutdown = () => {
-  void runtime.dispose().finally(() => process.exit(0))
-}
 process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 

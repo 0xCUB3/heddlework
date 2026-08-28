@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'bun:test'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { PiSessionState, RpcCommand, RpcRecord } from '../src/pi/types.ts'
+import { parseBuiltinSlashCommand } from '../src/pi/slash-commands.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
-import { moveQueuedInput, parseQueuedControl } from '../src/workbench/queue.ts'
+import { moveQueuedInput } from '../src/workbench/queue.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
 
 class QueueTransport implements AgentTransport {
   readonly commands: RpcCommand[] = []
   readonly events = new Set<(event: RpcRecord) => void>()
   readonly statuses = new Set<(status: TransportStatus) => void>()
+  readonly sent: RpcRecord[] = []
   streaming = false
 
   async start(): Promise<void> {
@@ -16,7 +18,7 @@ class QueueTransport implements AgentTransport {
   }
 
   async stop(): Promise<void> {}
-  send(): void {}
+  send(record: RpcRecord): void { this.sent.push(record) }
   getStderr(): string { return '' }
   onEvent(listener: (event: RpcRecord) => void): () => void { this.events.add(listener); return () => this.events.delete(listener) }
   onStatus(listener: (status: TransportStatus) => void): () => void { this.statuses.add(listener); return () => this.statuses.delete(listener) }
@@ -26,7 +28,8 @@ class QueueTransport implements AgentTransport {
     if (command.type === 'get_state') {
       return { model: null, thinkingLevel: 'off', isStreaming: this.streaming, sessionId: 'queue-session', sessionFile: '/tmp/queue-session.jsonl' } satisfies PiSessionState as T
     }
-    if (command.type === 'get_messages' || command.type === 'get_fork_messages') return { messages: [] } as T
+    if (command.type === 'get_messages') return { messages: [] } as T
+    if (command.type === 'get_fork_messages') return { messages: [{ entryId: 'fork-entry', text: 'Original user prompt' }] } as T
     if (command.type === 'get_available_models') return { models: [] } as T
     if (command.type === 'get_available_thinking_levels') return { levels: ['off'] } as T
     if (command.type === 'get_session_stats') return { sessionId: 'queue-session', totalMessages: 0, toolCalls: 0, cost: 0 } as T
@@ -38,7 +41,10 @@ class QueueTransport implements AgentTransport {
       this.streaming = false
       this.emit({ type: 'agent_settled' })
     }
-    if (command.type === 'new_session' || command.type === 'switch_session') return { cancelled: false } as T
+    if (command.type === 'new_session' || command.type === 'switch_session' || command.type === 'clone') return { cancelled: false } as T
+    if (command.type === 'fork') return { text: 'Original user prompt', cancelled: false } as T
+    if (command.type === 'export_html') return { path: String(command.outputPath ?? '/tmp/queue-session.html') } as T
+    if (command.type === 'get_last_assistant_text') return { text: 'Last assistant response' } as T
     return undefined as T
   }
 
@@ -62,6 +68,69 @@ async function waitFor(predicate: () => boolean, label: string): Promise<void> {
 }
 
 describe('owned workbench queue', () => {
+  it('executes idle built-ins locally and sends only RPC-invokable custom commands as prompts', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/idle-controls', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('/compact focus on decisions')
+      await controller.submit('/model provider/model')
+      await controller.submit('/thinking off')
+      await controller.submit('/name Release audit')
+      await controller.submit('/export "/tmp/release audit.html"')
+      await controller.submit('/session')
+      await controller.submit('/clone')
+
+      expect(transport.commands.filter((command) => command.type === 'prompt')).toEqual([])
+      expect(transport.commands).toContainEqual({ type: 'compact', customInstructions: 'focus on decisions' })
+      expect(transport.commands).toContainEqual({ type: 'set_model', provider: 'provider', modelId: 'model' })
+      expect(transport.commands).toContainEqual({ type: 'set_thinking_level', level: 'off' })
+      expect(transport.commands).toContainEqual({ type: 'set_session_name', name: 'Release audit' })
+      expect(transport.commands).toContainEqual({ type: 'export_html', outputPath: '/tmp/release audit.html' })
+      expect(transport.commands.some((command) => command.type === 'clone')).toBe(true)
+      expect(controller.getSnapshot().messages.some((message) => message.workbenchOptimistic)).toBe(false)
+
+      await controller.submit('/settings')
+      expect(controller.getSnapshot().uiRequest).toMatchObject({ kind: 'settings' })
+      controller.completeUiRequest(controller.getSnapshot().uiRequest!.id)
+      await controller.submit('/model')
+      expect(controller.getSnapshot().uiRequest).toMatchObject({ kind: 'model' })
+      controller.completeUiRequest(controller.getSnapshot().uiRequest!.id)
+      await controller.submit('/copy')
+      expect(controller.getSnapshot().uiRequest).toMatchObject({ kind: 'copy', text: 'Last assistant response' })
+      controller.completeUiRequest(controller.getSnapshot().uiRequest!.id)
+
+      await controller.submit('/tree')
+      expect(controller.getSnapshot().notices.at(-1)).toMatchObject({ kind: 'warning' })
+      expect(transport.commands.filter((command) => command.type === 'prompt')).toEqual([])
+
+      await controller.submit('/fabric prewalk')
+      expect(transport.commands.filter((command) => command.type === 'prompt')).toEqual([
+        expect.objectContaining({ message: '/fabric prewalk' }),
+      ])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('uses a native selector for /fork without replying to Pi as an extension dialog', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/fork-command', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('/fork')
+      const dialog = controller.getSnapshot().dialog
+      expect(dialog).toMatchObject({ method: 'select', title: 'Fork from a previous message' })
+      controller.respondToDialog({ value: dialog!.options![0]! })
+      await waitFor(() => transport.commands.some((command) => command.type === 'fork')
+        && controller.getSnapshot().editorText === 'Original user prompt', 'the selected fork command')
+      expect(transport.sent).toEqual([])
+      expect(controller.getSnapshot().editorText).toBe('Original user prompt')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('stages stopped submissions without starting Pi and resumes from the parked head', async () => {
     const transport = new QueueTransport()
     const controller = new WorkbenchController(transport, '/tmp/queue-stopped', testControllerDependencies())
@@ -186,6 +255,23 @@ describe('owned workbench queue', () => {
     }
   })
 
+  it('treats an idle image-bearing built-in as a prompt so attachments are preserved', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/idle-image-control', testControllerDependencies())
+    try {
+      await controller.start()
+      controller.addEditorImage({ id: 'image-idle', type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png', previewPath: '/tmp/image.png', fileName: 'image.png', size: 5 })
+      await controller.submit('/compact')
+      expect(transport.commands.filter((command) => command.type === 'compact')).toEqual([])
+      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({
+        message: '/compact',
+        images: [{ type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }],
+      })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('treats image-bearing slash text as a message instead of a control row', async () => {
     const transport = new QueueTransport()
     const controller = new WorkbenchController(transport, '/tmp/queue-image-control', testControllerDependencies())
@@ -234,9 +320,9 @@ describe('owned workbench queue', () => {
   })
 
   it('moves stable rows without mutating the source array', () => {
-    expect(parseQueuedControl('/compact focus')).toEqual({ kind: 'compact', instructions: 'focus' })
-    expect(parseQueuedControl('/model openai/gpt-5')).toEqual({ kind: 'model', target: 'openai/gpt-5' })
-    expect(parseQueuedControl('/skill:review')).toBeUndefined()
+    expect(parseBuiltinSlashCommand('/compact focus')).toEqual({ name: 'compact', argument: 'focus' })
+    expect(parseBuiltinSlashCommand('/model openai/gpt-5')).toEqual({ name: 'model', argument: 'openai/gpt-5' })
+    expect(parseBuiltinSlashCommand('/skill:review')).toBeUndefined()
     const rows = ['a', 'b', 'c'].map((id, index) => ({ id, text: id, images: [], createdAt: index }))
     const moved = moveQueuedInput(rows, 'c', 0)
     expect(moved.map((row) => row.id)).toEqual(['c', 'a', 'b'])

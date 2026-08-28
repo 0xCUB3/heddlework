@@ -12,7 +12,7 @@ Fire-and-forget extension surfaces are also native:
 - String `setWidget` content and ANSI-safe `setStatus` entries share a horizontally scrollable rail above the composer. Above-editor widgets enter first, followed by below-editor widgets and then status chips; new items use that same order for staggered motion.
 - `setTitle` updates the window title.
 - `setEditorText` updates the draft.
-- `get_commands` powers slash-command discovery for extension commands, prompt templates, and skills.
+- `get_commands` powers discovery for extension commands, prompt templates, and skills. Heddlework merges Pi's built-in command catalog locally because RPC intentionally omits TUI commands.
 
 Visible custom messages retain text, extension source, and image blocks in the transcript. Tool calls retain their raw arguments, results, and details for keyed native presenters.
 

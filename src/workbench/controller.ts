@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import { parseBuiltinSlashCommand, slashCommandsFromRpc, type ParsedBuiltinSlashCommand } from '../pi/slash-commands.ts'
 import {
   PiSessionHistoryPager,
   SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES,
@@ -27,8 +28,9 @@ import {
   createInitialState,
   type NoticeKind,
   type WorkbenchState,
+  type WorkbenchUiRequest,
 } from './state.ts'
-import { createQueueState, moveQueuedInput, parseQueuedControl, type QueuedControl, type QueuedInput } from './queue.ts'
+import { createQueueState, moveQueuedInput, type QueuedInput } from './queue.ts'
 import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
@@ -68,6 +70,7 @@ export class WorkbenchController {
   #sessionTransitionDepth = 0
   #historyPager: PiSessionHistoryPager | undefined
   #nextQueueId = 0
+  #nextUiRequestId = 0
   #queueDispatch: Promise<void> | undefined
   #unsubscribeEvent: () => void
   #unsubscribeStatus: () => void
@@ -171,6 +174,11 @@ export class WorkbenchController {
       return
     }
     this.#patch({ editorText: '', editorImages: [] })
+    const command = editorImages.length === 0 ? parseBuiltinSlashCommand(message) : undefined
+    if (command) {
+      await this.#runBuiltinSlashCommand(command, false)
+      return
+    }
     await this.#sendPrompt(message, editorImages, true)
   }
 
@@ -225,7 +233,7 @@ export class WorkbenchController {
   async steerQueuedInput(id: string): Promise<void> {
     const item = this.#state.queue.items.find((candidate) => candidate.id === id)
     if (!item || !this.#state.session.isStreaming || this.#state.queue.dispatchingId) return
-    if (item.images.length === 0 && parseQueuedControl(item.text)) return
+    if (item.images.length === 0 && parseBuiltinSlashCommand(item.text)) return
     this.#patch({ queue: { ...this.#state.queue, dispatchingId: id } })
     try {
       await this.#transport.request({
@@ -401,12 +409,12 @@ export class WorkbenchController {
     }
   }
 
-  async forkFrom(entryId: string): Promise<void> {
+  async forkFrom(entryId: string, options: { preserveQueue?: boolean } = {}): Promise<void> {
     if (!entryId || this.#state.session.isStreaming) return
     try {
       const result = await this.#transport.request<{ text?: string; cancelled?: boolean }>({ type: 'fork', entryId })
       if (result.cancelled) return
-      this.#patch({ notices: [], queue: createQueueState() })
+      this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
       await this.#bootstrap(false)
       this.#patch({ editorText: result.text ?? '', editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Branched from the selected turn'))
@@ -450,15 +458,11 @@ export class WorkbenchController {
 
   async compact(): Promise<void> {
     if (this.#state.session.isStreaming) return
-    try {
-      this.#patch({ activity: 'Compacting context' })
-      await this.#transport.request({ type: 'compact' })
-      await this.#refreshStats()
-      this.#setState((state) => addNotice({ ...state, activity: 'Ready' }, 'info', 'Context compacted'))
-    } catch (error) {
-      this.#patch({ activity: 'Ready' })
-      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
-    }
+    await this.#runBuiltinSlashCommand({ name: 'compact', argument: '' }, false)
+  }
+
+  completeUiRequest(id: number): void {
+    if (this.#state.uiRequest?.id === id) this.#patch({ uiRequest: undefined })
   }
 
   setEditorText(text: string): void {
@@ -616,9 +620,9 @@ export class WorkbenchController {
     const item = queue.items[0]
     if (!item) return
     this.#patch({ queue: { ...queue, dispatchingId: item.id } })
-    const control = item.images.length === 0 ? parseQueuedControl(item.text) : undefined
-    const accepted = control
-      ? await this.#runQueuedControl(control)
+    const command = item.images.length === 0 ? parseBuiltinSlashCommand(item.text) : undefined
+    const accepted = command
+      ? await this.#runBuiltinSlashCommand(command, true)
       : await this.#sendPrompt(item.text, item.images, false)
     if (!accepted) {
       this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error', dispatchingId: undefined } })
@@ -631,89 +635,198 @@ export class WorkbenchController {
         dispatchingId: undefined,
       },
     })
-    if (!control && item.text.startsWith('/')) this.#scheduleRefresh(true)
+    if (!command && item.text.startsWith('/')) this.#scheduleRefresh(true)
   }
 
-  async #runQueuedControl(control: QueuedControl): Promise<boolean> {
+  async #runBuiltinSlashCommand(command: ParsedBuiltinSlashCommand, queued: boolean): Promise<boolean> {
     try {
-      if (control.kind === 'compact') {
-        this.#patch({ activity: 'Compacting context' })
-        await this.#transport.request({ type: 'compact', ...(control.instructions ? { customInstructions: control.instructions } : {}) })
-        this.#patch({ activity: 'Ready' })
-        return true
-      }
-      if (control.kind === 'new') {
-        this.#dialogs.cancelAll()
-        const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
-        if (result.cancelled) return false
-        this.#historyPager = undefined
-        this.#patch({
-          messages: [],
-          messagesHasOlder: false,
-          messagesLoadingEarlier: false,
-          forkMessages: [],
-          liveAssistant: undefined,
-          liveTools: [],
-          editorText: '',
-          editorImages: [],
-          notices: [],
-          statusItems: {},
-          widgets: {},
-          dialog: undefined,
-          dialogQueue: [],
-          questionnaireSubmitting: undefined,
-          questionnaireCollapsed: undefined,
-          queue: { ...this.#state.queue, steering: [], followUp: [] },
-        })
-        await this.#bootstrap(false)
-        return true
-      }
-      if (control.kind === 'model') {
-        const separator = control.target?.indexOf('/') ?? -1
-        if (!control.target || separator <= 0 || separator === control.target.length - 1) {
-          this.#setState((state) => addNotice(state, 'warning', 'Queued /model requires provider/model'))
-          return false
-        }
-        await this.#transport.request({ type: 'set_model', provider: control.target.slice(0, separator), modelId: control.target.slice(separator + 1) })
-        await this.#bootstrap(false)
-        return true
-      }
-      if (control.kind === 'thinking') {
-        if (!control.level || !this.#state.thinkingLevels.includes(control.level as ThinkingLevel)) {
-          this.#setState((state) => addNotice(state, 'warning', 'Queued /thinking requires a supported level'))
-          return false
-        }
-        await this.#transport.request({ type: 'set_thinking_level', level: control.level })
-        await this.#bootstrap(false)
-        return true
-      }
-      const sessionFile = this.#state.session.sessionFile
-      if (!sessionFile) {
-        this.#setState((state) => addNotice(state, 'warning', 'Queued /reload requires a persisted Pi session'))
-        return false
-      }
-      this.#connecting = true
-      try {
-        this.#started = false
-        this.#patch({ queue: { ...this.#state.queue, steering: [], followUp: [] } })
-        await this.#transport.stop()
-        await this.#transport.start()
-        this.#started = true
-        const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'switch_session', sessionPath: sessionFile })
-        if (result.cancelled) {
+      switch (command.name) {
+        case 'settings':
+          this.#requestUi({ kind: 'settings' })
+          return true
+        case 'model': {
+          if (!command.argument) {
+            this.#requestUi({ kind: 'model' })
+            return true
+          }
+          const target = resolveModelReference(this.#state.models, command.argument)
+          if (!target) {
+            this.#setState((state) => addNotice(state, 'warning', 'Use /model provider/model or choose a model from the picker'))
+            return false
+          }
+          await this.#transport.request({ type: 'set_model', ...target })
           await this.#bootstrap(false)
-          return false
+          return true
         }
-        await this.#bootstrap(false)
-      } finally {
-        this.#connecting = false
+        case 'thinking': {
+          const level = command.argument as ThinkingLevel
+          if (!command.argument) {
+            this.#requestUi({ kind: 'thinking' })
+            return true
+          }
+          if (!this.#state.thinkingLevels.includes(level)) {
+            this.#setState((state) => addNotice(state, 'warning', `Unsupported thinking level: ${command.argument}`))
+            return false
+          }
+          await this.#transport.request({ type: 'set_thinking_level', level })
+          await this.#bootstrap(false)
+          return true
+        }
+        case 'export': {
+          const outputPath = parsePathArgument(command.argument)
+          if (command.argument && !outputPath) {
+            this.#setState((state) => addNotice(state, 'warning', 'Usage: /export [file.html]'))
+            return false
+          }
+          if (outputPath?.toLowerCase().endsWith('.jsonl')) {
+            this.#setState((state) => addNotice(state, 'warning', 'Pi RPC only exposes HTML export; JSONL branch export remains interactive-only'))
+            return true
+          }
+          const data = await this.#transport.request<{ path?: string }>({ type: 'export_html', ...(outputPath ? { outputPath } : {}) })
+          this.#setState((state) => addNotice(state, 'info', data?.path ? `Exported session to ${data.path}` : 'Session exported'))
+          return true
+        }
+        case 'copy': {
+          const data = await this.#transport.request<{ text?: string | null }>({ type: 'get_last_assistant_text' })
+          if (!data?.text) {
+            this.#setState((state) => addNotice(state, 'warning', 'No assistant message to copy yet'))
+            return true
+          }
+          this.#requestUi({ kind: 'copy', text: data.text })
+          return true
+        }
+        case 'name': {
+          if (!command.argument) {
+            const currentName = this.#state.session.sessionName
+            this.#setState((state) => addNotice(state, currentName ? 'info' : 'warning', currentName ? `Session name: ${currentName}` : 'Usage: /name <name>'))
+            return true
+          }
+          await this.#transport.request({ type: 'set_session_name', name: command.argument })
+          this.#patch({ session: { ...this.#state.session, sessionName: command.argument } })
+          void this.refreshSessions()
+          this.#setState((state) => addNotice(state, 'info', `Session name set: ${command.argument}`))
+          return true
+        }
+        case 'session': {
+          const stats = await this.#transport.request<PiSessionStats>({ type: 'get_session_stats' })
+          this.#patch({ stats })
+          this.#setState((state) => addNotice(state, 'info', formatSessionNotice(this.#state.session, stats)))
+          return true
+        }
+        case 'fork': {
+          const messages = this.#state.forkMessages
+          if (messages.length === 0) {
+            this.#setState((state) => addNotice(state, 'warning', 'No user messages are available to fork'))
+            return true
+          }
+          const options = messages.map((message, index) => `${index + 1}. ${compactCommandText(message.text)}`)
+          const entryIds = new Map(options.map((option, index) => [option, messages[index]!.entryId]))
+          this.#dialogs.showLocalSelect('Fork from a previous message', options, (response) => {
+            const entryId = response.value ? entryIds.get(response.value) : undefined
+            if (entryId) void this.forkFrom(entryId, { preserveQueue: queued })
+          })
+          return true
+        }
+        case 'clone': {
+          const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
+          if (result.cancelled) return false
+          this.#historyPager = undefined
+          this.#patch({ notices: [], queue: queued ? { ...this.#state.queue, steering: [], followUp: [] } : createQueueState() })
+          await this.#bootstrap(false)
+          this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
+          return true
+        }
+        case 'new': {
+          this.#sessionTransitionDepth += 1
+          try {
+            this.#dialogs.cancelAll()
+            const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
+            if (result.cancelled) return false
+            this.#historyPager = undefined
+            this.#patch({
+              messages: [],
+              messagesHasOlder: false,
+              messagesLoadingEarlier: false,
+              forkMessages: [],
+              liveAssistant: undefined,
+              liveTools: [],
+              editorText: '',
+              editorImages: [],
+              notices: [],
+              statusItems: {},
+              widgets: {},
+              dialog: undefined,
+              dialogQueue: [],
+              uiRequest: undefined,
+              questionnaireSubmitting: undefined,
+              questionnaireCollapsed: undefined,
+              queue: queued ? { ...this.#state.queue, steering: [], followUp: [] } : createQueueState(),
+            })
+            await this.#bootstrap(false)
+            return true
+          } finally {
+            this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+          }
+        }
+        case 'compact':
+          this.#patch({ activity: 'Compacting context' })
+          await this.#transport.request({ type: 'compact', ...(command.argument ? { customInstructions: command.argument } : {}) })
+          await this.#refreshStats()
+          this.#setState((state) => addNotice({ ...state, activity: 'Ready' }, 'info', 'Context compacted'))
+          return true
+        case 'resume':
+          await this.refreshSessions()
+          this.#requestUi({ kind: 'sessions' })
+          return true
+        case 'reload': {
+          const sessionFile = this.#state.session.sessionFile
+          if (!sessionFile) {
+            this.#setState((state) => addNotice(state, 'warning', '/reload requires a persisted Pi session'))
+            return false
+          }
+          this.#connecting = true
+          try {
+            this.#started = false
+            this.#patch({ queue: { ...this.#state.queue, steering: [], followUp: [] } })
+            await this.#transport.stop()
+            await this.#transport.start()
+            this.#started = true
+            const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'switch_session', sessionPath: sessionFile })
+            if (result.cancelled) {
+              await this.#bootstrap(false)
+              return false
+            }
+            await this.#bootstrap(false)
+          } finally {
+            this.#connecting = false
+          }
+          return true
+        }
+        case 'quit':
+          this.#requestUi({ kind: 'quit' })
+          return true
+        case 'tree':
+        case 'scoped-models':
+        case 'import':
+        case 'share':
+        case 'changelog':
+        case 'hotkeys':
+        case 'trust':
+        case 'login':
+        case 'logout':
+          this.#setState((state) => addNotice(state, 'warning', interactiveOnlyCommandMessage(command.name)))
+          return true
       }
-      return true
     } catch (error) {
       this.#patch({ activity: 'Ready' })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
       return false
     }
+  }
+
+  #requestUi(request: { kind: 'settings' | 'sessions' | 'model' | 'thinking' | 'quit' } | { kind: 'copy'; text: string }): void {
+    const uiRequest = { id: ++this.#nextUiRequestId, ...request } as WorkbenchUiRequest
+    this.#patch({ uiRequest })
   }
 
   async #bootstrap(includeModels: boolean): Promise<void> {
@@ -747,7 +860,7 @@ export class WorkbenchController {
       models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
       thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
       stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
-      commands: commandsResult.status === 'fulfilled' ? slashCommandsFrom(commandsResult.value) : this.#state.commands,
+      commands: commandsResult.status === 'fulfilled' ? slashCommandsFromRpc(commandsResult.value) : this.#state.commands,
     })
     void this.refreshWorkspaceDiff()
     if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
@@ -895,14 +1008,53 @@ export class WorkbenchController {
   }
 }
 
-function slashCommandsFrom(value: unknown): RpcSlashCommand[] {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { commands?: unknown }).commands)) return []
-  return (value as { commands: unknown[] }).commands.filter((command): command is RpcSlashCommand => {
-    if (!command || typeof command !== 'object') return false
-    const candidate = command as { name?: unknown; source?: unknown }
-    return typeof candidate.name === 'string'
-      && (candidate.source === 'extension' || candidate.source === 'prompt' || candidate.source === 'skill')
-  })
+function resolveModelReference(models: readonly PiModel[], reference: string): { provider: string; modelId: string } | undefined {
+  const separator = reference.indexOf('/')
+  if (separator > 0 && separator < reference.length - 1) {
+    return { provider: reference.slice(0, separator), modelId: reference.slice(separator + 1) }
+  }
+  const normalized = reference.toLowerCase()
+  const matches = models.filter((model) => model.id.toLowerCase() === normalized || model.name?.toLowerCase() === normalized)
+  return matches.length === 1 ? { provider: matches[0]!.provider, modelId: matches[0]!.id } : undefined
+}
+
+function parsePathArgument(argument: string): string | undefined {
+  if (!argument) return undefined
+  const quote = argument[0]
+  if (quote === '"' || quote === "'") {
+    const closing = argument.indexOf(quote, 1)
+    return closing > 0 ? argument.slice(1, closing) : undefined
+  }
+  return argument.split(/\s+/, 1)[0]
+}
+
+function compactCommandText(text: string): string {
+  const compacted = text.replace(/\s+/g, ' ').trim()
+  return compacted.length > 96 ? `${compacted.slice(0, 93)}…` : compacted
+}
+
+function formatSessionNotice(session: PiSessionState, stats: PiSessionStats): string {
+  const parts = [
+    session.sessionName ? `Name: ${session.sessionName}` : undefined,
+    `ID: ${stats.sessionId ?? session.sessionId ?? 'unknown'}`,
+    `Messages: ${stats.totalMessages ?? 0}`,
+    `Tools: ${stats.toolCalls ?? 0}`,
+    typeof stats.cost === 'number' ? `Cost: $${stats.cost.toFixed(3)}` : undefined,
+    stats.sessionFile ?? session.sessionFile ?? 'In-memory session',
+  ]
+  return parts.filter((part): part is string => part !== undefined).join(' · ')
+}
+
+function interactiveOnlyCommandMessage(command: ParsedBuiltinSlashCommand['name']): string {
+  if (command === 'tree') return "Pi's /tree navigation is not exposed by RPC yet; use Revert on a user turn to create a fork"
+  if (command === 'scoped-models') return "Pi's scoped model editor is not exposed by RPC yet; all available models remain in Heddlework's picker"
+  if (command === 'login' || command === 'logout') return `/${command} is interactive-only in Pi; authenticate with Pi in a terminal and reconnect Heddlework`
+  if (command === 'trust') return "Pi's /trust flow is interactive-only; save trust in Pi or start Heddlework with an approved Pi configuration"
+  if (command === 'import') return "Pi's /import flow is not exposed by RPC yet; use the session sidebar for existing sessions"
+  if (command === 'share') return "Pi's /share flow is interactive-only and is not exposed by RPC"
+  if (command === 'hotkeys') return "Pi's /hotkeys describes its terminal UI; Heddlework uses native desktop controls"
+  if (command === 'changelog') return "Pi's /changelog view is interactive-only and is not exposed by RPC"
+  return `/${command} is not available through Pi RPC`
 }
 
 function messageEntryId(message: PiMessage): string | undefined {

@@ -98,7 +98,8 @@ describe('Pi extension UI projection', () => {
       expect(state.widgets.todo?.lines).toEqual(['One remaining task'])
       expect(state.windowTitle).toBe('Pi · test session')
       expect(state.editorText).toBe('prefilled prompt')
-      expect(state.commands).toEqual([{ name: 'ledger', description: 'Show ledger', source: 'extension', sourceInfo: {} }])
+      expect(state.commands.find((command) => command.name === 'compact')).toMatchObject({ source: 'builtin' })
+      expect(state.commands.find((command) => command.name === 'ledger')).toEqual({ name: 'ledger', description: 'Show ledger', source: 'extension', sourceInfo: {} })
       expect(state.dialog).toMatchObject({ id: 'select-1', method: 'select', options: ['Allow', 'Block'] })
 
       controller.respondToDialog({ value: 'Allow' })

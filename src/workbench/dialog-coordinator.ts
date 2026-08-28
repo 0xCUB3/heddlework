@@ -38,6 +38,8 @@ export class WorkbenchDialogCoordinator {
   readonly #host: DialogCoordinatorHost
   #dialogTimer: ReturnType<typeof setTimeout> | undefined
   #askUserDialogDriver: AskUserDialogDriver | undefined
+  #nextLocalDialogId = 0
+  readonly #localDialogResponses = new Map<string, (response: DialogResponse) => void>()
 
   constructor(host: DialogCoordinatorHost) {
     this.#host = host
@@ -112,6 +114,12 @@ export class WorkbenchDialogCoordinator {
     }
     if (this.#tryDriveAskUserDialog(dialog, false)) return
     this.#enqueueDialog(dialog)
+  }
+
+  showLocalSelect(title: string, options: string[], onResponse: (response: DialogResponse) => void): void {
+    const id = `workbench-select-${++this.#nextLocalDialogId}`
+    this.#localDialogResponses.set(id, onResponse)
+    this.#enqueueDialog({ id, method: 'select', title, options, createdAt: Date.now() })
   }
 
   respond(response: DialogResponse): void {
@@ -213,6 +221,16 @@ export class WorkbenchDialogCoordinator {
   }
 
   #sendDialogResponse(id: string, response: DialogResponse): void {
+    const localResponse = this.#localDialogResponses.get(id)
+    if (localResponse) {
+      this.#localDialogResponses.delete(id)
+      try {
+        localResponse(response)
+      } catch (error) {
+        this.#host.setState((state) => addNotice(state, 'error', errorMessage(error)))
+      }
+      return
+    }
     try {
       this.#host.send({ type: 'extension_ui_response', id, ...response })
     } catch (error) {
