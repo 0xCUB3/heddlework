@@ -10,6 +10,7 @@ import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { colors } from '../src/ui/theme.ts'
+import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 class OverlayTransport implements AgentTransport {
@@ -129,7 +130,12 @@ describeNative('conversation extension overlays', () => {
       await Bun.sleep(30)
       root.renderer.flush()
 
-      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBe(baseSpacerHeight + 35)
+      const enteringSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      expect(enteringSpacerHeight).toBeGreaterThan(baseSpacerHeight)
+      expect(enteringSpacerHeight).toBeLessThan(baseSpacerHeight + 35)
+      await Bun.sleep(SPRING_SETTLE_MS + 80)
+      root.renderer.flush()
+      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBeCloseTo(baseSpacerHeight + 35, 0)
       const railBounds = await automation.getByTestId('extension-surface-rail').bounds()
       const conversationBottom = Math.max(...(await automation.getByTestId('message-footer').all()).flatMap((footer) => {
         const bounds = footer.bounds
@@ -141,7 +147,12 @@ describeNative('conversation extension overlays', () => {
       await Bun.sleep(30)
       root.renderer.flush()
       expect(await automation.getByTestId('extension-surface-rail').count()).toBe(0)
-      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBe(baseSpacerHeight)
+      const exitingSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      expect(exitingSpacerHeight).toBeGreaterThan(baseSpacerHeight)
+      expect(exitingSpacerHeight).toBeLessThan(baseSpacerHeight + 35)
+      await Bun.sleep(SPRING_SETTLE_MS + 80)
+      root.renderer.flush()
+      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBeCloseTo(baseSpacerHeight, 0)
     } finally {
       await automation.close()
       root.unmount()
@@ -328,7 +339,12 @@ describeNative('conversation extension overlays', () => {
       await Bun.sleep(40)
       root.renderer.flush()
       expect(await automation.getByTestId('ask-user-collapsed').count()).toBe(1)
-      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBe(spacerHeightBeforeCollapse + 53)
+      const growingSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      expect(growingSpacerHeight).toBeGreaterThan(spacerHeightBeforeCollapse)
+      expect(growingSpacerHeight).toBeLessThan(spacerHeightBeforeCollapse + 53)
+      await Bun.sleep(SPRING_SETTLE_MS + 80)
+      root.renderer.flush()
+      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBeCloseTo(spacerHeightBeforeCollapse + 53, 0)
       const dockBounds = await automation.getByTestId('ask-user-collapsed').bounds()
       const conversationRows = [
         ...await automation.getByTestId('assistant-message').all(),

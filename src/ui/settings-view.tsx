@@ -6,6 +6,7 @@ import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 
 export function SettingsView({
   state,
@@ -20,15 +21,17 @@ export function SettingsView({
   onThemeModeChange(mode: ThemeMode): void
   onClose(): void
 }) {
+  const { mobile, compact, contentGutter } = useResponsiveLayout()
+  const titlebarInset = compact ? (process.platform === 'darwin' ? 132 : 54) : 18
   return (
     <div testId="settings-view" style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
-      <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
+      <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: titlebarInset, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Settings</text>
         <div style={{ flexGrow: 1 }} />
         <Button label="Done" compact onClick={onClose} />
       </div>
-      <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'scroll', display: 'flex', flexDirection: 'row', justifyContent: 'center', paddingTop: 28, paddingBottom: 52, paddingLeft: 28, paddingRight: 28 }}>
-        <div testId="settings-global" style={{ width: '100%', maxWidth: 720, minHeight: 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'scroll', display: 'flex', flexDirection: 'row', justifyContent: 'center', paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
+        <div testId="settings-global" style={{ width: '100%', maxWidth: 720, minHeight: mobile ? 0 : 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
           <SettingsSection title="Runtime" description="Global Pi connection settings for this application.">
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
@@ -69,21 +72,28 @@ function SettingsSection({ title, description, children }: { title: string; desc
 }
 
 function SettingsRow({ icon, label, value, tone = 'normal', testId }: { icon: Parameters<typeof Icon>[0]['name']; label: string; value: string; tone?: 'normal' | 'success'; testId?: string }) {
-  return (
-    <div {...(testId ? { testId } : {})} style={{ minHeight: 46, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 13, paddingRight: 13, borderWidth: 1, borderColor: colors.border }}>
+  const { mobile } = useResponsiveLayout()
+  const labelContent = (
+    <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <Icon name={icon} size={15} color={tone === 'success' ? colors.success : colors.textFaint} />
       <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>{label}</text>
-      <div style={{ flexGrow: 1 }} />
-      <text style={{ color: tone === 'success' ? colors.success : colors.textMuted, fontSize: 11, maxWidth: 390, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{value}</text>
+    </div>
+  )
+  return (
+    <div {...(testId ? { testId } : {})} style={{ minHeight: 46, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: mobile ? 7 : 10, paddingTop: mobile ? 11 : 0, paddingBottom: mobile ? 11 : 0, paddingLeft: 13, paddingRight: 13, borderWidth: 1, borderColor: colors.border }}>
+      {labelContent}
+      {!mobile && <div style={{ flexGrow: 1 }} />}
+      <text style={{ width: mobile ? '100%' : 'auto', color: tone === 'success' ? colors.success : colors.textMuted, fontSize: 11, maxWidth: mobile ? '100%' : 390, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{value}</text>
     </div>
   )
 }
 
 function SettingsControlRow({ label, children }: { label: string; children: React.ReactNode }) {
+  const { mobile } = useResponsiveLayout()
   return (
-    <div style={{ minHeight: 54, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: 13, paddingRight: 10, borderWidth: 1, borderColor: colors.border }}>
+    <div style={{ minHeight: 54, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: 12, paddingTop: mobile ? 10 : 0, paddingBottom: mobile ? 10 : 0, paddingLeft: 13, paddingRight: 10, borderWidth: 1, borderColor: colors.border }}>
       <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>{label}</text>
-      <div style={{ flexGrow: 1 }} />
+      {!mobile && <div style={{ flexGrow: 1 }} />}
       {children}
     </div>
   )

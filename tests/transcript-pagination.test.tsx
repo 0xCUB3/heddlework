@@ -462,6 +462,9 @@ describeNative('reverse-infinite transcript', () => {
     render('Streaming answer')
     const automation = await connectTest(root.renderer)
     const list = root.renderer.findByTestId('transcript-list')!
+    const assistantMotion = root.renderer.findByTestId('transcript-row-transition')?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number } } | undefined
+    expect(assistantMotion?.initial).toEqual({ opacity: 0, top: 6 })
+    expect(assistantMotion?.animate).toEqual({ opacity: 1, top: 0 })
     expect((await automation.getByTestId('composer-spacer').bounds()).height).toBe(194)
     const beforeGrowth = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
 
@@ -483,6 +486,32 @@ describeNative('reverse-infinite transcript', () => {
     expect(Math.abs((root.renderer.getScrollOffset(list.id)?.[1] ?? 0) - userOffset)).toBeLessThan(2)
 
     await automation.close()
+    root.unmount()
+  })
+
+  it('fades a live tool trace while reserving stable preview height', () => {
+    const state = {
+      ...createInitialState('/tmp/tool-motion-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/tool-motion.jsonl', sessionId: 'tool-motion' },
+      messages: [{ role: 'user' as const, content: 'Inspect the project', timestamp: 1 }],
+      liveTools: [{ id: 'live-read', name: 'read', args: { path: 'src/main.tsx' }, output: 'Reading file', status: 'running' as const, isError: false }],
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+
+    const rowMotion = root.renderer.findByTestId('transcript-row-transition')?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number } } | undefined
+    const preview = root.renderer.findByTestId('execution-preview-transition')
+    const previewMotion = preview?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number } } | undefined
+    expect(rowMotion?.initial).toEqual({ opacity: 0, top: 6 })
+    expect(rowMotion?.animate).toEqual({ opacity: 1, top: 0 })
+    expect(previewMotion?.initial).toEqual({ opacity: 0, top: 4 })
+    expect(previewMotion?.animate).toEqual({ opacity: 1, top: 0 })
+    expect(preview?.style.minHeight).toBe(38)
     root.unmount()
   })
 

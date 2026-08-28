@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react'
-import { useGpuixRequired } from '@gpuix/react'
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
@@ -15,12 +15,11 @@ import type { ToolPresenter } from './tool-presenters.ts'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
 import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
-import { SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
+import { MotionDiv, SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
+import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
 
 type Surface = 'chat' | 'settings'
 type RightPanel = 'notifications' | 'surfaces' | `surface:${string}`
-
-const LEFT_SIDEBAR_WIDTH = 256
 
 function surfacePanelId(surfaceId: string): `surface:${string}` {
   return `surface:${surfaceId}`
@@ -45,9 +44,14 @@ export function WorkbenchApp({
   const theme = useSyncExternalStore(themeManager.subscribe, themeManager.getSnapshot)
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
   const renderer = useGpuixRequired()
+  const windowSize = useWindowSize({ intervalMs: 50 })
+  const windowInsets = useWindowInsets({ intervalMs: 50 })
+  const safeWidth = Math.max(1, windowSize.width - windowInsets.effective.left - windowInsets.effective.right)
+  const layout = resolveResponsiveLayout(safeWidth)
   const [surface, setSurface] = useState<Surface>('chat')
   const [composerPickerOpen, setComposerPickerOpen] = useState(false)
-  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true)
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(!layout.navigationOverlay)
+  const previousNavigationOverlay = useRef(layout.navigationOverlay)
   const leftSidebarProgress = useSpringProgress(leftSidebarOpen)
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
   const [displayedRightPanel, setDisplayedRightPanel] = useState<RightPanel | undefined>()
@@ -66,6 +70,12 @@ export function WorkbenchApp({
   }, [renderer, state.windowTitle])
 
   useEffect(() => {
+    if (previousNavigationOverlay.current === layout.navigationOverlay) return
+    previousNavigationOverlay.current = layout.navigationOverlay
+    setLeftSidebarOpen(!layout.navigationOverlay)
+  }, [layout.navigationOverlay])
+
+  useEffect(() => {
     if (notificationsOpen) setLastSeenNoticeId(latestNoticeId)
   }, [latestNoticeId, notificationsOpen])
 
@@ -78,6 +88,10 @@ export function WorkbenchApp({
     const timer = setTimeout(() => setDisplayedRightPanel(undefined), SPRING_SETTLE_MS + 32)
     return () => clearTimeout(timer)
   }, [rightPanel])
+
+  const closeOverlayNavigation = () => {
+    if (layout.navigationOverlay) setLeftSidebarOpen(false)
+  }
 
   const closeRightPanel = () => {
     setRightPanel(undefined)
@@ -92,11 +106,13 @@ export function WorkbenchApp({
   const returnToConversation = () => {
     setSurface('chat')
     closeRightPanel()
+    closeOverlayNavigation()
   }
 
   const toggleNotifications = () => {
     setSurface('chat')
     setPanelFullscreen(false)
+    closeOverlayNavigation()
     if (notificationsOpen) {
       setRightPanel(undefined)
       return
@@ -111,6 +127,7 @@ export function WorkbenchApp({
     if (!contribution) return
     contribution.onOpen?.()
     setSurface('chat')
+    closeOverlayNavigation()
     if (!preserveFullscreen) setPanelFullscreen(false)
     const panelId = surfacePanelId(surfaceId)
     setDisplayedRightPanel(panelId)
@@ -126,59 +143,78 @@ export function WorkbenchApp({
 
   const openSurfacePicker = () => {
     setSurface('chat')
+    closeOverlayNavigation()
     setDisplayedRightPanel('surfaces')
     setRightPanel('surfaces')
   }
 
   const selectSurface = (surfaceId: string) => openWorkbenchSurface(surfaceId, true)
+  const togglePanelFullscreen = () => {
+    if (!layout.panelOverlay) setPanelFullscreen((value) => !value)
+  }
 
-  const togglePanelFullscreen = () => setPanelFullscreen((value) => !value)
-
-  const shellWidth = renderer.getWindowSize?.().width ?? 1_200
-  const mainWidth = shellWidth - LEFT_SIDEBAR_WIDTH * leftSidebarProgress
-  const standardPanelWidth = Math.max(420, Math.floor(mainWidth * 0.44))
-  const panelWidth = displayedRightPanel === 'notifications' ? 422 : standardPanelWidth
+  const mainWidth = safeWidth - (layout.navigationOverlay ? 0 : layout.sidebarWidth * leftSidebarProgress)
+  const standardPanelWidth = Math.min(mainWidth, Math.max(420, Math.floor(mainWidth * 0.44)))
+  const panelWidth = layout.panelOverlay ? safeWidth : displayedRightPanel === 'notifications' ? Math.min(422, mainWidth) : standardPanelWidth
+  const boundedRightPanelProgress = Math.max(0, Math.min(1, rightPanelProgress))
+  const forcedPanelFullscreen = layout.panelOverlay && Boolean(displayedRightPanel)
   const animatedSidebarProgress = leftSidebarProgress * (1 - fullscreenProgress)
-  const fullscreenVisible = panelFullscreen || fullscreenProgress > 0.001
-  const sidebarToggleLeft = process.platform === 'darwin' ? 90 : 10 + 54 * animatedSidebarProgress
+  const fullscreenVisible = forcedPanelFullscreen || panelFullscreen || fullscreenProgress > 0.001
+  const panelFullscreenProgress = forcedPanelFullscreen ? boundedRightPanelProgress : fullscreenProgress
+  const sidebarToggleLeft = process.platform === 'darwin' ? 90 : layout.navigationOverlay ? 10 : 10 + 54 * animatedSidebarProgress
   const displayedSurfaceId = workbenchSurfaceId(displayedRightPanel)
   const displayedSurface = uiSnapshot.surfaces.find((candidate) => candidate.id === displayedSurfaceId)
   const SurfaceComponent = displayedSurface?.component
   const panel = displayedRightPanel === 'notifications'
-    ? <NotificationLedgerView state={state} panelWidth={panelWidth} onClear={() => controller.clearNotices()} />
+    ? <NotificationLedgerView state={state} fullscreen={fullscreenVisible} fullscreenProgress={panelFullscreenProgress} panelWidth={panelWidth} onClear={() => controller.clearNotices()} onClose={closeRightPanel} />
     : displayedRightPanel === 'surfaces'
-      ? <SurfacePickerPanel surfaces={uiSnapshot.surfaces} fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
+      ? <SurfacePickerPanel surfaces={uiSnapshot.surfaces} fullscreen={fullscreenVisible} fullscreenProgress={panelFullscreenProgress} fullscreenLocked={layout.panelOverlay} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
       : SurfaceComponent
-        ? <SurfaceComponent fullscreen={fullscreenVisible} fullscreenProgress={fullscreenProgress} panelWidth={panelWidth} appearance={theme.resolved} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
+        ? <SurfaceComponent fullscreen={fullscreenVisible} fullscreenProgress={panelFullscreenProgress} fullscreenLocked={layout.panelOverlay} panelWidth={panelWidth} appearance={theme.resolved} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
         : null
 
+  const sidebarHost = (
+    <div
+      testId="left-sidebar-host"
+      style={layout.navigationOverlay
+        ? { position: 'absolute', top: 0, bottom: 0, left: 0, width: layout.sidebarWidth * animatedSidebarProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }
+        : { position: 'relative', width: layout.sidebarWidth * animatedSidebarProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }}
+    >
+      <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: layout.sidebarWidth }}>
+        <WorkbenchSidebar
+          width={layout.sidebarWidth}
+          state={state}
+          controller={controller}
+          settingsActive={surface === 'settings'}
+          notificationsActive={notificationsOpen}
+          unreadCount={unreadCount}
+          appearance={theme.resolved}
+          onSelectSession={returnToConversation}
+          onSettings={() => {
+            closeRightPanel()
+            closeOverlayNavigation()
+            setSurface((current) => current === 'settings' ? 'chat' : 'settings')
+          }}
+          onNotifications={toggleNotifications}
+        />
+      </div>
+    </div>
+  )
+
   return (
-    <div testId="workbench-root" style={{ position: 'relative', display: 'flex', flexDirection: 'row', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
-      <>
-          <div testId="left-sidebar-host" style={{ position: 'relative', width: LEFT_SIDEBAR_WIDTH * animatedSidebarProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: LEFT_SIDEBAR_WIDTH }}>
-              <WorkbenchSidebar
-                state={state}
-                controller={controller}
-                settingsActive={surface === 'settings'}
-                notificationsActive={notificationsOpen}
-                unreadCount={unreadCount}
-                appearance={theme.resolved}
-                onSelectSession={returnToConversation}
-                onSettings={() => {
-                  closeRightPanel()
-                  setSurface((current) => current === 'settings' ? 'chat' : 'settings')
-                }}
-                onNotifications={toggleNotifications}
-              />
-            </div>
-          </div>
+    <ResponsiveLayoutProvider layout={layout}>
+      <div testId="workbench-root" style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
+        <div
+          testId="workbench-safe-area"
+          style={{ position: 'absolute', top: windowInsets.effective.top, right: windowInsets.effective.right, bottom: windowInsets.effective.bottom, left: windowInsets.effective.left, display: 'flex', flexDirection: 'row', backgroundColor: colors.background, overflow: 'hidden' }}
+        >
+          {!layout.navigationOverlay && sidebarHost}
           {surface === 'settings' ? (
             <SettingsView state={state} controller={controller} theme={theme} onThemeModeChange={(mode) => themeManager.setMode(mode)} onClose={() => setSurface('chat')} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background }}>
+            <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <div style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: 1 - fullscreenProgress, minWidth: 0, height: '100%', overflow: 'hidden' }}>
-                <ChatHeader state={state} controller={controller} diffOpen={diffOpen} leftSidebarProgress={animatedSidebarProgress} onToggleDiff={toggleDiff} />
+                <ChatHeader state={state} controller={controller} diffOpen={diffOpen} leftSidebarProgress={layout.navigationOverlay ? 0 : animatedSidebarProgress} onToggleDiff={toggleDiff} />
                 <div testId="conversation-body" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
                   {draft ? (
                     <DraftWorkspaceChooser state={state} controller={controller} />
@@ -193,24 +229,48 @@ export function WorkbenchApp({
                 </div>
               </div>
               {panel && (
-                <div testId="right-panel-host" style={{ position: 'relative', width: panelWidth * rightPanelProgress * (1 - fullscreenProgress), flexGrow: fullscreenProgress * rightPanelProgress, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}>{panel}</div>
+                <div
+                  testId="right-panel-host"
+                  style={layout.panelOverlay
+                    ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: safeWidth * boundedRightPanelProgress, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }
+                    : { position: 'relative', width: panelWidth * rightPanelProgress * (1 - fullscreenProgress), flexGrow: fullscreenProgress * rightPanelProgress, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }}
+                >
+                  <div style={layout.panelOverlay
+                    ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: safeWidth }
+                    : { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
+                  >
+                    {panel}
+                  </div>
                 </div>
               )}
             </div>
           )}
-        </>
-      {!panelFullscreen && (
-        <div
-          testId="toggle-left-sidebar"
-          tabIndex={0}
-          style={{ position: 'absolute', top: 12, left: sidebarToggleLeft, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }}
-          onClick={() => setLeftSidebarOpen((value) => !value)}
-        >
-          <div style={{ width: 15, height: 15, pointerEvents: 'none' }}><Icon name={leftSidebarOpen ? 'panelLeftClose' : 'panelLeft'} size={15} color={colors.textMuted} /></div>
+          {layout.navigationOverlay && !panel && animatedSidebarProgress > 0.001 && (
+            <>
+              <MotionDiv
+                testId="navigation-scrim"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: Math.min(0.72, animatedSidebarProgress * 0.72) }}
+                transition={{ duration: 0.14, ease: 'easeOut' }}
+                style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: '#00000099', pointerEvents: leftSidebarOpen ? 'auto' : 'none' }}
+                onClick={() => setLeftSidebarOpen(false)}
+              />
+              {sidebarHost}
+            </>
+          )}
+          {!fullscreenVisible && (
+            <div
+              testId="toggle-left-sidebar"
+              tabIndex={0}
+              style={{ position: 'absolute', top: 12, left: sidebarToggleLeft, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }}
+              onClick={() => setLeftSidebarOpen((value) => !value)}
+            >
+              <div style={{ width: 15, height: 15, pointerEvents: 'none' }}><Icon name={leftSidebarOpen ? 'panelLeftClose' : 'panelLeft'} size={15} color={colors.textMuted} /></div>
+            </div>
+          )}
         </div>
-      )}
-    </div>
+      </div>
+    </ResponsiveLayoutProvider>
   )
 }
 

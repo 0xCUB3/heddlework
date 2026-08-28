@@ -7,6 +7,7 @@ import { matchSelectOptions, NativeVirtualList } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
 import { colors, nativeTheme } from './theme.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 
 interface WorkspaceChoice {
   path: string
@@ -28,6 +29,7 @@ export function workspaceChoices(state: Pick<WorkbenchState, 'workspacePath' | '
 }
 
 export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+  const layout = useResponsiveLayout()
   const [open, setOpen] = useState(false)
   const [picking, setPicking] = useState(false)
   const [query, setQuery] = useState('')
@@ -51,14 +53,16 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
     })
   }
   return (
-    <div testId="draft-workspace" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', flexGrow: 1, width: '100%', paddingLeft: 20, paddingRight: 20, paddingBottom: 74 }}>
-      <div testId="draft-workspace-stack" style={{ position: 'relative', width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 25, overflow: 'visible' }}>
-        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', maxWidth: '100%' }}>
-          <text style={{ color: colors.text, fontSize: 26, fontWeight: 500 }}>{'What should we build in '}</text>
-          <div testId="workspace-chooser-trigger" tabIndex={0} style={{ minWidth: 0, height: 32, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', borderBottomWidth: 1, borderColor: open ? colors.primary : colors.textMuted, cursor: 'pointer', hover: { borderColor: colors.text } }} onClick={() => { if (open) closeMenu(); else setOpen(true) }} onKeyDown={(event) => { if (event.key === 'enter') { if (open) closeMenu(); else setOpen(true) } }}>
-            <text style={{ color: colors.text, fontSize: 26, lineHeight: 31, fontWeight: 500, maxWidth: 320, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{current.name}</text>
+    <div testId="draft-workspace" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', flexGrow: 1, minHeight: 0, width: '100%', paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter, paddingBottom: layout.mobile ? 42 : 74, ...(layout.mobile ? { overflow: 'scroll' } : {}) }}>
+      <div testId="draft-workspace-stack" style={{ position: 'relative', width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: layout.mobile ? 18 : 25, overflow: 'visible' }}>
+        <div style={{ display: 'flex', flexDirection: layout.mobile ? 'column' : 'row', alignItems: 'center', justifyContent: 'center', gap: layout.mobile ? 5 : 0, maxWidth: '100%' }}>
+          <text style={{ color: colors.text, fontSize: layout.mobile ? 22 : 26, fontWeight: 500 }}>{layout.mobile ? 'What should we build in' : 'What should we build in '}</text>
+          <div style={{ minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
+            <div testId="workspace-chooser-trigger" tabIndex={0} style={{ minWidth: 0, height: 32, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', borderBottomWidth: 1, borderColor: open ? colors.primary : colors.textMuted, cursor: 'pointer', hover: { borderColor: colors.text } }} onClick={() => { if (open) closeMenu(); else setOpen(true) }} onKeyDown={(event) => { if (event.key === 'enter') { if (open) closeMenu(); else setOpen(true) } }}>
+              <text style={{ color: colors.text, fontSize: layout.mobile ? 22 : 26, lineHeight: 31, fontWeight: 500, maxWidth: layout.mobile ? layout.viewportWidth - 68 : 320, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{current.name}</text>
+            </div>
+            <text style={{ color: colors.text, fontSize: layout.mobile ? 22 : 26, fontWeight: 500 }}>?</text>
           </div>
-          <text style={{ color: colors.text, fontSize: 26, fontWeight: 500 }}>?</text>
         </div>
         <div testId="draft-composer-layer" style={{ width: '100%', display: 'flex' }}>
           <Composer state={state} controller={controller} draft />
@@ -66,7 +70,7 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
         {open && (
           <>
           <div testId="workspace-menu-dismiss" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: colors.transparent }} onClick={closeMenu} />
-          <div testId="workspace-menu-positioner" style={{ position: 'absolute', top: 38, right: 24, width: 320, display: 'flex', backgroundColor: colors.transparent }}>
+          <div testId="workspace-menu-positioner" style={{ position: 'absolute', top: layout.mobile ? 76 : 38, right: layout.mobile ? 0 : 24, ...(layout.mobile ? { left: 0 } : {}), width: layout.mobile ? 'auto' : 320, display: 'flex', backgroundColor: colors.transparent }}>
             <div testId="workspace-menu" tabIndex={0} style={{ width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 5, padding: 6, borderRadius: 11, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}>
               <div style={{ height: 34, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
                 <Icon name="search" size={13} color={colors.textFaint} />

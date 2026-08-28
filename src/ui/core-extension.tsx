@@ -33,6 +33,7 @@ export function createCoreUiExtension(controller: WorkbenchController): Workbenc
         controller={controller}
         fullscreen={props.fullscreen}
         fullscreenProgress={props.fullscreenProgress}
+        {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
         panelWidth={props.panelWidth}
         {...(props.appearance ? { appearance: props.appearance } : {})}
         onToggleFullscreen={props.onToggleFullscreen}
@@ -69,6 +70,7 @@ function placeholder(id: string, title: string, description: string, icon: IconN
         descriptor={{ id, title, description, icon }}
         fullscreen={props.fullscreen}
         fullscreenProgress={props.fullscreenProgress}
+        {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
         panelWidth={props.panelWidth}
         onToggleFullscreen={props.onToggleFullscreen}
         onNew={props.onNewSurface}

@@ -11,6 +11,8 @@ import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
+import { MotionDiv, useSpringValue } from './motion.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
 import {
   groupWorkItems,
@@ -241,8 +243,8 @@ export const Transcript = memo(function Transcript({
         style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
       >
         {rows.map((row) => (
+          <TranscriptRowTransition key={row.id} row={row}>
           <ProjectedTranscriptRow
-            key={row.id}
             row={row}
             presenters={presenters}
             workspacePath={state.workspacePath}
@@ -259,6 +261,7 @@ export const Transcript = memo(function Transcript({
             onRevert={onRevert}
             onDismissNotice={onDismissNotice}
           />
+          </TranscriptRowTransition>
         ))}
       </NativeVirtualList>
     </div>
@@ -282,6 +285,27 @@ export const Transcript = memo(function Transcript({
   && previous.state.queue === next.state.queue
   && previous.state.statusItems === next.state.statusItems
   && previous.state.widgets === next.state.widgets)
+
+function TranscriptRowTransition({ row, children }: { row: TranscriptRenderRow; children: React.ReactNode }) {
+  const animated = row.kind === 'working'
+    || (row.kind === 'trace-header' && row.trace.items.some((item) => item.kind === 'thinking' ? item.streaming : item.kind === 'tool' ? item.tool.status !== 'complete' : false))
+    || row.kind === 'trace-entry'
+    || row.kind === 'trace-notices'
+    || row.kind === 'trace-files'
+    || (row.kind === 'timeline-item' && (row.item.kind === 'status' || (row.item.kind === 'assistant' && row.item.streaming)))
+  if (!animated) return <>{children}</>
+  return (
+    <MotionDiv
+      testId="transcript-row-transition"
+      initial={{ opacity: 0, top: 6 }}
+      animate={{ opacity: 1, top: 0 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      style={{ position: 'relative', width: '100%' }}
+    >
+      {children}
+    </MotionDiv>
+  )
+}
 
 function ProjectedTranscriptRow({
   row,
@@ -394,8 +418,9 @@ function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem
 }
 
 function TranscriptRowShell({ children, user = false, compact = false }: { children: React.ReactNode; user?: boolean; compact?: boolean }) {
+  const { contentGutter } = useResponsiveLayout()
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingTop: user ? 9 : compact ? 0 : 4, paddingBottom: user ? 11 : compact ? 0 : 7, paddingLeft: 20, paddingRight: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingTop: user ? 9 : compact ? 0 : 4, paddingBottom: user ? 11 : compact ? 0 : 7, paddingLeft: contentGutter, paddingRight: contentGutter }}>
       <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0 }}>{children}</div>
     </div>
   )
@@ -403,15 +428,16 @@ function TranscriptRowShell({ children, user = false, compact = false }: { child
 
 // Pointer-only visuals stay native: React hover revisions make GPUI remeasure rows beneath a stationary cursor.
 function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'user' }>; onRevert(entryId: string): void }) {
+  const { mobile } = useResponsiveLayout()
   return (
     <div testId="user-message" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', width: '100%', gap: 6 }}>
       {item.images.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, maxWidth: '80%' }}>
+        <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, maxWidth: mobile ? '92%' : '80%' }}>
           {item.images.map((image, index) => <MessageImage key={`${item.id}-image-${index}`} image={image} />)}
         </div>
       )}
       {item.text && (
-        <div style={{ maxWidth: '80%', paddingTop: 10, paddingBottom: 10, paddingLeft: 13, paddingRight: 13, borderRadius: 16, backgroundColor: colors.message }}>
+        <div style={{ maxWidth: mobile ? '92%' : '80%', paddingTop: 10, paddingBottom: 10, paddingLeft: 13, paddingRight: 13, borderRadius: 16, backgroundColor: colors.message }}>
           <text testId="user-message-text" style={{ color: colors.text, fontSize: 14, lineHeight: 21, whiteSpace: 'normal' }}>{item.text}</text>
         </div>
       )}
@@ -452,7 +478,11 @@ function ExecutionTraceHeader({ trace, expanded, durationKnown, onToggle }: { tr
         <text testId="execution-trace-label" style={{ color: colors.textMuted, fontSize: 13 }}>{running ? 'Working' : duration ? `Worked for ${duration}` : 'Worked'}</text>
         <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={12} color={colors.textFaint} />
       </div>
-      {!expanded && running && preview && <TracePreview item={preview} />}
+      {!expanded && running && preview && (
+        <MotionDiv key={preview.id} testId="execution-preview-transition" initial={{ opacity: 0, top: 4 }} animate={{ opacity: 1, top: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }} style={{ position: 'relative', minHeight: 38, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <TracePreview item={preview} />
+        </MotionDiv>
+      )}
     </div>
   )
 }
@@ -473,7 +503,7 @@ function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<Tim
             src: image.previewPath ?? `data:${image.mimeType};base64,${image.data}`,
             alt: `${item.source ?? 'Extension'} image ${index + 1}`,
             objectFit: 'contain',
-            style: { maxWidth: 320, maxHeight: 220, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background },
+            style: { maxWidth: '100%', maxHeight: 220, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background },
           } as never))}
         </div>
       )}
@@ -791,8 +821,9 @@ function toolCopyText(tool: ToolRun, args: string, content: string): string {
 }
 
 function WorkingRow({ activity }: { activity: string }) {
+  const { contentGutter } = useResponsiveLayout()
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingLeft: 20, paddingRight: 20, paddingTop: 2, paddingBottom: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingLeft: contentGutter, paddingRight: contentGutter, paddingTop: 2, paddingBottom: 8 }}>
       <div style={{ width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 5 }}>
         <Icon name="circle" size={14} color={colors.info} />
         <text style={{ color: colors.textMuted, fontSize: 12 }}>{activity === 'Ready' ? 'Working…' : activity}</text>
@@ -811,9 +842,10 @@ function StatusMessage({ text, error, timestamp }: { text: string; error: boolea
 }
 
 function EmptyConversation({ workspacePath }: { workspacePath: string }) {
+  const { contentGutter } = useResponsiveLayout()
   const project = workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? workspacePath
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingLeft: 20, paddingRight: 20, paddingBottom: 190 }}>
+    <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingLeft: contentGutter, paddingRight: contentGutter, paddingBottom: 190 }}>
       <div style={{ width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
         <text style={{ color: colors.text, fontSize: 26, fontWeight: 500 }}>{`What should we build in ${project}?`}</text>
       </div>
@@ -822,7 +854,9 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
 }
 
 function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets }: { questionnaireCollapsed: boolean; queue: WorkbenchState['queue']; statusItems: WorkbenchState['statusItems']; widgets: WorkbenchState['widgets'] }) {
-  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems) }} />
+  const targetHeight = 194 + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems)
+  const height = useSpringValue(targetHeight, { stiffness: 320, damping: 34, positionEpsilon: 0.1, velocityEpsilon: 0.1 })
+  return <div testId="composer-spacer" style={{ width: '100%', height: Math.max(0, height) }} />
 }
 
 function Timestamp({ value }: { value: number }) {

@@ -8,6 +8,7 @@ export function RightPanelHeader({
   title,
   fullscreen,
   fullscreenProgress,
+  fullscreenLocked = false,
   refreshDisabled = false,
   onNew,
   onRefresh,
@@ -18,6 +19,7 @@ export function RightPanelHeader({
   title: string
   fullscreen: boolean
   fullscreenProgress?: number | undefined
+  fullscreenLocked?: boolean
   refreshDisabled?: boolean
   onNew?(): void
   onRefresh?(): void
@@ -36,7 +38,7 @@ export function RightPanelHeader({
       <div style={{ flexGrow: 1 }} />
       <div testId="right-panel-actions" style={{ height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2 }}>
         {onRefresh && <IconButton icon="refresh" label={`Refresh ${title}`} testId="right-panel-refresh" disabled={refreshDisabled} onClick={onRefresh} />}
-        <IconButton icon={fullscreen ? 'minimize' : 'maximize'} label={fullscreen ? `Restore ${title} panel` : `Fullscreen ${title} panel`} testId={fullscreen ? 'right-panel-restore' : 'right-panel-fullscreen'} onClick={onToggleFullscreen} />
+        {!fullscreenLocked && <IconButton icon={fullscreen ? 'minimize' : 'maximize'} label={fullscreen ? `Restore ${title} panel` : `Fullscreen ${title} panel`} testId={fullscreen ? 'right-panel-restore' : 'right-panel-fullscreen'} onClick={onToggleFullscreen} />}
         <IconButton icon="x" label={`Close ${title} panel`} testId={title === 'Diff' ? 'close-diff' : 'close-surface'} onClick={onClose} />
       </div>
     </div>

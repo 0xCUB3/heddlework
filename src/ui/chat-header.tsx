@@ -7,6 +7,7 @@ import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
 import { colors, nativeTheme } from './theme.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 
 export function ChatHeader({
   state,
@@ -23,28 +24,33 @@ export function ChatHeader({
 }) {
   const projectName = basename(state.workspacePath) || state.workspacePath
   const title = activeThreadTitle(state)
+  const layout = useResponsiveLayout()
   const collapsedLeftInset = process.platform === 'darwin' ? 132 : 54
   return (
-    <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: 12, backgroundColor: colors.background, userSelect: 'none' }}>
-      <div testId="chat-breadcrumb" style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Icon name="folder" size={14} color={colors.textFaint} />
-        <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 500, maxWidth: 160, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
-        <text style={{ color: colors.textFaint, fontSize: 12 }}>/</text>
-        <text style={{ color: colors.text, fontSize: 12, fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</text>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-        <ActionMenu state={state} controller={controller} compact={diffOpen} />
-        {diffOpen ? (
+    <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 5 : 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: layout.mobile ? 8 : 12, backgroundColor: colors.background, userSelect: 'none' }}>
+      <div testId="chat-breadcrumb" style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+        {!layout.mobile && (
           <>
-            <IconButton icon="box" label="Open" onClick={() => openPath(state.workspacePath)} />
-            <IconButton icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
+            <Icon name="folder" size={14} color={colors.textFaint} />
+            <text testId="chat-project-crumb" style={{ color: colors.textMuted, fontSize: 12, fontWeight: 500, maxWidth: 160, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
+            <text style={{ color: colors.textFaint, fontSize: 12 }}>/</text>
+          </>
+        )}
+        <text testId="chat-thread-title" style={{ width: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</text>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 3 : 7, flexShrink: 0 }}>
+        <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} />
+        {!layout.mobile && (layout.compact || diffOpen ? (
+          <>
+            <IconButton testId="header-open" icon="box" label="Open" onClick={() => openPath(state.workspacePath)} />
+            <IconButton testId="header-export" icon="download" label="Export" disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
           </>
         ) : (
           <>
-            <Button label="Open" icon="box" compact onClick={() => openPath(state.workspacePath)} />
-            <Button label="Export" compact disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
+            <Button testId="header-open" label="Open" icon="box" compact onClick={() => openPath(state.workspacePath)} />
+            <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
           </>
-        )}
+        ))}
         <IconButton icon="panel" label="Toggle Diff panel" testId="toggle-diff" active={diffOpen} onClick={onToggleDiff} />
       </div>
     </div>
@@ -54,6 +60,7 @@ export function ChatHeader({
 function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchController; compact: boolean }) {
   const options = [
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },
+    { value: 'open', label: 'Open project', detail: 'Open this workspace externally' },
     { value: 'clone', label: 'Clone thread', detail: 'Duplicate the current Pi branch' },
     { value: 'compact', label: 'Compact context', detail: 'Reduce the current context window' },
     { value: 'refresh', label: 'Refresh sessions', detail: 'Rescan every saved Pi session' },
@@ -64,6 +71,7 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       value=""
       onValueChange={(value) => {
         if (value === 'new') void controller.newSession()
+        if (value === 'open') openPath(state.workspacePath)
         if (value === 'clone') void controller.cloneSession()
         if (value === 'compact') void controller.compact()
         if (value === 'refresh') void controller.refreshSessions()
@@ -79,7 +87,8 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       </SelectTrigger>
       <SelectContent side="bottom" sideOffset={7} align="end" style={{ width: 254, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
         {options.map((option) => {
-          const disabled = option.value === 'refresh' ? false : state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
+          const alwaysEnabled = option.value === 'refresh' || option.value === 'open'
+          const disabled = alwaysEnabled ? false : state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
           return (
             <SelectItem
               key={option.value}

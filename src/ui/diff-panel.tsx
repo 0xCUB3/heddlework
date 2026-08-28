@@ -12,6 +12,7 @@ export const DiffPanel = React.memo(function DiffPanel({
   controller,
   fullscreen,
   fullscreenProgress,
+  fullscreenLocked = false,
   panelWidth,
   appearance,
   onClose,
@@ -22,6 +23,7 @@ export const DiffPanel = React.memo(function DiffPanel({
   controller: WorkbenchController
   fullscreen: boolean
   fullscreenProgress: number
+  fullscreenLocked?: boolean
   panelWidth?: number
   appearance?: 'light' | 'dark'
   onClose(): void
@@ -48,6 +50,7 @@ export const DiffPanel = React.memo(function DiffPanel({
         title="Diff"
         fullscreen={fullscreen}
         fullscreenProgress={fullscreenProgress}
+        fullscreenLocked={fullscreenLocked}
         refreshDisabled={diff.status === 'loading'}
         onNew={onNewSurface}
         onRefresh={() => void controller.refreshWorkspaceDiff()}
@@ -97,6 +100,7 @@ export const DiffPanel = React.memo(function DiffPanel({
   && previous.controller === next.controller
   && previous.fullscreen === next.fullscreen
   && previous.fullscreenProgress === next.fullscreenProgress
+  && previous.fullscreenLocked === next.fullscreenLocked
   && previous.panelWidth === next.panelWidth
   && previous.appearance === next.appearance)
 

@@ -173,6 +173,7 @@ export function ChipSelect({
   onChange,
   testId,
   width = 190,
+  triggerMaxWidth = width,
   icon,
   searchable = false,
   onOpenChange,
@@ -183,11 +184,12 @@ export function ChipSelect({
   onChange(value: string): void
   testId?: string
   width?: number
+  triggerMaxWidth?: number
   icon?: IconName
   searchable?: boolean
   onOpenChange?(open: boolean): void
 }) {
-  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} testId={testId} width={width} icon={icon} />
+  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} testId={testId} width={width} triggerMaxWidth={triggerMaxWidth} icon={icon} />
   const [open, setOpen] = React.useState(false)
   const selected = options.find((option) => option.value === value)
   const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
@@ -210,7 +212,7 @@ export function ChipSelect({
         if (typeof nextValue === 'string') onChange(nextValue)
       }}
     >
-      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(open, width)}>
+      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(open, triggerMaxWidth)}>
         <ChipSelectValue selected={selected} label={label} icon={icon} />
       </ComboboxTrigger>
       <ComboboxContent
@@ -230,7 +232,7 @@ export function ChipSelect({
   )
 }
 
-function SearchableChipSelect({ value, label, options, onChange, onOpenChange, testId, width, icon }: {
+function SearchableChipSelect({ value, label, options, onChange, onOpenChange, testId, width, triggerMaxWidth, icon }: {
   value: string
   label?: string | undefined
   options: SelectOption[]
@@ -238,6 +240,7 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, t
   onOpenChange?(open: boolean): void
   testId?: string | undefined
   width: number
+  triggerMaxWidth: number
   icon?: IconName | undefined
 }) {
   const [open, setOpen] = React.useState(false)
@@ -267,7 +270,7 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, t
         if (typeof nextValue === 'string') onChange(nextValue)
       }}
     >
-      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(open, width)}>
+      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(open, triggerMaxWidth)}>
         <ChipSelectValue selected={selected} label={label} icon={icon} />
       </ComboboxTrigger>
       <ComboboxContent

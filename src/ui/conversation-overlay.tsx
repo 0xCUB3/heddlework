@@ -13,6 +13,7 @@ import { colors, nativeTheme } from './theme.ts'
 import { filterExtensionOptions, parseExtensionOption, parseExtensionTitle } from './extension-ui.ts'
 import { openExternal } from './open-external.ts'
 import { MotionDiv } from './motion.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 
 const DIALOG_TRANSITION_SECONDS = 0.16
 const DIALOG_EXIT_DELAY_SECONDS = 0.08
@@ -32,6 +33,7 @@ interface AnswerDraft {
 }
 
 export function ConversationExtensionOverlay({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+  const { mobile } = useResponsiveLayout()
   const questionnaire = useMemo(() => {
     const candidates = state.liveTools.flatMap((tool) => {
       const parsed = questionnaireFromTool(tool)
@@ -58,7 +60,7 @@ export function ConversationExtensionOverlay({ state, controller }: { state: Wor
         position: 'absolute',
         ...(questionnaire
           ? { top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.background }
-          : { top: 12, right: 16, bottom: 12, left: 16 }),
+          : { top: mobile ? 8 : 12, right: mobile ? 8 : 16, bottom: mobile ? 8 : 12, left: mobile ? 8 : 16 }),
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -113,6 +115,7 @@ function TransitionedGenericDialog({ dialog, active, queued, onRespond }: { dial
 }
 
 function QuestionnaireOverlay({ questionnaire, submitting, controller }: { questionnaire: AskUserQuestionnaire; submitting: boolean; controller: WorkbenchController }) {
+  const { mobile } = useResponsiveLayout()
   const [currentTab, setCurrentTab] = useState(0)
   const [drafts, setDrafts] = useState<AnswerDraft[]>(() => questionnaire.questions.map((question) => ({
     kind: question.multiSelect ? 'multi' : 'none',
@@ -140,7 +143,7 @@ function QuestionnaireOverlay({ questionnaire, submitting, controller }: { quest
   const activeQuestion = currentTab < submitTab ? questionnaire.questions[currentTab] : undefined
   return (
     <div testId="ask-user-overlay" style={{ pointerEvents: 'auto', width: '100%', height: '100%', maxWidth: 1040, minWidth: 0, display: 'flex', flexDirection: 'column', borderRadius: 9, borderWidth: 0, backgroundColor: colors.background, overflow: 'hidden' }}>
-      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 62, paddingLeft: 20, paddingRight: 12, borderBottomWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background }}>
+      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 62, paddingLeft: mobile ? 14 : 20, paddingRight: mobile ? 8 : 12, borderBottomWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background }}>
         <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
           <text style={{ color: colors.warning, fontSize: 9, fontWeight: 750 }}>ASK USER QUESTION</text>
           <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>The agent needs a decision before it can continue</text>
@@ -189,12 +192,13 @@ function QuestionTabs({ questionnaire, currentTab, drafts, onChange }: { questio
 }
 
 function QuestionPage({ question, index, draft, onChange }: { question: AskUserQuestion; index: number; draft: AnswerDraft; onChange(update: (draft: AnswerDraft) => AnswerDraft): void }) {
+  const { mobile } = useResponsiveLayout()
   const hasPreviews = !question.multiSelect && question.options.some((option) => option.preview)
   const previewIndex = draft.kind === 'option' ? draft.optionIndex : question.options.findIndex((option) => option.preview)
   const preview = previewIndex === undefined || previewIndex < 0 ? undefined : question.options[previewIndex]?.preview
   return (
-    <div style={{ minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
-      <div style={{ width: hasPreviews ? '42%' : '100%', minWidth: hasPreviews ? 280 : 0, display: 'flex', flexDirection: 'column', gap: 0, paddingTop: 18, paddingRight: 18, paddingBottom: 18, paddingLeft: 18, borderRightWidth: hasPreviews ? 1 : 0, borderColor: colors.borderStrong, backgroundColor: colors.background, overflow: 'scroll' }}>
+    <div style={{ minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: mobile && hasPreviews ? 'column' : 'row', overflow: 'hidden' }}>
+      <div style={{ width: mobile ? '100%' : hasPreviews ? '42%' : '100%', height: mobile && hasPreviews ? '58%' : 'auto', minWidth: mobile ? 0 : hasPreviews ? 280 : 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 0, paddingTop: mobile ? 14 : 18, paddingRight: mobile ? 14 : 18, paddingBottom: mobile ? 14 : 18, paddingLeft: mobile ? 14 : 18, borderRightWidth: hasPreviews && !mobile ? 1 : 0, borderBottomWidth: hasPreviews && mobile ? 1 : 0, borderColor: colors.borderStrong, backgroundColor: colors.background, overflow: 'scroll' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5, paddingBottom: 15 }}>
           <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>{`QUESTION ${index + 1} · ${question.header.toUpperCase()}`}</text>
           <text testId="ask-user-question" style={{ color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: 650, whiteSpace: 'normal' }}>{question.question}</text>
@@ -225,7 +229,7 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
         </div>
       </div>
       {hasPreviews && (
-        <div testId="ask-user-preview" style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 10, padding: 20, backgroundColor: colors.card, overflow: 'scroll' }}>
+        <div testId="ask-user-preview" style={{ minWidth: 0, minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 10, padding: mobile ? 14 : 20, backgroundColor: colors.card, overflow: 'scroll' }}>
           <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>PREVIEW</text>
           {preview
             ? <markdown source={preview} theme={questionnaireMarkdownTheme()} style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => openExternal(String(event.value ?? ''))} />

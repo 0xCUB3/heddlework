@@ -5,6 +5,7 @@ import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { MotionDiv, useSpringProgress } from './motion.ts'
 import { colors, nativeTheme } from './theme.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 
 const HEADER_HEIGHT = 42
 const COLLAPSED_HEIGHT = HEADER_HEIGHT
@@ -29,6 +30,7 @@ export function queueDockReserveHeight(queue: WorkbenchQueueState): number {
 }
 
 export function QueueDock({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+  const { compact } = useResponsiveLayout()
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(undefined)
   const [draggingId, setDraggingId] = useState<string | undefined>(undefined)
@@ -88,6 +90,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
           const ownedIndex = row.item ? state.queue.items.findIndex((item) => item.id === row.id) : -1
           const dispatching = state.queue.dispatchingId === row.id
           const control = row.item && row.item.images.length === 0 ? parseQueuedControl(row.text) : undefined
+          const actionsVisible = compact || hoveredId === row.id
           return (
             <div
               key={row.id}
@@ -105,10 +108,10 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
                 <MotionDiv
                   testId={`queue-drag:${row.id}`}
                   initial={{ opacity: 0, left: -4 }}
-                  animate={{ opacity: hoveredId === row.id || draggingId === row.id ? 1 : 0, left: hoveredId === row.id || draggingId === row.id ? 0 : -4 }}
+                  animate={{ opacity: actionsVisible || draggingId === row.id ? 1 : 0, left: actionsVisible || draggingId === row.id ? 0 : -4 }}
                   transition={{ duration: 0.14, ease: 'easeOut' }}
-                  style={{ position: 'relative', width: 22, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: hoveredId === row.id ? 'grab' : 'default', color: colors.textFaint, flexShrink: 0 }}
-                  onMouseDown={(event: MouseEventLike) => { if (hoveredId === row.id && (event.button ?? 0) === 0 && !state.queue.dispatchingId) setDraggingId(row.id) }}
+                  style={{ position: 'relative', width: 22, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, cursor: actionsVisible ? 'grab' : 'default', color: colors.textFaint, flexShrink: 0 }}
+                  onMouseDown={(event: MouseEventLike) => { if (actionsVisible && (event.button ?? 0) === 0 && !state.queue.dispatchingId) setDraggingId(row.id) }}
                   onMouseUp={() => setDraggingId(undefined)}
                 >
                   <Icon name="grip" size={13} color={colors.textFaint} />
@@ -136,12 +139,12 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
               )}
 
               {row.item && state.session.isStreaming && !control && (
-                <MotionDiv testId={`queue-steer:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: hoveredId === row.id ? 1 : 0, left: hoveredId === row.id ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: hoveredId === row.id && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(hoveredId === row.id && !dispatching ? { onClick: () => void controller.steerQueuedInput(row.id) } : {})}>
+                <MotionDiv testId={`queue-steer:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: actionsVisible ? 1 : 0, left: actionsVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: actionsVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(actionsVisible && !dispatching ? { onClick: () => void controller.steerQueuedInput(row.id) } : {})}>
                   <Icon name="arrowUp" size={12} color="#7EA2FF" />
                 </MotionDiv>
               )}
               {row.item && (
-                <MotionDiv testId={`queue-remove:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: hoveredId === row.id ? 1 : 0, left: hoveredId === row.id ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: hoveredId === row.id && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(hoveredId === row.id && !dispatching ? { onClick: () => controller.removeQueuedInput(row.id) } : {})}>
+                <MotionDiv testId={`queue-remove:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: actionsVisible ? 1 : 0, left: actionsVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: actionsVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(actionsVisible && !dispatching ? { onClick: () => controller.removeQueuedInput(row.id) } : {})}>
                   <Icon name="x" size={11} color={colors.textFaint} />
                 </MotionDiv>
               )}

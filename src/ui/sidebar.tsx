@@ -8,6 +8,7 @@ import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
 import { colors } from './theme.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 
 const SIDEBAR_WIDTH = 256
 const SIDEBAR_BORDER_WIDTH = 1
@@ -16,6 +17,7 @@ export const SESSION_SETTLED_AFTER_MS = 7 * 24 * 60 * 60 * 1_000
 const ALL_PROJECTS_SCOPE = '__all-projects__'
 
 export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
+  width = SIDEBAR_WIDTH,
   state,
   controller,
   settingsActive,
@@ -26,6 +28,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   onSettings,
   onNotifications,
 }: {
+  width?: number
   state: WorkbenchState
   controller: WorkbenchController
   settingsActive: boolean
@@ -151,7 +154,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   }
 
   return (
-    <div testId="sidebar" style={{ position: 'relative', width: SIDEBAR_WIDTH, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.sidebar, userSelect: 'none', overflow: 'visible' }}>
+    <div testId="sidebar" style={{ position: 'relative', width, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.sidebar, userSelect: 'none', overflow: 'visible' }}>
       <BrandHeader />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, paddingTop: 6 }}>
@@ -219,6 +222,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     </div>
   )
 }, (previous, next) => previous.controller === next.controller
+  && previous.width === next.width
   && previous.settingsActive === next.settingsActive
   && previous.notificationsActive === next.notificationsActive
   && previous.unreadCount === next.unreadCount
@@ -341,6 +345,7 @@ function SessionRow({
   onSnooze(): void
   onSchedule(until: number): void
 }) {
+  const { compact } = useResponsiveLayout()
   const [hovered, setHovered] = useState(false)
   const [settleHovered, setSettleHovered] = useState(false)
   if (lifecycle !== 'active') {
@@ -368,7 +373,7 @@ function SessionRow({
         <Icon name="folder" size={13} color={colors.textFaint} />
         <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         <div style={{ width: 70, height: 20, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-          {hovered || snoozeOpen ? (
+          {compact || hovered || snoozeOpen ? (
             <>
               <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
                 <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={onSnooze}>

@@ -8,6 +8,7 @@ import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
 import { MotionDiv } from './motion.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 import { QueueDock } from './queue-dock.tsx'
 import { plainExtensionText } from './extension-ui.ts'
 
@@ -34,6 +35,7 @@ export function extensionSurfaceRailReserveHeight(
 }
 
 export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
+  const layout = useResponsiveLayout()
   const [pastingImage, setPastingImage] = useState(false)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
@@ -65,6 +67,10 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       contextPopoverExitTimer.current = undefined
       setContextPopoverMounted(false)
     }, CONTEXT_POPOVER_MOTION_MS)
+  }
+  const toggleContextPopover = () => {
+    if (contextPopoverOpen) hideContextPopover()
+    else showContextPopover()
   }
   const connected = state.connection === 'connected'
   const modelOptions: SelectOption[] = state.models.map((model) => ({
@@ -138,8 +144,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         flexDirection: 'column',
         alignItems: 'center',
         width: '100%',
-        paddingLeft: 20,
-        paddingRight: 20,
+        paddingLeft: layout.composerGutter,
+        paddingRight: layout.composerGutter,
         paddingBottom: draft ? 0 : 10,
         gap: 0,
         overflow: 'visible',
@@ -174,7 +180,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         <textarea
           testId="composer"
           value={state.editorText}
-          placeholder={connected ? (draft ? 'Ask anything, @tag files/folders, $use skills, or / for commands' : 'Ask for follow-up changes or attach images') : 'Reconnect to Pi to begin'}
+          placeholder={connected ? (draft ? (layout.mobile ? 'Ask anything, @tag files, or / for commands' : 'Ask anything, @tag files/folders, $use skills, or / for commands') : 'Ask for follow-up changes or attach images') : 'Reconnect to Pi to begin'}
           minRows={3}
           maxRows={7}
           autoFocus
@@ -183,8 +189,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           style={{
             width: '100%',
             minWidth: 0,
-            paddingLeft: 16,
-            paddingRight: 16,
+            paddingLeft: layout.mobile ? 13 : 16,
+            paddingRight: layout.mobile ? 13 : 16,
             color: colors.text,
             fontSize: 14,
             lineHeight: 21,
@@ -206,13 +212,14 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           }}
         />
 
-        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 10, paddingLeft: 10, paddingRight: 11, overflow: 'visible', userSelect: 'none' }}>
+        <div testId="composer-toolbar" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 2 : 4, marginTop: 10, paddingLeft: layout.mobile ? 8 : 10, paddingRight: layout.mobile ? 8 : 11, overflow: 'visible', userSelect: 'none' }}>
           <ChipSelect
             testId="model-picker"
             icon="sparkles"
             value={currentModel}
             options={modelOptions}
-            width={320}
+            width={layout.mobile ? layout.popoverWidth : 320}
+            triggerMaxWidth={layout.mobile ? 106 : 320}
             searchable
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => {
@@ -220,18 +227,19 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               if (model) void controller.setModel(model)
             }}
           />
-          <ToolbarSeparator />
+          {!layout.mobile && <ToolbarSeparator />}
           <ChipSelect
             testId="thinking-picker"
             value={state.session.thinkingLevel}
             options={thinkingOptions}
-            width={130}
+            width={layout.mobile ? Math.min(180, layout.popoverWidth) : 130}
+            triggerMaxWidth={layout.mobile ? 68 : 130}
             {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => void controller.setThinkingLevel(value as ThinkingLevel)}
           />
           <div style={{ flexGrow: 1 }} />
-          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-            {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} popoverOpen={contextPopoverOpen} onMouseEnter={showContextPopover} onMouseLeave={hideContextPopover} />}
+          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 4 : 9 }}>
+            {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} compact={layout.mobile} popoverOpen={contextPopoverOpen} onToggle={toggleContextPopover} onMouseEnter={showContextPopover} onMouseLeave={hideContextPopover} />}
             <PrimaryAction
               running={state.session.isStreaming}
               disabled={!connected || (!state.session.isStreaming && !state.editorText.trim() && state.editorImages.length === 0)}
@@ -243,8 +251,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         <div testId="composer-seam-mask" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 2, backgroundColor: colors.composer, pointerEvents: 'none' }} />
       </div>
       {contextPopoverMounted && state.stats && (
-        <div testId="context-popover-positioner" style={{ position: 'absolute', right: 46, bottom: 84, width: 256, display: 'flex', backgroundColor: colors.transparent }}>
-          <ContextPopover stats={state.stats} open={contextPopoverOpen} />
+        <div testId="context-popover-positioner" style={{ position: 'absolute', right: layout.mobile ? 0 : 46, bottom: 84, width: layout.mobile ? layout.popoverWidth : 256, display: 'flex', backgroundColor: colors.transparent }}>
+          <ContextPopover stats={state.stats} open={contextPopoverOpen} width={layout.mobile ? layout.popoverWidth : 256} />
         </div>
       )}
       </div>
@@ -259,19 +267,19 @@ function ToolbarSeparator() {
 
 const CONTEXT_POPOVER_MOTION_MS = 160
 
-function ContextMeter({ stats, popoverOpen, onMouseEnter, onMouseLeave }: { stats: PiSessionStats; popoverOpen: boolean; onMouseEnter(): void; onMouseLeave(): void }) {
+function ContextMeter({ stats, compact, popoverOpen, onToggle, onMouseEnter, onMouseLeave }: { stats: PiSessionStats; compact: boolean; popoverOpen: boolean; onToggle(): void; onMouseEnter(): void; onMouseLeave(): void }) {
   const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
   const rounded = Math.round(percent * 10) / 10
   const tone = percent > 80 ? colors.warning : percent > 60 ? '#D8A95B' : colors.textMuted
   return (
-    <div testId="context-meter" style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 8, borderRadius: 9, marginRight: 9, backgroundColor: popoverOpen ? colors.hover : colors.transparent, cursor: 'default' }} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
-      <text style={{ color: popoverOpen ? colors.text : colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
-      <div style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
+    <div testId="context-meter" tabIndex={0} style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', ...(compact ? { width: 30, justifyContent: 'center' } : {}), gap: compact ? 0 : 7, paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 8, borderRadius: 9, marginRight: compact ? 0 : 9, backgroundColor: popoverOpen ? colors.hover : colors.transparent, cursor: 'pointer' }} onClick={onToggle} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      {!compact && <text style={{ color: popoverOpen ? colors.text : colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>}
+      <div style={{ width: compact ? 16 : 18, height: compact ? 16 : 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
     </div>
   )
 }
 
-function ContextPopover({ stats, open }: { stats: PiSessionStats; open: boolean }) {
+function ContextPopover({ stats, open, width }: { stats: PiSessionStats; open: boolean; width: number }) {
   const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
   const rounded = Math.round(percent * 10) / 10
   const tokens = stats.contextUsage?.tokens ?? 0
@@ -282,7 +290,7 @@ function ContextPopover({ stats, open }: { stats: PiSessionStats; open: boolean 
       initial={{ opacity: 0, top: 4 }}
       animate={{ opacity: open ? 1 : 0, top: open ? 0 : 4 }}
       transition={{ duration: CONTEXT_POPOVER_MOTION_MS / 1_000, ease: 'easeOut' }}
-      style={{ position: 'relative', width: 256, display: 'flex', flexDirection: 'column', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}
+      style={{ position: 'relative', width, display: 'flex', flexDirection: 'column', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14 }}>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
@@ -335,6 +343,7 @@ function ComposerContextShadow() {
 }
 
 function ComposerContextBar({ branch }: { branch: string }) {
+  const { mobile } = useResponsiveLayout()
   return (
     <div testId="composer-context-bar" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 48, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 20, paddingBottom: 4, paddingLeft: 13, paddingRight: 13, userSelect: 'none' }}>
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderWidth: 1, borderColor: colors.composerOutline, borderRadius: 16, backgroundColor: colors.contextBar }} />
@@ -343,10 +352,10 @@ function ComposerContextBar({ branch }: { branch: string }) {
       <div style={{ position: 'absolute', right: 0, top: 0, width: 1, height: 16, backgroundColor: colors.composerOutline }} />
       <ComposerContextShadow />
       <Icon name="folder" size={13} color={colors.contextIcon} />
-      <text testId="composer-checkout-label" style={{ color: colors.contextText, fontSize: 12 }}>Local checkout</text>
+      {!mobile && <text testId="composer-checkout-label" style={{ color: colors.contextText, fontSize: 12 }}>Local checkout</text>}
       <div style={{ flexGrow: 1 }} />
       <Icon name="gitBranch" size={12} color={colors.contextIcon} />
-      <text testId="composer-branch-label" style={{ color: colors.contextText, fontSize: 12 }}>{branch}</text>
+      <text testId="composer-branch-label" style={{ minWidth: 0, color: colors.contextText, fontSize: 12, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{branch}</text>
     </div>
   )
 }
@@ -394,11 +403,12 @@ function PrimaryAction({ running, disabled, onSend, onStop }: { running: boolean
 }
 
 function QuestionnaireWaitingDock({ questionnaire, controller }: { questionnaire: AskUserQuestionnaire; controller: WorkbenchController }) {
+  const { mobile } = useResponsiveLayout()
   return (
     <div testId="ask-user-collapsed" style={{ width: '100%', maxWidth: 768, minHeight: QUESTIONNAIRE_WAITING_DOCK_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: QUESTIONNAIRE_WAITING_DOCK_MARGIN, paddingLeft: 11, paddingRight: 8, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}>
       <div style={{ width: 6, height: 6, flexShrink: 0, borderRadius: 3, backgroundColor: colors.warning }} />
       <text style={{ minWidth: 0, color: colors.text, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>Agent waiting for your answers</text>
-      <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{`${questionnaire.questions.length} question${questionnaire.questions.length === 1 ? '' : 's'}`}</text>
+      {!mobile && <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{`${questionnaire.questions.length} question${questionnaire.questions.length === 1 ? '' : 's'}`}</text>}
       <div style={{ flexGrow: 1 }} />
       <DockAction testId="ask-user-reopen" label="Open" tone="accent" onClick={() => controller.setAskUserQuestionnaireCollapsed(questionnaire.toolCallId, false)} />
       <DockAction label="Dismiss" onClick={() => controller.cancelAskUserQuestionnaire(questionnaire.toolCallId)} />

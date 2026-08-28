@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { NativeVirtualList } from './primitives.tsx'
+import { IconButton, NativeVirtualList } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { MotionDiv } from './motion.ts'
+import { useResponsiveLayout } from './responsive.tsx'
 
 export function composerNotificationStackHeight(noticeCount: number): number {
   const visibleCount = Math.min(3, Math.max(0, noticeCount))
@@ -156,27 +157,33 @@ function NotificationCard({ notice, newest, depth, stacked, exiting, promotion, 
   )
 }
 
-export function NotificationLedgerView({ state, panelWidth = 422, onClear }: { state: WorkbenchState; panelWidth?: number; onClear(): void }) {
+export function NotificationLedgerView({ state, fullscreen = false, fullscreenProgress, panelWidth = 422, onClear, onClose }: { state: WorkbenchState; fullscreen?: boolean; fullscreenProgress?: number; panelWidth?: number; onClear(): void; onClose?(): void }) {
+  const { mobile } = useResponsiveLayout()
   const notices = [...state.notices].reverse()
+  const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
+  const trafficLightInset = process.platform === 'darwin' ? 96 * titlebarProgress : 0
   return (
     <div testId="notification-panel" style={{ width: panelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
-      <div testId="notification-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14, paddingRight: 14 }}>
+      <div testId="notification-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14 + trafficLightInset, paddingRight: 14 }}>
         <Icon name="bell" size={15} color={colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Notifications</text>
         <div style={{ flexGrow: 1 }} />
-        <text style={{ color: colors.textFaint, fontSize: 10 }}>{`${notices.length} saved`}</text>
-        {notices.length > 0 && (
-          <div testId="clear-notification-ledger" tabIndex={0} style={{ height: 26, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 7, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onClear}>
-            <text style={{ color: colors.textMuted, fontSize: 10, pointerEvents: 'none' }}>Clear all</text>
-          </div>
-        )}
+        {!mobile && <text style={{ color: colors.textFaint, fontSize: 10 }}>{`${notices.length} saved`}</text>}
+        {notices.length > 0 && (mobile
+          ? <IconButton icon="eraser" label="Clear all notifications" testId="clear-notification-ledger" onClick={onClear} />
+          : (
+            <div testId="clear-notification-ledger" tabIndex={0} style={{ height: 26, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 7, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onClear}>
+              <text style={{ color: colors.textMuted, fontSize: 10, pointerEvents: 'none' }}>Clear all</text>
+            </div>
+          ))}
+        {onClose && <IconButton icon="x" label="Close notifications" testId="notification-panel-close" onClick={onClose} />}
       </div>
       <NativeVirtualList testId="notification-list" alignment="top" estimatedItemHeight={52} overdraw={300} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {notices.length === 0 ? (
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 180, gap: 9 }}>
             <div style={{ width: 38, height: 38, borderRadius: 19, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card }}><Icon name="bell" size={18} color={colors.textFaint} /></div>
             <text style={{ color: colors.text, fontSize: 15, fontWeight: 600 }}>No notifications yet</text>
-            <text style={{ color: colors.textFaint, fontSize: 11 }}>Harness and workspace events will be kept here.</text>
+            <text style={{ maxWidth: '86%', color: colors.textFaint, fontSize: 11, lineHeight: 17, textAlign: 'center', whiteSpace: 'normal' }}>Harness and workspace events will be kept here.</text>
           </div>
         ) : notices.map((notice) => <LedgerRow key={notice.id} notice={notice} />)}
       </NativeVirtualList>
@@ -187,7 +194,7 @@ export function NotificationLedgerView({ state, panelWidth = 422, onClear }: { s
 function LedgerRow({ notice }: { notice: Notice }) {
   const tone = noticeColor(notice.kind)
   return (
-    <div testId="notification-ledger-row-frame" style={{ width: 420, flexShrink: 0, display: 'flex', flexDirection: 'row', paddingLeft: 14, paddingRight: 14, paddingTop: 4, paddingBottom: 4 }}>
+    <div testId="notification-ledger-row-frame" style={{ width: '100%', flexShrink: 0, display: 'flex', flexDirection: 'row', paddingLeft: 14, paddingRight: 14, paddingTop: 4, paddingBottom: 4 }}>
       <div testId="notification-ledger-row" style={{ minWidth: 0, minHeight: 40, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 8, paddingRight: 12, paddingBottom: 8, paddingLeft: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, selectionColor: '#4F67D866' }}>
         <div style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone, flexShrink: 0 }} />
         <AutoScrollingNoticeText message={notice.message} scrollTestId="notification-ledger-scroll" />

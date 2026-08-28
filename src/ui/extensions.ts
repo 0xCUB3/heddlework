@@ -6,6 +6,7 @@ import type { ResolvedTheme } from './theme.ts'
 export interface WorkbenchSurfaceProps {
   fullscreen: boolean
   fullscreenProgress: number
+  fullscreenLocked?: boolean
   panelWidth: number
   appearance?: ResolvedTheme
   onToggleFullscreen(): void
