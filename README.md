@@ -175,6 +175,14 @@ Heddlework follows a small supervised component model inspired by Cordis:
 
 The UI boundary is intentionally not a microfrontend platform: extensions share one React/GPUIX runtime and register coarse feature surfaces rather than independent applications or a plugin per visual element. See [UI extensions](docs/ui-extensions.md).
 
+### Cordis invariants
+
+Heddlework applies the two dimensions from *A Programming Paradigm for Spatiotemporal Composability* at capability boundaries:
+
+- **Temporal composability:** every registration, listener, timer, process, and other owned effect has an inverse attached to the same plugin, controller, or React lifecycle. Unloading the owner withdraws those effects in reverse order; operations outside the process boundary use their protocol's cancellation or compensation semantics.
+- **Spatial composability:** replaceable capabilities are typed services, consumers declare them through `requires`, and providers are constructed only by provider plugins or the composition root. Internal collaborators receive narrow interfaces or props rather than locating providers globally.
+- **Component granularity:** a Cordis component is an independently loadable capability or integration, not every source file or React component. Cohesive UI implementation may be split into static modules while remaining under one feature lifecycle; new plugins and contribution seats require an independently replaceable behavior and a demonstrated consumer.
+
 Pi remains authoritative for Pi messages and sessions. Streaming state is temporary and replaced by `get_messages` after completion. Future adapters must preserve the same authority rule for their harnesses.
 
 ## Roadmap

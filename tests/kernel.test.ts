@@ -75,6 +75,34 @@ describe('WorkbenchKernel', () => {
     await kernel.dispose()
   })
 
+  it('reverts partial activation when a plugin fails', async () => {
+    const service = serviceToken<{ value: number }>('failed-service')
+    const slot = slotToken<string>('failed-slot')
+    const order: string[] = []
+    let observed = 0
+    const kernel = new WorkbenchKernel()
+
+    expect(() => kernel.mount({
+      id: 'failing-plugin',
+      activate(ctx) {
+        ctx.provide(service, { value: 1 })
+        ctx.contribute(slot, 'entry', 'installed')
+        ctx.on('test/observe', () => { observed += 1 })
+        ctx.effect(() => () => { order.push('effect-reverted') })
+        throw new Error('activation failed')
+      },
+    })).toThrow('activation failed')
+
+    expect(order).toEqual(['effect-reverted'])
+    expect(() => kernel.get(service)).toThrow('Missing service')
+    expect(kernel.contributions(slot).size).toBe(0)
+    kernel.emit('test/observe', 'after-failure')
+    expect(observed).toBe(0)
+
+    kernel.mount({ id: 'failing-plugin', activate() {} })
+    await kernel.dispose()
+  })
+
   it('owns typed listeners and composes waterfall middleware', async () => {
     const observed: string[] = []
     const kernel = new WorkbenchKernel()

@@ -237,6 +237,27 @@ describe('Pi extension UI projection', () => {
       await controller.dispose()
     }
   })
+
+  it('withdraws pending dialog effects when the controller is disposed', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({ type: 'extension_ui_request', id: 'active-on-dispose', method: 'select', title: 'Active', options: ['Continue'], timeout: 5_000 })
+      transport.emit({ type: 'extension_ui_request', id: 'queued-on-dispose', method: 'input', title: 'Queued', timeout: 5_000 })
+
+      await controller.dispose()
+
+      expect(controller.getSnapshot().dialog).toBeUndefined()
+      expect(controller.getSnapshot().dialogQueue).toEqual([])
+      expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'active-on-dispose', cancelled: true })
+      expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'queued-on-dispose', cancelled: true })
+      expect(transport.events.size).toBe(0)
+      expect(transport.statuses.size).toBe(0)
+    } finally {
+      await controller.dispose()
+    }
+  })
 })
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip

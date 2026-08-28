@@ -12,7 +12,6 @@ import {
   errorMessage,
   isExtensionUiRequest,
   type ComposerImage,
-  type ExtensionUiRequest,
   type PiForkMessage,
   type PiMessage,
   type PiModel,
@@ -26,20 +25,11 @@ import {
   addNotice,
   applyRpcEvent,
   createInitialState,
-  type ExtensionDialog,
-  type ExtensionWidget,
   type WorkbenchState,
 } from './state.ts'
 import { createQueueState, moveQueuedInput, parseQueuedControl, type QueuedControl, type QueuedInput } from './queue.ts'
-import { currentTurnTracePosition } from './timeline.ts'
-import {
-  buildAskUserDialogActions,
-  dialogMatchesAskUserAction,
-  questionnaireFromTool,
-  questionnaireMatchesDialog,
-  type AskUserDialogAction,
-  type AskUserSubmissionAnswer,
-} from './ask-user.ts'
+import type { AskUserSubmissionAnswer } from './ask-user.ts'
+import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 
 const SESSION_PAGE_SIZE = 120
@@ -55,23 +45,17 @@ export interface WorkbenchControllerDependencies {
   transportOwnership?: 'controller' | 'provider'
 }
 
-interface AskUserDialogDriver {
-  toolCallId: string
-  actions: AskUserDialogAction[]
-}
-
 export class WorkbenchController {
   readonly #transport: AgentTransport
   readonly #sessionCatalog: SessionCatalogService
   readonly #workspaceDiff: WorkspaceDiffService
+  readonly #dialogs: WorkbenchDialogCoordinator
   readonly #stopTransportOnDispose: boolean
   readonly #listeners = new Set<() => void>()
   #state: WorkbenchState
   #started = false
   #connecting = false
   #refreshTimer: ReturnType<typeof setTimeout> | undefined
-  #dialogTimer: ReturnType<typeof setTimeout> | undefined
-  #askUserDialogDriver: AskUserDialogDriver | undefined
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
   #sessionTransitionDepth = 0
@@ -87,6 +71,12 @@ export class WorkbenchController {
     this.#workspaceDiff = dependencies.workspaceDiff
     this.#stopTransportOnDispose = dependencies.transportOwnership !== 'provider'
     this.#state = createInitialState(workspacePath)
+    this.#dialogs = new WorkbenchDialogCoordinator({
+      getState: () => this.#state,
+      patch: (patch) => this.#patch(patch),
+      setState: (update) => this.#setState(update),
+      send: (record) => this.#transport.send(record),
+    })
     const cachedSessions = this.#sessionCatalog.cached?.(workspacePath, this.#sessionLimit + 1) ?? []
     if (cachedSessions.length > 0) {
       this.#state = { ...this.#state, sessions: cachedSessions.slice(0, this.#sessionLimit), sessionsLoading: true, sessionsHasMore: cachedSessions.length > this.#sessionLimit }
@@ -263,7 +253,7 @@ export class WorkbenchController {
     if (this.#state.session.isStreaming) return
     this.#sessionTransitionDepth += 1
     try {
-      this.#cancelAllDialogs()
+      this.#dialogs.cancelAll()
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
       this.#historyPager = undefined
@@ -314,7 +304,7 @@ export class WorkbenchController {
     ) return
     this.#sessionTransitionDepth += 1
     try {
-      this.#cancelAllDialogs()
+      this.#dialogs.cancelAll()
       this.#patch({ activity: 'Opening thread' })
       const result = await this.#transport.request<{ cancelled?: boolean }>({
         type: 'switch_session',
@@ -528,56 +518,24 @@ export class WorkbenchController {
   }
 
   respondToDialog(response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void {
-    const dialog = this.#state.dialog
-    if (!dialog) return
-    this.#removeDialog(dialog.id)
-    this.#sendDialogResponse(dialog.id, response)
+    this.#dialogs.respond(response)
   }
 
   submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[]): void {
-    const tool = this.#state.liveTools.find((candidate) => candidate.id === toolCallId)
-    const questionnaire = tool ? questionnaireFromTool(tool) : undefined
-    const dialog = this.#state.dialog
-    if (!questionnaire || !dialog || !questionnaireMatchesDialog(questionnaire, dialog)) {
-      this.#setState((state) => addNotice(state, 'warning', 'The questionnaire is no longer awaiting this response'))
-      return
-    }
-    try {
-      this.#askUserDialogDriver = {
-        toolCallId,
-        actions: buildAskUserDialogActions(questionnaire, answers),
-      }
-      this.#patch({ questionnaireSubmitting: toolCallId, questionnaireCollapsed: undefined })
-      if (!this.#tryDriveAskUserDialog(dialog, true)) {
-        this.#askUserDialogDriver = undefined
-        this.#patch({ questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
-        this.#setState((state) => addNotice(state, 'error', 'The questionnaire dialog sequence did not match the active tool'))
-      }
-    } catch (error) {
-      this.#setState((state) => addNotice(state, 'warning', errorMessage(error)))
-    }
+    this.#dialogs.submitQuestionnaire(toolCallId, answers)
   }
 
   cancelAskUserQuestionnaire(toolCallId: string): void {
-    const tool = this.#state.liveTools.find((candidate) => candidate.id === toolCallId)
-    const questionnaire = tool ? questionnaireFromTool(tool) : undefined
-    if (!questionnaire || !questionnaireMatchesDialog(questionnaire, this.#state.dialog)) return
-    this.#askUserDialogDriver = undefined
-    this.#patch({ questionnaireSubmitting: toolCallId, questionnaireCollapsed: undefined })
-    this.respondToDialog({ cancelled: true })
+    this.#dialogs.cancelQuestionnaire(toolCallId)
   }
 
   setAskUserQuestionnaireCollapsed(toolCallId: string, collapsed: boolean): void {
-    const tool = this.#state.liveTools.find((candidate) => candidate.id === toolCallId)
-    const questionnaire = tool ? questionnaireFromTool(tool) : undefined
-    if (!questionnaire || !questionnaireMatchesDialog(questionnaire, this.#state.dialog)) return
-    this.#patch({ questionnaireCollapsed: collapsed ? toolCallId : undefined })
+    this.#dialogs.setQuestionnaireCollapsed(toolCallId, collapsed)
   }
 
   async dispose(): Promise<void> {
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
-    this.#cancelAllDialogs()
-    this.#clearDialogTimer()
+    this.#dialogs.dispose()
     this.#unsubscribeEvent()
     this.#unsubscribeStatus()
     if (this.#stopTransportOnDispose) await this.#transport.stop()
@@ -669,7 +627,7 @@ export class WorkbenchController {
         return true
       }
       if (control.kind === 'new') {
-        this.#cancelAllDialogs()
+        this.#dialogs.cancelAll()
         const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
         if (result.cancelled) return false
         this.#historyPager = undefined
@@ -845,16 +803,13 @@ export class WorkbenchController {
 
   #handleEvent(event: RpcRecord): void {
     if (isExtensionUiRequest(event)) {
-      this.#handleExtensionUi(event)
+      this.#dialogs.handleExtensionUi(event, this.#sessionTransitionDepth > 0)
       return
     }
     this.#setState((state) => applyRpcEvent(state, event))
     if (event.type === 'tool_execution_end') {
       const toolCallId = String(event.toolCallId ?? '')
-      if (this.#askUserDialogDriver?.toolCallId === toolCallId) this.#askUserDialogDriver = undefined
-      if (this.#state.questionnaireSubmitting === toolCallId || this.#state.questionnaireCollapsed === toolCallId) {
-        this.#patch({ questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
-      }
+      this.#dialogs.handleToolExecutionEnd(toolCallId)
     }
     const runOutcome = event.type === 'agent_end' && !event.willRetry ? agentEndOutcome(event) : 'unknown'
     if (runOutcome === 'failed') {
@@ -867,140 +822,6 @@ export class WorkbenchController {
       this.#scheduleRefresh(true)
       this.#drainQueue()
     }
-  }
-
-  #handleExtensionUi(request: ExtensionUiRequest): void {
-    if (this.#sessionTransitionDepth > 0) {
-      if (request.method === 'select' || request.method === 'confirm' || request.method === 'input' || request.method === 'editor') {
-        try {
-          this.#transport.send({ type: 'extension_ui_response', id: request.id, cancelled: true })
-        } catch {
-          // The abandoned session no longer owns visible UI; switching remains authoritative.
-        }
-      }
-      return
-    }
-    if (request.method === 'notify') {
-      this.#setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification', currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
-      return
-    }
-    if (request.method === 'setStatus') {
-      const key = request.statusKey ?? request.id
-      const statusItems = { ...this.#state.statusItems }
-      if (request.statusText) statusItems[key] = request.statusText
-      else delete statusItems[key]
-      this.#patch({ statusItems })
-      return
-    }
-    if (request.method === 'setWidget') {
-      const key = request.widgetKey ?? request.id
-      const widgets = { ...this.#state.widgets }
-      if (request.widgetLines) {
-        const widget: ExtensionWidget = {
-          key,
-          lines: request.widgetLines,
-          placement: request.widgetPlacement ?? 'aboveEditor',
-        }
-        widgets[key] = widget
-      } else {
-        delete widgets[key]
-      }
-      this.#patch({ widgets })
-      return
-    }
-    if (request.method === 'setTitle') {
-      this.#patch({ windowTitle: request.title ?? 'Heddlework' })
-      return
-    }
-    if (request.method === 'set_editor_text') {
-      this.#patch({ editorText: request.text ?? '' })
-      return
-    }
-
-    const createdAt = Date.now()
-    const dialog: ExtensionDialog = {
-      id: request.id,
-      method: request.method,
-      title: request.title ?? 'Pi needs your input',
-      createdAt,
-      ...(request.message === undefined ? {} : { message: request.message }),
-      ...(request.options === undefined ? {} : { options: request.options }),
-      ...(request.placeholder === undefined ? {} : { placeholder: request.placeholder }),
-      ...(request.prefill === undefined ? {} : { prefill: request.prefill }),
-      ...(request.timeout === undefined ? {} : { timeout: request.timeout, deadlineAt: createdAt + request.timeout }),
-    }
-    if (isSessionOnlyDialog(dialog) && !hasActiveConversation(this.#state)) {
-      this.#sendDialogResponse(dialog.id, { cancelled: true })
-      return
-    }
-    if (this.#tryDriveAskUserDialog(dialog, false)) return
-    this.#enqueueDialog(dialog)
-  }
-
-  #enqueueDialog(dialog: ExtensionDialog): void {
-    if (!this.#state.dialog) this.#patch({ dialog })
-    else this.#patch({ dialogQueue: [...this.#state.dialogQueue, dialog] })
-    this.#scheduleDialogTimer()
-  }
-
-  #tryDriveAskUserDialog(dialog: ExtensionDialog, stored: boolean): boolean {
-    const driver = this.#askUserDialogDriver
-    const action = driver?.actions[0]
-    if (!driver || !action || !dialogMatchesAskUserAction(dialog, action)) return false
-    let response: { value: string }
-    if (action.method === 'select') {
-      const value = dialog.options?.[action.optionIndex ?? -1]
-      if (value === undefined) return false
-      response = { value }
-    } else {
-      response = { value: action.value ?? '' }
-    }
-    driver.actions.shift()
-    if (driver.actions.length === 0) this.#askUserDialogDriver = undefined
-    if (stored) this.#removeDialog(dialog.id)
-    this.#sendDialogResponse(dialog.id, response)
-    return true
-  }
-
-  #sendDialogResponse(id: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void {
-    try {
-      this.#transport.send({ type: 'extension_ui_response', id, ...response })
-    } catch (error) {
-      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
-    }
-  }
-
-  #removeDialog(id: string): void {
-    const pending = [this.#state.dialog, ...this.#state.dialogQueue]
-      .filter((dialog): dialog is ExtensionDialog => dialog !== undefined && dialog.id !== id)
-    this.#patch({ dialog: pending[0], dialogQueue: pending.slice(1) })
-    this.#scheduleDialogTimer()
-  }
-
-  #cancelAllDialogs(): void {
-    const pending = [this.#state.dialog, ...this.#state.dialogQueue]
-      .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
-    this.#askUserDialogDriver = undefined
-    this.#patch({ dialog: undefined, dialogQueue: [], questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
-    this.#clearDialogTimer()
-    for (const dialog of pending) this.#sendDialogResponse(dialog.id, { cancelled: true })
-  }
-
-  #scheduleDialogTimer(): void {
-    this.#clearDialogTimer()
-    const deadlines = [this.#state.dialog, ...this.#state.dialogQueue]
-      .flatMap((dialog) => dialog?.deadlineAt === undefined ? [] : [dialog.deadlineAt])
-    const nextDeadline = deadlines.length > 0 ? Math.min(...deadlines) : undefined
-    if (nextDeadline === undefined) return
-    this.#dialogTimer = setTimeout(() => {
-      this.#dialogTimer = undefined
-      const now = Date.now()
-      const pending = [this.#state.dialog, ...this.#state.dialogQueue]
-        .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
-        .filter((dialog) => dialog.deadlineAt === undefined || now < dialog.deadlineAt + 50)
-      this.#patch({ dialog: pending[0], dialogQueue: pending.slice(1) })
-      this.#scheduleDialogTimer()
-    }, Math.max(0, nextDeadline + 50 - Date.now()))
   }
 
   #handleStatus(status: TransportStatus): void {
@@ -1018,11 +839,6 @@ export class WorkbenchController {
     }
   }
 
-  #clearDialogTimer(): void {
-    if (this.#dialogTimer) clearTimeout(this.#dialogTimer)
-    this.#dialogTimer = undefined
-  }
-
   #patch(patch: Partial<WorkbenchState>): void {
     this.#setState((state) => ({ ...state, ...patch }))
   }
@@ -1033,17 +849,6 @@ export class WorkbenchController {
     this.#state = next
     for (const listener of this.#listeners) listener()
   }
-}
-
-function hasActiveConversation(state: WorkbenchState): boolean {
-  return state.session.isStreaming
-    || state.liveAssistant !== undefined
-    || state.liveTools.length > 0
-    || state.messages.some((message) => message.role === 'user' || message.role === 'assistant')
-}
-
-function isSessionOnlyDialog(dialog: ExtensionDialog): boolean {
-  return dialog.title.includes('Extend billable human time?')
 }
 
 function slashCommandsFrom(value: unknown): RpcSlashCommand[] {
