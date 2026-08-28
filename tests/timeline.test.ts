@@ -56,10 +56,10 @@ describe('buildTimeline', () => {
   it('mirrors Pi by omitting hidden custom messages while retaining displayable ones', () => {
     const items = buildTimeline([
       { role: 'custom', customType: 'hidden-retry', content: 'Retry the previous request.', display: false, timestamp: 1 },
-      { role: 'custom', customType: 'visible-status', content: 'Visible extension context', display: true, timestamp: 2 },
+      { role: 'custom', customType: 'visible-status', content: [{ type: 'text', text: 'Visible extension context' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }], display: true, timestamp: 2 },
     ], undefined, [])
     expect(items).toHaveLength(1)
-    expect(items[0]).toMatchObject({ kind: 'context-injection', source: 'visible-status', text: 'Visible extension context' })
+    expect(items[0]).toMatchObject({ kind: 'context-injection', source: 'visible-status', text: 'Visible extension context', images: [{ data: 'aGVsbG8=', mimeType: 'image/png' }] })
   })
 
   it('matches persisted suffix turns by entry ID instead of catalog position', () => {

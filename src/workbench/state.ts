@@ -1,5 +1,5 @@
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
-import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, ThinkingLevel } from '../pi/types.ts'
+import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, RpcSlashCommand, ThinkingLevel } from '../pi/types.ts'
 import { createQueueState, type WorkbenchQueueState } from './queue.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
@@ -65,6 +65,8 @@ export interface ExtensionDialog {
   placeholder?: string
   prefill?: string
   timeout?: number
+  createdAt: number
+  deadlineAt?: number
 }
 
 export interface ExtensionWidget {
@@ -98,6 +100,10 @@ export interface WorkbenchState {
   statusItems: Record<string, string>
   widgets: Record<string, ExtensionWidget>
   dialog: ExtensionDialog | undefined
+  dialogQueue: ExtensionDialog[]
+  commands: RpcSlashCommand[]
+  questionnaireSubmitting: string | undefined
+  questionnaireCollapsed: string | undefined
   editorText: string
   editorImages: ComposerImage[]
   windowTitle: string
@@ -131,6 +137,10 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     statusItems: {},
     widgets: {},
     dialog: undefined,
+    dialogQueue: [],
+    commands: [],
+    questionnaireSubmitting: undefined,
+    questionnaireCollapsed: undefined,
     editorText: '',
     editorImages: [],
     windowTitle: 'Heddlework',

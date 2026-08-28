@@ -114,6 +114,10 @@ Submitting while an agent run is active stages the input in Heddlework's editabl
 
 Rows drain one at a time after healthy `agent_settled` boundaries. Abort pauses the remaining tail until **Resume** is selected. A terminal error also holds the tail, but a healthy retry or overflow-compaction recovery releases it automatically; otherwise it remains available for manual resume. Skills, prompt templates, and extension commands remain raw until Pi accepts them, while `/compact`, `/new`, `/model`, `/thinking`, and `/reload` are executed as explicit control rows. Image-bearing slash text remains a normal message so attachments are never discarded. The owned queue is currently transient and session-scoped; Pi-native steering and follow-up entries are mirrored as locked rows because RPC does not expose mutation operations for them.
 
+### Pi extension UI
+
+Extension interactions are hosted in the main conversation area rather than embedded in the composer. Heddlework queues concurrent requests, shows searchable described choices and timeout countdowns, renders extension statuses, discovers slash commands, and retains visible custom-message media. Known contracts add a full tabbed `ask_user_question` questionnaire and recursive `/fabric settings` navigation without moving execution or persistence authority out of Pi. See [Pi extension UI](docs/pi-extension-ui.md).
+
 ## Install later: product channels
 
 These channels describe the intended distribution path; they are **not available yet**.

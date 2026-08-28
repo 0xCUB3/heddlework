@@ -19,6 +19,7 @@ import {
   type PiSessionState,
   type PiSessionStats,
   type RpcRecord,
+  type RpcSlashCommand,
   type ThinkingLevel,
 } from '../pi/types.ts'
 import {
@@ -30,6 +31,14 @@ import {
   type WorkbenchState,
 } from './state.ts'
 import { createQueueState, moveQueuedInput, parseQueuedControl, type QueuedControl, type QueuedInput } from './queue.ts'
+import {
+  buildAskUserDialogActions,
+  dialogMatchesAskUserAction,
+  questionnaireFromTool,
+  questionnaireMatchesDialog,
+  type AskUserDialogAction,
+  type AskUserSubmissionAnswer,
+} from './ask-user.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 
 const SESSION_PAGE_SIZE = 120
@@ -45,6 +54,11 @@ export interface WorkbenchControllerDependencies {
   transportOwnership?: 'controller' | 'provider'
 }
 
+interface AskUserDialogDriver {
+  toolCallId: string
+  actions: AskUserDialogAction[]
+}
+
 export class WorkbenchController {
   readonly #transport: AgentTransport
   readonly #sessionCatalog: SessionCatalogService
@@ -56,6 +70,7 @@ export class WorkbenchController {
   #connecting = false
   #refreshTimer: ReturnType<typeof setTimeout> | undefined
   #dialogTimer: ReturnType<typeof setTimeout> | undefined
+  #askUserDialogDriver: AskUserDialogDriver | undefined
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
   #sessionTransitionDepth = 0
@@ -247,11 +262,28 @@ export class WorkbenchController {
     if (this.#state.session.isStreaming) return
     this.#sessionTransitionDepth += 1
     try {
-      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
+      this.#cancelAllDialogs()
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
       this.#historyPager = undefined
-      this.#patch({ messages: [], messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: [], liveAssistant: undefined, liveTools: [], editorText: '', editorImages: [], notices: [], dialog: undefined, queue: createQueueState() })
+      this.#patch({
+        messages: [],
+        messagesHasOlder: false,
+        messagesLoadingEarlier: false,
+        forkMessages: [],
+        liveAssistant: undefined,
+        liveTools: [],
+        editorText: '',
+        editorImages: [],
+        notices: [],
+        statusItems: {},
+        widgets: {},
+        dialog: undefined,
+        dialogQueue: [],
+        questionnaireSubmitting: undefined,
+        questionnaireCollapsed: undefined,
+        queue: createQueueState(),
+      })
       await this.#bootstrap(false)
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
@@ -281,7 +313,7 @@ export class WorkbenchController {
     ) return
     this.#sessionTransitionDepth += 1
     try {
-      if (this.#state.dialog) this.respondToDialog({ cancelled: true })
+      this.#cancelAllDialogs()
       this.#patch({ activity: 'Opening thread' })
       const result = await this.#transport.request<{ cancelled?: boolean }>({
         type: 'switch_session',
@@ -304,7 +336,12 @@ export class WorkbenchController {
         editorText: '',
         editorImages: [],
         notices: [],
+        statusItems: {},
+        widgets: {},
         dialog: undefined,
+        dialogQueue: [],
+        questionnaireSubmitting: undefined,
+        questionnaireCollapsed: undefined,
         queue: createQueueState(),
         workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
       })
@@ -492,17 +529,53 @@ export class WorkbenchController {
   respondToDialog(response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void {
     const dialog = this.#state.dialog
     if (!dialog) return
-    this.#clearDialogTimer()
-    this.#patch({ dialog: undefined })
-    try {
-      this.#transport.send({ type: 'extension_ui_response', id: dialog.id, ...response })
-    } catch (error) {
-      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    this.#removeDialog(dialog.id)
+    this.#sendDialogResponse(dialog.id, response)
+  }
+
+  submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[]): void {
+    const tool = this.#state.liveTools.find((candidate) => candidate.id === toolCallId)
+    const questionnaire = tool ? questionnaireFromTool(tool) : undefined
+    const dialog = this.#state.dialog
+    if (!questionnaire || !dialog || !questionnaireMatchesDialog(questionnaire, dialog)) {
+      this.#setState((state) => addNotice(state, 'warning', 'The questionnaire is no longer awaiting this response'))
+      return
     }
+    try {
+      this.#askUserDialogDriver = {
+        toolCallId,
+        actions: buildAskUserDialogActions(questionnaire, answers),
+      }
+      this.#patch({ questionnaireSubmitting: toolCallId, questionnaireCollapsed: undefined })
+      if (!this.#tryDriveAskUserDialog(dialog, true)) {
+        this.#askUserDialogDriver = undefined
+        this.#patch({ questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
+        this.#setState((state) => addNotice(state, 'error', 'The questionnaire dialog sequence did not match the active tool'))
+      }
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'warning', errorMessage(error)))
+    }
+  }
+
+  cancelAskUserQuestionnaire(toolCallId: string): void {
+    const tool = this.#state.liveTools.find((candidate) => candidate.id === toolCallId)
+    const questionnaire = tool ? questionnaireFromTool(tool) : undefined
+    if (!questionnaire || !questionnaireMatchesDialog(questionnaire, this.#state.dialog)) return
+    this.#askUserDialogDriver = undefined
+    this.#patch({ questionnaireSubmitting: toolCallId, questionnaireCollapsed: undefined })
+    this.respondToDialog({ cancelled: true })
+  }
+
+  setAskUserQuestionnaireCollapsed(toolCallId: string, collapsed: boolean): void {
+    const tool = this.#state.liveTools.find((candidate) => candidate.id === toolCallId)
+    const questionnaire = tool ? questionnaireFromTool(tool) : undefined
+    if (!questionnaire || !questionnaireMatchesDialog(questionnaire, this.#state.dialog)) return
+    this.#patch({ questionnaireCollapsed: collapsed ? toolCallId : undefined })
   }
 
   async dispose(): Promise<void> {
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
+    this.#cancelAllDialogs()
     this.#clearDialogTimer()
     this.#unsubscribeEvent()
     this.#unsubscribeStatus()
@@ -595,9 +668,9 @@ export class WorkbenchController {
         return true
       }
       if (control.kind === 'new') {
+        this.#cancelAllDialogs()
         const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
         if (result.cancelled) return false
-        if (this.#state.dialog) this.respondToDialog({ cancelled: true })
         this.#historyPager = undefined
         this.#patch({
           messages: [],
@@ -609,7 +682,12 @@ export class WorkbenchController {
           editorText: '',
           editorImages: [],
           notices: [],
+          statusItems: {},
+          widgets: {},
           dialog: undefined,
+          dialogQueue: [],
+          questionnaireSubmitting: undefined,
+          questionnaireCollapsed: undefined,
           queue: { ...this.#state.queue, steering: [], followUp: [] },
         })
         await this.#bootstrap(false)
@@ -681,8 +759,9 @@ export class WorkbenchController {
       this.#getThinkingLevels(),
       this.#transport.request<PiSessionStats>({ type: 'get_session_stats' }),
       this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
+      this.#transport.request<{ commands: RpcSlashCommand[] }>({ type: 'get_commands' }),
     ])
-    const [messagesResult, modelsResult, levelsResult, statsResult, forkMessagesResult] = tasks
+    const [messagesResult, modelsResult, levelsResult, statsResult, forkMessagesResult, commandsResult] = tasks
     if (messagesResult.status === 'fulfilled') this.#historyPager = messagesResult.value.pager
     this.#patch({
       messages: messagesResult.status === 'fulfilled' ? messagesResult.value.page.messages : this.#state.messages,
@@ -692,6 +771,7 @@ export class WorkbenchController {
       models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
       thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
       stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
+      commands: commandsResult.status === 'fulfilled' ? slashCommandsFrom(commandsResult.value) : this.#state.commands,
     })
     void this.refreshWorkspaceDiff()
     if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
@@ -768,6 +848,13 @@ export class WorkbenchController {
       return
     }
     this.#setState((state) => applyRpcEvent(state, event))
+    if (event.type === 'tool_execution_end') {
+      const toolCallId = String(event.toolCallId ?? '')
+      if (this.#askUserDialogDriver?.toolCallId === toolCallId) this.#askUserDialogDriver = undefined
+      if (this.#state.questionnaireSubmitting === toolCallId || this.#state.questionnaireCollapsed === toolCallId) {
+        this.#patch({ questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
+      }
+    }
     const runOutcome = event.type === 'agent_end' && !event.willRetry ? agentEndOutcome(event) : 'unknown'
     if (runOutcome === 'failed') {
       this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error' } })
@@ -829,23 +916,90 @@ export class WorkbenchController {
       return
     }
 
+    const createdAt = Date.now()
     const dialog: ExtensionDialog = {
       id: request.id,
       method: request.method,
       title: request.title ?? 'Pi needs your input',
+      createdAt,
       ...(request.message === undefined ? {} : { message: request.message }),
       ...(request.options === undefined ? {} : { options: request.options }),
       ...(request.placeholder === undefined ? {} : { placeholder: request.placeholder }),
       ...(request.prefill === undefined ? {} : { prefill: request.prefill }),
-      ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+      ...(request.timeout === undefined ? {} : { timeout: request.timeout, deadlineAt: createdAt + request.timeout }),
     }
-    this.#patch({ dialog })
+    if (isSessionOnlyDialog(dialog) && !hasActiveConversation(this.#state)) {
+      this.#sendDialogResponse(dialog.id, { cancelled: true })
+      return
+    }
+    if (this.#tryDriveAskUserDialog(dialog, false)) return
+    this.#enqueueDialog(dialog)
+  }
+
+  #enqueueDialog(dialog: ExtensionDialog): void {
+    if (!this.#state.dialog) this.#patch({ dialog })
+    else this.#patch({ dialogQueue: [...this.#state.dialogQueue, dialog] })
+    this.#scheduleDialogTimer()
+  }
+
+  #tryDriveAskUserDialog(dialog: ExtensionDialog, stored: boolean): boolean {
+    const driver = this.#askUserDialogDriver
+    const action = driver?.actions[0]
+    if (!driver || !action || !dialogMatchesAskUserAction(dialog, action)) return false
+    let response: { value: string }
+    if (action.method === 'select') {
+      const value = dialog.options?.[action.optionIndex ?? -1]
+      if (value === undefined) return false
+      response = { value }
+    } else {
+      response = { value: action.value ?? '' }
+    }
+    driver.actions.shift()
+    if (driver.actions.length === 0) this.#askUserDialogDriver = undefined
+    if (stored) this.#removeDialog(dialog.id)
+    this.#sendDialogResponse(dialog.id, response)
+    return true
+  }
+
+  #sendDialogResponse(id: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void {
+    try {
+      this.#transport.send({ type: 'extension_ui_response', id, ...response })
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
+  #removeDialog(id: string): void {
+    const pending = [this.#state.dialog, ...this.#state.dialogQueue]
+      .filter((dialog): dialog is ExtensionDialog => dialog !== undefined && dialog.id !== id)
+    this.#patch({ dialog: pending[0], dialogQueue: pending.slice(1) })
+    this.#scheduleDialogTimer()
+  }
+
+  #cancelAllDialogs(): void {
+    const pending = [this.#state.dialog, ...this.#state.dialogQueue]
+      .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
+    this.#askUserDialogDriver = undefined
+    this.#patch({ dialog: undefined, dialogQueue: [], questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
     this.#clearDialogTimer()
-    if (request.timeout) {
-      this.#dialogTimer = setTimeout(() => {
-        if (this.#state.dialog?.id === request.id) this.#patch({ dialog: undefined })
-      }, request.timeout + 50)
-    }
+    for (const dialog of pending) this.#sendDialogResponse(dialog.id, { cancelled: true })
+  }
+
+  #scheduleDialogTimer(): void {
+    this.#clearDialogTimer()
+    const deadlines = [this.#state.dialog, ...this.#state.dialogQueue]
+      .flatMap((dialog) => dialog?.deadlineAt === undefined ? [] : [dialog.deadlineAt])
+    const nextDeadline = deadlines.length > 0 ? Math.min(...deadlines) : undefined
+    if (nextDeadline === undefined) return
+    this.#dialogTimer = setTimeout(() => {
+      this.#dialogTimer = undefined
+      const now = Date.now()
+      const pending = [this.#state.dialog, ...this.#state.dialogQueue]
+        .filter((dialog): dialog is ExtensionDialog => dialog !== undefined)
+        .filter((dialog) => dialog.deadlineAt === undefined || now < dialog.deadlineAt + 50)
+      this.#patch({ dialog: pending[0], dialogQueue: pending.slice(1) })
+      this.#scheduleDialogTimer()
+    }, Math.max(0, nextDeadline + 50 - Date.now()))
   }
 
   #handleStatus(status: TransportStatus): void {
@@ -878,6 +1032,27 @@ export class WorkbenchController {
     this.#state = next
     for (const listener of this.#listeners) listener()
   }
+}
+
+function hasActiveConversation(state: WorkbenchState): boolean {
+  return state.session.isStreaming
+    || state.liveAssistant !== undefined
+    || state.liveTools.length > 0
+    || state.messages.some((message) => message.role === 'user' || message.role === 'assistant')
+}
+
+function isSessionOnlyDialog(dialog: ExtensionDialog): boolean {
+  return dialog.title.includes('Extend billable human time?')
+}
+
+function slashCommandsFrom(value: unknown): RpcSlashCommand[] {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { commands?: unknown }).commands)) return []
+  return (value as { commands: unknown[] }).commands.filter((command): command is RpcSlashCommand => {
+    if (!command || typeof command !== 'object') return false
+    const candidate = command as { name?: unknown; source?: unknown }
+    return typeof candidate.name === 'string'
+      && (candidate.source === 'extension' || candidate.source === 'prompt' || candidate.source === 'skill')
+  })
 }
 
 function messageEntryId(message: PiMessage): string | undefined {

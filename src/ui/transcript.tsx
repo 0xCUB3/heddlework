@@ -10,6 +10,7 @@ import { formatElapsedSeconds } from './duration.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { composerNotificationStackHeight } from './notifications.tsx'
+import { questionnaireWaitingDockReserveHeight } from './composer.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
 import {
@@ -243,6 +244,7 @@ export const Transcript = memo(function Transcript({
             historyHasOlder={state.messagesHasOlder}
             activity={state.activity}
             noticeCount={state.notices.length}
+            questionnaireCollapsed={state.questionnaireCollapsed !== undefined}
             queue={state.queue}
             expanded={row.kind === 'trace-header' ? expandedTraceIds.has(row.id) : expandedEntryIds.has(row.id)}
             onToggleTrace={toggleTrace}
@@ -267,6 +269,7 @@ export const Transcript = memo(function Transcript({
   && previous.state.session.sessionId === next.state.session.sessionId
   && previous.state.session.isStreaming === next.state.session.isStreaming
   && previous.state.notices.length === next.state.notices.length
+  && previous.state.questionnaireCollapsed === next.state.questionnaireCollapsed
   && previous.state.queue === next.state.queue)
 
 function ProjectedTranscriptRow({
@@ -276,6 +279,7 @@ function ProjectedTranscriptRow({
   historyHasOlder,
   activity,
   noticeCount,
+  questionnaireCollapsed,
   queue,
   expanded,
   onToggleTrace,
@@ -289,6 +293,7 @@ function ProjectedTranscriptRow({
   historyHasOlder: boolean
   activity: string
   noticeCount: number
+  questionnaireCollapsed: boolean
   queue: WorkbenchState['queue']
   expanded: boolean
   onToggleTrace(traceId: string): void
@@ -298,7 +303,7 @@ function ProjectedTranscriptRow({
 }) {
   if (row.kind === 'empty-conversation') return <EmptyConversation workspacePath={workspacePath} />
   if (row.kind === 'working') return <WorkingRow activity={activity} />
-  if (row.kind === 'composer-spacer') return <ComposerSpacer noticeCount={noticeCount} queue={queue} />
+  if (row.kind === 'composer-spacer') return <ComposerSpacer noticeCount={noticeCount} questionnaireCollapsed={questionnaireCollapsed} queue={queue} />
   if (row.kind === 'timeline-item') return <TimelineItemRow item={row.item} onRevert={onRevert} />
   if (row.kind === 'trace-header') {
     return (
@@ -416,7 +421,23 @@ function TraceReasoning({ item, expanded, onToggle }: { item: Extract<TimelineIt
 }
 
 function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<TimelineItem, { kind: 'context-injection' }>; expanded: boolean; onToggle(): void }) {
-  return <TraceDisclosure label="CONTEXT INJECTION" text={item.text} testId="trace-context-injection" expanded={expanded} onToggle={onToggle} />
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      <TraceDisclosure label="CONTEXT INJECTION" text={item.text || `${item.images.length} image${item.images.length === 1 ? '' : 's'}`} testId="trace-context-injection" expanded={expanded} onToggle={onToggle} />
+      {expanded && item.source && <text style={{ color: colors.textFaint, fontSize: 9 }}>{`Source: ${item.source}`}</text>}
+      {expanded && item.images.length > 0 && (
+        <div testId="context-injection-images" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {item.images.map((image, index) => React.createElement('img', {
+            key: `${item.id}-image-${index}`,
+            src: image.previewPath ?? `data:${image.mimeType};base64,${image.data}`,
+            alt: `${item.source ?? 'Extension'} image ${index + 1}`,
+            objectFit: 'contain',
+            style: { maxWidth: 320, maxHeight: 220, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background },
+          } as never))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function TraceDisclosure({ label, text, testId, streaming = false, expanded, onToggle }: { label: string; text: string; testId: string; streaming?: boolean; expanded: boolean; onToggle(): void }) {
@@ -756,8 +777,8 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   )
 }
 
-function ComposerSpacer({ noticeCount, queue }: { noticeCount: number; queue: WorkbenchState['queue'] }) {
-  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) + queueDockReserveHeight(queue) }} />
+function ComposerSpacer({ noticeCount, questionnaireCollapsed, queue }: { noticeCount: number; questionnaireCollapsed: boolean; queue: WorkbenchState['queue'] }) {
+  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) }} />
 }
 
 function Timestamp({ value }: { value: number }) {

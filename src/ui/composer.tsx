@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react'
-import type { ComposerImage, PiModel, PiSessionStats, ThinkingLevel } from '../pi/types.ts'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import type { ComposerImage, PiModel, PiSessionStats, RpcSlashCommand, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
-import type { ExtensionDialog, ExtensionWidget, WorkbenchState } from '../workbench/state.ts'
+import { questionnaireFromTool, type AskUserQuestionnaire } from '../workbench/ask-user.ts'
+import type { ExtensionWidget, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
@@ -9,6 +10,16 @@ import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media
 import { ComposerNotificationStack } from './notifications.tsx'
 import { MotionDiv } from './motion.ts'
 import { QueueDock } from './queue-dock.tsx'
+import { plainExtensionText } from './extension-ui.ts'
+
+const EXTENSION_SURFACE_GAP = 6
+const EXTENSION_SURFACE_STAGGER_SECONDS = 0.035
+const QUESTIONNAIRE_WAITING_DOCK_HEIGHT = 44
+const QUESTIONNAIRE_WAITING_DOCK_MARGIN = 9
+
+export function questionnaireWaitingDockReserveHeight(visible: boolean): number {
+  return visible ? QUESTIONNAIRE_WAITING_DOCK_HEIGHT + QUESTIONNAIRE_WAITING_DOCK_MARGIN : 0
+}
 
 export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
   const [pastingImage, setPastingImage] = useState(false)
@@ -16,6 +27,16 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const contextPopoverExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queuedByKeyDown = useRef(false)
+  const commandPickedByKeyDown = useRef(false)
+  const commandQuery = composerCommandQuery(state.editorText)
+  const matchingCommands = useMemo(() => commandQuery === undefined ? [] : matchCommands(state.commands, commandQuery).slice(0, 8), [commandQuery, state.commands])
+  const [activeCommandIndex, setActiveCommandIndex] = useState(0)
+  const collapsedQuestionnaire = useMemo(() => state.questionnaireCollapsed === undefined
+    ? undefined
+    : state.liveTools
+      .map(questionnaireFromTool)
+      .find((questionnaire) => questionnaire?.toolCallId === state.questionnaireCollapsed), [state.liveTools, state.questionnaireCollapsed])
+  useEffect(() => setActiveCommandIndex(0), [commandQuery])
   useEffect(() => () => {
     if (contextPopoverExitTimer.current) clearTimeout(contextPopoverExitTimer.current)
   }, [])
@@ -68,9 +89,28 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
     }
   }
 
+  const chooseCommand = (command: RpcSlashCommand) => controller.setEditorText(`/${command.name} `)
   const handleComposerKeyDown = (event: { key?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean } }) => {
-    if (event.key?.toLowerCase() === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
-    if (event.key?.toLowerCase() === 'enter' && event.modifiers?.alt) {
+    const key = event.key?.toLowerCase()
+    if (matchingCommands.length > 0 && commandQuery !== undefined) {
+      if (key === 'down' || key === 'arrowdown') {
+        setActiveCommandIndex((index) => (index + 1) % matchingCommands.length)
+        return
+      }
+      if (key === 'up' || key === 'arrowup') {
+        setActiveCommandIndex((index) => (index - 1 + matchingCommands.length) % matchingCommands.length)
+        return
+      }
+      const command = matchingCommands[Math.min(activeCommandIndex, matchingCommands.length - 1)]
+      if (command && (key === 'tab' || ((key === 'enter' || key === 'return') && commandQuery !== command.name))) {
+        commandPickedByKeyDown.current = true
+        chooseCommand(command)
+        queueMicrotask(() => { commandPickedByKeyDown.current = false })
+        return
+      }
+    }
+    if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
+    if (key === 'enter' && event.modifiers?.alt) {
       queuedByKeyDown.current = true
       send(state.editorText, true)
       queueMicrotask(() => { queuedByKeyDown.current = false })
@@ -94,8 +134,9 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
       }}
     >
       <ComposerNotificationStack notices={state.notices} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => controller.clearNotices()} />
-      {state.dialog && <ExtensionDialogPanel key={state.dialog.id} dialog={state.dialog} controller={controller} />}
-      {above.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
+      {collapsedQuestionnaire && <QuestionnaireWaitingDock questionnaire={collapsedQuestionnaire} controller={controller} />}
+      {matchingCommands.length > 0 && <CommandPalette commands={matchingCommands} activeIndex={Math.min(activeCommandIndex, matchingCommands.length - 1)} onChoose={chooseCommand} />}
+      <ExtensionSurfaceRail above={above} below={below} statuses={state.statusItems} />
       <QueueDock state={state} controller={controller} />
 
       <div style={{ position: 'relative', width: '100%', maxWidth: 768, paddingBottom: 32, overflow: 'visible' }}>
@@ -142,6 +183,10 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
           onChange={(event) => controller.setEditorText(String(event.value ?? ''))}
           onKeyDown={handleComposerKeyDown}
           onSubmit={(event) => {
+            if (commandPickedByKeyDown.current) {
+              commandPickedByKeyDown.current = false
+              return
+            }
             if (queuedByKeyDown.current) {
               queuedByKeyDown.current = false
               return
@@ -191,7 +236,6 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
       )}
       </div>
 
-      {below.map((widget) => <ExtensionWidgetPanel key={widget.key} widget={widget} />)}
     </div>
   )
 }
@@ -336,60 +380,103 @@ function PrimaryAction({ running, disabled, onSend, onStop }: { running: boolean
   )
 }
 
-function ExtensionWidgetPanel({ widget }: { widget: ExtensionWidget }) {
+function QuestionnaireWaitingDock({ questionnaire, controller }: { questionnaire: AskUserQuestionnaire; controller: WorkbenchController }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, gap: 3, padding: 9, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}>
-      {widget.lines.map((line, index) => <WidgetLine key={`${widget.key}-${index}`} line={line} />)}
+    <div testId="ask-user-collapsed" style={{ width: '100%', maxWidth: 768, minHeight: QUESTIONNAIRE_WAITING_DOCK_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: QUESTIONNAIRE_WAITING_DOCK_MARGIN, paddingLeft: 11, paddingRight: 8, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}>
+      <div style={{ width: 6, height: 6, flexShrink: 0, borderRadius: 3, backgroundColor: colors.warning }} />
+      <text style={{ minWidth: 0, color: colors.text, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>Agent waiting for your answers</text>
+      <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{`${questionnaire.questions.length} question${questionnaire.questions.length === 1 ? '' : 's'}`}</text>
+      <div style={{ flexGrow: 1 }} />
+      <DockAction testId="ask-user-reopen" label="Open" tone="accent" onClick={() => controller.setAskUserQuestionnaireCollapsed(questionnaire.toolCallId, false)} />
+      <DockAction label="Dismiss" onClick={() => controller.cancelAskUserQuestionnaire(questionnaire.toolCallId)} />
     </div>
+  )
+}
+
+function DockAction({ label, testId, tone = 'muted', onClick }: { label: string; testId?: string; tone?: 'accent' | 'muted'; onClick(): void }) {
+  return (
+    <div {...(testId ? { testId } : {})} tabIndex={0} style={{ height: 28, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
+      <text style={{ color: tone === 'accent' ? colors.info : colors.textMuted, fontSize: 10, fontWeight: 600 }}>{label}</text>
+    </div>
+  )
+}
+
+function CommandPalette({ commands, activeIndex, onChoose }: { commands: RpcSlashCommand[]; activeIndex: number; onChoose(command: RpcSlashCommand): void }) {
+  return (
+    <div testId="command-palette" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, maxHeight: 300, gap: 3, marginBottom: EXTENSION_SURFACE_GAP, padding: 6, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll' }}>
+      {commands.map((command, index) => (
+        <div key={`${command.source}-${command.name}`} testId={`command-option-${command.name}`} tabIndex={0} style={{ minHeight: 38, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: index === activeIndex ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onChoose(command)} onKeyDown={(event) => { if (event.key === 'enter') onChoose(command) }}>
+          <text style={{ color: index === activeIndex ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650, fontFamily: nativeTheme.fontMono }}>{`/${command.name}`}</text>
+          {command.description && <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{command.description}</text>}
+          <text style={{ color: colors.textFaint, fontSize: 8 }}>{command.source.toUpperCase()}</text>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ExtensionSurfaceRail({ above, below, statuses }: { above: ExtensionWidget[]; below: ExtensionWidget[]; statuses: Record<string, string> }) {
+  const statusEntries = Object.entries(statuses)
+    .map(([key, value]) => [plainExtensionText(key), plainExtensionText(value)] as const)
+    .filter(([, value]) => value.trim().length > 0)
+  if (above.length + below.length + statusEntries.length === 0) return null
+
+  return (
+    <div testId="extension-surface-rail" style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', width: '100%', maxWidth: 768, gap: 5, paddingBottom: EXTENSION_SURFACE_GAP, overflowX: 'scroll', overflowY: 'hidden' }}>
+      {above.map((widget, index) => <ExtensionWidgetItem key={`above-${widget.key}`} widget={widget} placement="above" order={index} />)}
+      {below.map((widget, index) => <ExtensionWidgetItem key={`below-${widget.key}`} widget={widget} placement="below" order={above.length + index} />)}
+      {statusEntries.map(([key, value], index) => (
+        <MotionDiv
+          key={key}
+          testId={`extension-status-${key}`}
+          initial={{ opacity: 0, top: 4 }}
+          animate={{ opacity: 1, top: 0 }}
+          transition={{ duration: 0.16, delay: (above.length + below.length + index) * EXTENSION_SURFACE_STAGGER_SECONDS, ease: 'easeOut' }}
+          style={{ position: 'relative', maxWidth: 360, minHeight: 29, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, paddingRight: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}
+        >
+          <text style={{ color: colors.info, fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap' }}>{key}</text>
+          <text style={{ minWidth: 0, color: colors.textMuted, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{value}</text>
+        </MotionDiv>
+      ))}
+    </div>
+  )
+}
+
+function ExtensionWidgetItem({ widget, placement, order }: { widget: ExtensionWidget; placement: 'above' | 'below'; order: number }) {
+  return (
+    <MotionDiv
+      testId={`extension-widget-${placement}-${widget.key}`}
+      initial={{ opacity: 0, top: 4 }}
+      animate={{ opacity: 1, top: 0 }}
+      transition={{ duration: 0.16, delay: order * EXTENSION_SURFACE_STAGGER_SECONDS, ease: 'easeOut' }}
+      style={{ position: 'relative', minWidth: 180, maxWidth: 420, minHeight: 29, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3, paddingTop: 6, paddingRight: 9, paddingBottom: 6, paddingLeft: 9, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}
+    >
+      {widget.lines.map((line, index) => <WidgetLine key={`${widget.key}-${index}`} line={line} />)}
+    </MotionDiv>
   )
 }
 
 function WidgetLine({ line }: { line: string }) {
-  return <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 16 }}>{line}</text>
+  return <text style={{ color: colors.textMuted, fontSize: 10, lineHeight: 15, whiteSpace: 'normal' }}>{plainExtensionText(line)}</text>
 }
 
-function ExtensionDialogPanel({ dialog, controller }: { dialog: ExtensionDialog; controller: WorkbenchController }) {
-  const [value, setValue] = useState(dialog.prefill ?? '')
-  return (
-    <div testId="extension-dialog" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, minWidth: 0, gap: 9, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.warning, backgroundColor: '#211D14', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', minWidth: 0, gap: 8 }}>
-        <text style={{ color: colors.warning, fontSize: 10, fontWeight: 700, flexShrink: 0 }}>PI EXTENSION</text>
-        <text testId="extension-dialog-title" style={{ color: colors.text, fontSize: 12, fontWeight: 600, lineHeight: 17, minWidth: 0, flexGrow: 1, whiteSpace: 'normal' }}>{dialog.title}</text>
-      </div>
-      {dialog.message && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, minWidth: 0, width: '100%', whiteSpace: 'normal' }}>{dialog.message}</text>}
-      {dialog.method === 'select' && (
-        <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-          {(dialog.options ?? []).map((option) => <Button key={option} label={option} onClick={() => controller.respondToDialog({ value: option })} />)}
-          <Button label="Cancel" tone="quiet" onClick={() => controller.respondToDialog({ cancelled: true })} />
-        </div>
-      )}
-      {dialog.method === 'confirm' && (
-        <div style={{ display: 'flex', flexDirection: 'row', gap: 6 }}>
-          <Button label="Confirm" tone="primary" onClick={() => controller.respondToDialog({ confirmed: true })} />
-          <Button label="Decline" onClick={() => controller.respondToDialog({ confirmed: false })} />
-        </div>
-      )}
-      {(dialog.method === 'input' || dialog.method === 'editor') && (
-        <>
-          <textarea
-            value={value}
-            placeholder={dialog.placeholder ?? ''}
-            minRows={dialog.method === 'editor' ? 4 : 1}
-            maxRows={dialog.method === 'editor' ? 10 : 3}
-            autoFocus
-            theme={nativeTheme}
-            style={{ width: '100%', minWidth: 0, padding: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 12, lineHeight: 18 }}
-            onChange={(event) => setValue(String(event.value ?? ''))}
-            onSubmit={() => controller.respondToDialog({ value })}
-          />
-          <div style={{ display: 'flex', flexDirection: 'row', gap: 6 }}>
-            <Button label="Submit" tone="primary" onClick={() => controller.respondToDialog({ value })} />
-            <Button label="Cancel" tone="quiet" onClick={() => controller.respondToDialog({ cancelled: true })} />
-          </div>
-        </>
-      )}
-    </div>
-  )
+function composerCommandQuery(value: string): string | undefined {
+  const match = /^\/([^\s]*)$/.exec(value)
+  return match?.[1]?.toLowerCase()
+}
+
+function matchCommands(commands: readonly RpcSlashCommand[], query: string): RpcSlashCommand[] {
+  const normalized = query.toLowerCase()
+  return commands
+    .map((command, index) => {
+      const name = command.name.toLowerCase()
+      const description = command.description?.toLowerCase() ?? ''
+      const score = name === normalized ? 0 : name.startsWith(normalized) ? 1 : name.includes(normalized) ? 2 : description.includes(normalized) ? 3 : 4
+      return { command, index, score }
+    })
+    .filter(({ score }) => normalized.length === 0 || score < 4)
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .map(({ command }) => command)
 }
 
 function modelKey(model: PiModel): string {

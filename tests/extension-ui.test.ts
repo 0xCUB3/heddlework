@@ -6,12 +6,15 @@ import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
-import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
+import type { PiMessage, RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
+import { colors } from '../src/ui/theme.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 class ManualTransport implements AgentTransport {
+  constructor(readonly initialMessages: PiMessage[] = []) {}
+
   readonly events = new Set<(event: RpcRecord) => void>()
   readonly statuses = new Set<(status: TransportStatus) => void>()
   readonly sent: RpcRecord[] = []
@@ -26,11 +29,12 @@ class ManualTransport implements AgentTransport {
 
   async request<T = unknown>(command: RpcCommand): Promise<T> {
     if (command.type === 'get_state') return { model: null, thinkingLevel: 'off', isStreaming: false } as T
-    if (command.type === 'get_messages') return { messages: [] } as T
+    if (command.type === 'get_messages') return { messages: this.initialMessages } as T
     if (command.type === 'get_available_models') return { models: [] } as T
     if (command.type === 'get_available_thinking_levels') return { levels: ['off'] } as T
     if (command.type === 'get_session_stats') return { totalMessages: 0 } as T
     if (command.type === 'get_fork_messages') return { messages: [] } as T
+    if (command.type === 'get_commands') return { commands: [{ name: 'ledger', description: 'Show ledger', source: 'extension', sourceInfo: {} }] } as T
     if (command.type === 'new_session') return { cancelled: false } as T
     return undefined as T
   }
@@ -94,6 +98,7 @@ describe('Pi extension UI projection', () => {
       expect(state.widgets.todo?.lines).toEqual(['One remaining task'])
       expect(state.windowTitle).toBe('Pi · test session')
       expect(state.editorText).toBe('prefilled prompt')
+      expect(state.commands).toEqual([{ name: 'ledger', description: 'Show ledger', source: 'extension', sourceInfo: {} }])
       expect(state.dialog).toMatchObject({ id: 'select-1', method: 'select', options: ['Allow', 'Block'] })
 
       controller.respondToDialog({ value: 'Allow' })
@@ -105,7 +110,104 @@ describe('Pi extension UI projection', () => {
     }
   })
 
-  it('cancels an active dialog when a new session begins', async () => {
+  it('dismisses ledger engagement prompts outside an active conversation', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({
+        type: 'extension_ui_request',
+        id: 'draft-ledger',
+        method: 'select',
+        title: '⏱ Extend billable human time? Idle after the agent. Add a 20m pomodoro block?',
+        options: ['Extend +20m', 'Stop billing'],
+      })
+      expect(controller.getSnapshot().dialog).toBeUndefined()
+      expect(transport.sent.at(-1)).toEqual({ type: 'extension_ui_response', id: 'draft-ledger', cancelled: true })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('queues concurrent dialogs and promotes the next response target', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({ type: 'extension_ui_request', id: 'first', method: 'select', title: 'First', options: ['One'] })
+      transport.emit({ type: 'extension_ui_request', id: 'second', method: 'input', title: 'Second' })
+
+      expect(controller.getSnapshot().dialog?.id).toBe('first')
+      expect(controller.getSnapshot().dialogQueue.map((dialog) => dialog.id)).toEqual(['second'])
+      controller.respondToDialog({ value: 'One' })
+      expect(controller.getSnapshot().dialog?.id).toBe('second')
+      expect(controller.getSnapshot().dialogQueue).toEqual([])
+      controller.respondToDialog({ value: 'two' })
+      expect(transport.sent.slice(-2)).toEqual([
+        { type: 'extension_ui_response', id: 'first', value: 'One' },
+        { type: 'extension_ui_response', id: 'second', value: 'two' },
+      ])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('expires queued dialogs independently', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({ type: 'extension_ui_request', id: 'lasting', method: 'select', title: 'Lasting', options: ['Keep'] })
+      transport.emit({ type: 'extension_ui_request', id: 'expiring', method: 'select', title: 'Expiring', options: ['Drop'], timeout: 5 })
+      await Bun.sleep(70)
+      expect(controller.getSnapshot().dialog?.id).toBe('lasting')
+      expect(controller.getSnapshot().dialogQueue).toEqual([])
+      expect(transport.sent.some((record) => record.id === 'expiring')).toBe(false)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('drives a complete ask-user fallback from one native submission', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({
+        type: 'tool_execution_start',
+        toolCallId: 'ask-1',
+        toolName: 'ask_user_question',
+        args: { questions: [
+          { question: 'Which runtime?', header: 'Runtime', options: [{ label: 'Bun', description: 'Fast' }, { label: 'Node', description: 'Compatible' }] },
+          { question: 'Which checks?', header: 'Checks', multiSelect: true, options: [{ label: 'Types', description: 'Typecheck' }, { label: 'Tests', description: 'Tests' }, { label: 'Build', description: 'Build' }] },
+        ] },
+      })
+      transport.emit({ type: 'extension_ui_request', id: 'ask-select', method: 'select', title: '[Runtime] Which runtime?', options: ['1. Bun — Fast', '2. Node — Compatible', '3. Type something.'] })
+
+      controller.setAskUserQuestionnaireCollapsed('ask-1', true)
+      expect(controller.getSnapshot().questionnaireCollapsed).toBe('ask-1')
+
+      controller.submitAskUserQuestionnaire('ask-1', [
+        { kind: 'option', optionIndex: 1 },
+        { kind: 'multi', optionIndices: [0, 2] },
+      ])
+      expect(transport.sent.at(-1)).toEqual({ type: 'extension_ui_response', id: 'ask-select', value: '2. Node — Compatible' })
+      expect(controller.getSnapshot().dialog).toBeUndefined()
+      expect(controller.getSnapshot().questionnaireSubmitting).toBe('ask-1')
+      expect(controller.getSnapshot().questionnaireCollapsed).toBeUndefined()
+
+      transport.emit({ type: 'extension_ui_request', id: 'ask-input', method: 'input', title: '[Checks] Which checks?' })
+      expect(transport.sent.at(-1)).toEqual({ type: 'extension_ui_response', id: 'ask-input', value: '1,3' })
+      expect(controller.getSnapshot().dialog).toBeUndefined()
+
+      transport.emit({ type: 'tool_execution_end', toolCallId: 'ask-1', toolName: 'ask_user_question', result: { content: [], details: { answers: [], cancelled: false } } })
+      expect(controller.getSnapshot().questionnaireSubmitting).toBeUndefined()
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('cancels active and queued dialogs when a new session begins', async () => {
     const transport = new ManualTransport()
     const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     try {
@@ -117,13 +219,16 @@ describe('Pi extension UI projection', () => {
         title: 'Old session action',
         options: ['Continue'],
       })
+      transport.emit({ type: 'extension_ui_request', id: 'queued-dialog', method: 'input', title: 'Also stale' })
       transport.emit({ type: 'extension_ui_request', id: 'old-notice', method: 'notify', message: 'Old session notice' })
       expect(controller.getSnapshot().dialog?.id).toBe('stale-dialog')
       expect(controller.getSnapshot().notices).toHaveLength(1)
+      expect(controller.getSnapshot().dialogQueue).toHaveLength(1)
 
       const creatingSession = controller.newSession()
       expect(controller.getSnapshot().dialog).toBeUndefined()
       expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'stale-dialog', cancelled: true })
+      expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'queued-dialog', cancelled: true })
       await creatingSession
 
       expect(controller.getSnapshot().dialog).toBeUndefined()
@@ -136,9 +241,12 @@ describe('Pi extension UI projection', () => {
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
-describeNative('Pi extension dialog layout', () => {
-  it('wraps a long title inside the composer panel', async () => {
-    const transport = new ManualTransport()
+describeNative('Pi extension conversation overlay', () => {
+  it('wraps a long title inside the main conversation area', async () => {
+    const transport = new ManualTransport([
+      { role: 'user', content: 'Review the active session.' },
+      { role: 'assistant', content: 'The session is ready.' },
+    ])
     const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     const root = createTestRoot()
     root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
@@ -156,9 +264,20 @@ describeNative('Pi extension dialog layout', () => {
       root.renderer.flush()
 
       const panelBounds = await automation.getByTestId('extension-dialog').bounds()
+      const markerBounds = await automation.getByTestId('extension-dialog-marker').bounds()
       const titleBounds = await automation.getByTestId('extension-dialog-title').bounds()
       expect(titleBounds.x + titleBounds.width).toBeLessThanOrEqual(panelBounds.x + panelBounds.width - 12)
       expect(titleBounds.height).toBeGreaterThan(17)
+      expect(titleBounds.x - (markerBounds.x + markerBounds.width)).toBeLessThanOrEqual(12)
+      const firstOptionStyle = root.renderer.findByTestId('extension-dialog-option-0')?.style
+      const secondOptionStyle = root.renderer.findByTestId('extension-dialog-option-1')?.style
+      expect(firstOptionStyle?.borderBottomWidth).toBe(0)
+      expect(secondOptionStyle?.borderBottomWidth).toBe(0)
+      expect(firstOptionStyle?.borderRadius).toBe(8)
+      expect((firstOptionStyle?.hover as { backgroundColor?: string } | undefined)?.backgroundColor).toBe(colors.sidebarHover)
+      await automation.getByTestId('extension-dialog-option-0').hover()
+      await Bun.sleep(20)
+      root.renderer.flush()
 
       if (process.platform === 'darwin') {
         const screenshotDirectory = resolve(import.meta.dir, '../screenshots')

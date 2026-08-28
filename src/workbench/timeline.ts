@@ -9,7 +9,7 @@ export type TimelineItem =
   | ({ id: string; kind: 'user'; text: string; images: PiImageContent[]; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'assistant'; text: string; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'thinking'; text: string; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
-  | ({ id: string; kind: 'context-injection'; text: string; source?: string | undefined; timestamp?: number | undefined } & RevertibleItem)
+  | ({ id: string; kind: 'context-injection'; text: string; images: PiImageContent[]; source?: string | undefined; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'tool'; tool: ToolRun; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'status'; text: string; tone?: 'normal' | 'error'; timestamp?: number | undefined } & RevertibleItem)
 
@@ -33,7 +33,8 @@ export function buildTimeline(
     const base = entryId ? `entry-${entryId}` : `${message.timestamp ?? messageIndex}-${messageIndex}`
     if (message.role === 'custom') {
       const text = messageText(message)
-      if (text) items.push({ id: `${base}-context`, kind: 'context-injection', text, ...(message.customType ? { source: message.customType } : {}), timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
+      const images = messageImages(message)
+      if (text || images.length > 0) items.push({ id: `${base}-context`, kind: 'context-injection', text, images, ...(message.customType ? { source: message.customType } : {}), timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
       return
     }
     if (message.role === 'user') {

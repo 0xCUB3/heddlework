@@ -3,6 +3,7 @@ import { useGpuixRequired } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
+import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
 import { DraftWorkspaceChooser } from './workspace-chooser.tsx'
 import { NotificationLedgerView } from './notifications.tsx'
 import { SettingsView } from './settings-view.tsx'
@@ -177,7 +178,7 @@ export function WorkbenchApp({
             <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background }}>
               <div style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: 1 - fullscreenProgress, minWidth: 0, height: '100%', overflow: 'hidden' }}>
                 <ChatHeader state={state} controller={controller} diffOpen={diffOpen} leftSidebarProgress={animatedSidebarProgress} onToggleDiff={toggleDiff} />
-                <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
+                <div testId="conversation-body" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
                   {draft ? (
                     <DraftWorkspaceChooser state={state} controller={controller} />
                   ) : (
@@ -187,6 +188,7 @@ export function WorkbenchApp({
                       <Composer state={state} controller={controller} />
                     </>
                   )}
+                  <ConversationExtensionOverlay state={state} controller={controller} />
                 </div>
               </div>
               {panel && (

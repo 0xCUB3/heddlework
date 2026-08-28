@@ -87,6 +87,13 @@ export interface PiMessage {
   [key: string]: unknown
 }
 
+export interface RpcSlashCommand {
+  name: string
+  description?: string
+  source: 'extension' | 'prompt' | 'skill'
+  sourceInfo?: Record<string, unknown>
+}
+
 export interface RpcCommand {
   type: string
   [key: string]: unknown
