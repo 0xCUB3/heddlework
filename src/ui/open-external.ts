@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 
 export interface DirectoryPickerCommand {
@@ -40,12 +41,37 @@ export function directoryPickerCommand(platform: NodeJS.Platform = process.platf
   return { command: 'zenity', args: ['--file-selection', '--directory', '--title=Open project in Heddlework'] }
 }
 
-export async function pickWorkspaceDirectory(): Promise<string | undefined> {
-  const picker = directoryPickerCommand()
-  if (!picker) return undefined
-  const selected = await captureProcessOutput(picker.command, picker.args)
-  const path = selected?.trim()
-  return path ? resolve(path) : undefined
+export interface WorkspaceDirectoryPick {
+  path?: string
+  error?: string
+}
+
+export function directoryPickerCommands(platform: NodeJS.Platform = process.platform): DirectoryPickerCommand[] {
+  const primary = directoryPickerCommand(platform)
+  if (!primary) return []
+  if (platform === 'darwin' || platform === 'win32') return [primary]
+  const fallbacks = [
+    {
+      command: 'kdialog',
+      args: ['--getexistingdirectory', homedir(), '--title', 'Open project in Heddlework'],
+    },
+  ]
+  return [primary, ...fallbacks]
+}
+
+export async function pickWorkspaceDirectory(): Promise<WorkspaceDirectoryPick> {
+  const pickers = directoryPickerCommands()
+  if (pickers.length === 0) return { error: 'No folder picker is available on this system' }
+  const failures: string[] = []
+  for (const picker of pickers) {
+    const selected = await captureProcessOutput(picker.command, picker.args)
+    if (selected !== undefined) {
+      const path = selected.trim()
+      return path ? { path: resolve(path) } : {}
+    }
+    failures.push(picker.command)
+  }
+  return { error: `Could not open a folder picker (${failures.join(', ')} not available)` }
 }
 
 function openSystemTarget(target: string): void {

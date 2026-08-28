@@ -25,6 +25,7 @@ import {
   addNotice,
   applyRpcEvent,
   createInitialState,
+  type NoticeKind,
   type WorkbenchState,
 } from './state.ts'
 import { createQueueState, moveQueuedInput, parseQueuedControl, type QueuedControl, type QueuedInput } from './queue.ts'
@@ -33,6 +34,9 @@ import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 
 const SESSION_PAGE_SIZE = 120
+const RECONNECT_BASE_DELAY_MS = 1_000
+const RECONNECT_MAX_DELAY_MS = 15_000
+const MAX_RECONNECT_ATTEMPTS = 10
 const HISTORY_NAVIGATION_LOAD_OPTIONS = {
   minimumConversationMessages: SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES,
   maximumMessages: SESSION_HISTORY_PAGE_MAX_MESSAGES,
@@ -56,6 +60,9 @@ export class WorkbenchController {
   #started = false
   #connecting = false
   #refreshTimer: ReturnType<typeof setTimeout> | undefined
+  #reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  #reconnectAttempts = 0
+  #disposed = false
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
   #sessionTransitionDepth = 0
@@ -121,8 +128,13 @@ export class WorkbenchController {
   readonly acceptAgentEvent = (event: RpcRecord): void => this.#handleEvent(event)
   readonly acceptAgentStatus = (status: TransportStatus): void => this.#handleStatus(status)
 
+    notify(kind: NoticeKind, message: string): void {
+    this.#setState((state) => addNotice(state, kind, message))
+  }
+
   async start(): Promise<void> {
     if (this.#started || this.#connecting) return
+    this.#clearReconnectTimer()
     this.#connecting = true
     this.#patch({ connection: 'connecting', connectionMessage: 'Starting Pi…' })
     void this.refreshSessions()
@@ -136,12 +148,14 @@ export class WorkbenchController {
         connectionMessage: errorMessage(error),
       })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      this.#scheduleReconnect()
     } finally {
       this.#connecting = false
     }
   }
 
   async reconnect(): Promise<void> {
+    this.#clearReconnectTimer()
     this.#started = false
     await this.#transport.stop()
     await this.start()
@@ -534,6 +548,8 @@ export class WorkbenchController {
   }
 
   async dispose(): Promise<void> {
+    this.#disposed = true
+    this.#clearReconnectTimer()
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
     this.#dialogs.dispose()
     this.#unsubscribeEvent()
@@ -702,6 +718,7 @@ export class WorkbenchController {
 
   async #bootstrap(includeModels: boolean): Promise<void> {
     const session = await this.#transport.request<PiSessionState>({ type: 'get_state' })
+    this.#reconnectAttempts = 0
     this.#patch({
       connection: 'connected',
       connectionMessage: 'Connected',
@@ -824,6 +841,32 @@ export class WorkbenchController {
     }
   }
 
+  #scheduleReconnect(): void {
+    if (this.#disposed) return
+    if (this.#reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      this.#reconnectAttempts = 0
+      this.#setState((state) => addNotice(state, 'error', 'Pi keeps disconnecting — automatic reconnection gave up. Press Reconnect to try again.'))
+      return
+    }
+    this.#clearReconnectTimer()
+    const attempt = ++this.#reconnectAttempts
+    const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1), RECONNECT_MAX_DELAY_MS)
+    if (attempt === 1) {
+      this.#setState((state) => addNotice(state, 'warning', 'Pi disconnected — reconnecting automatically…'))
+    }
+    this.#patch({ connectionMessage: `Reconnecting (attempt ${attempt})…` })
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = undefined
+      void this.reconnect().catch(() => undefined)
+    }, delay)
+  }
+
+  #clearReconnectTimer(): void {
+    if (this.#reconnectTimer === undefined) return
+    clearTimeout(this.#reconnectTimer)
+    this.#reconnectTimer = undefined
+  }
+
   #handleStatus(status: TransportStatus): void {
     if (status.state === 'starting') this.#patch({ connection: 'connecting', connectionMessage: 'Starting Pi…' })
     if (status.state === 'running') this.#patch({ connectionMessage: `Pi process ${status.pid ?? ''}`.trim() })
@@ -836,6 +879,7 @@ export class WorkbenchController {
         session: { ...this.#state.session, isStreaming: false },
         activity: 'Disconnected',
       })
+      if (!this.#connecting) this.#scheduleReconnect()
     }
   }
 

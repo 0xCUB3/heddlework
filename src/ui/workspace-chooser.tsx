@@ -45,8 +45,9 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
   const chooseNewProject = () => {
     if (picking) return
     setPicking(true)
-    void pickWorkspaceDirectory().then((path) => {
-      if (path) void controller.switchWorkspace(path)
+    void pickWorkspaceDirectory().then((pick) => {
+      if (pick.error) controller.notify('error', pick.error)
+      else if (pick.path) void controller.switchWorkspace(pick.path)
     }).finally(() => {
       setPicking(false)
       closeMenu()

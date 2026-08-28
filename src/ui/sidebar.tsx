@@ -182,8 +182,9 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
             disabled={pickingProject}
             onClick={() => {
               setPickingProject(true)
-              void pickWorkspaceDirectory().then((path) => {
-                if (path) void controller.switchWorkspace(path)
+              void pickWorkspaceDirectory().then((pick) => {
+                if (pick.error) controller.notify('error', pick.error)
+                else if (pick.path) void controller.switchWorkspace(pick.path)
               }).finally(() => setPickingProject(false))
             }}
           />
