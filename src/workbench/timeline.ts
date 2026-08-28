@@ -1,5 +1,5 @@
 import type { PiForkMessage, PiImageContent, PiMessage } from '../pi/types.ts'
-import { asRecord, contentText, type LiveAssistant, type ToolRun } from './state.ts'
+import { asRecord, contentText, type LiveAssistant, type Notice, type ToolRun } from './state.ts'
 
 interface RevertibleItem {
   revertEntryId?: string | undefined
@@ -11,6 +11,7 @@ export type TimelineItem =
   | ({ id: string; kind: 'thinking'; text: string; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'context-injection'; text: string; images: PiImageContent[]; source?: string | undefined; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'tool'; tool: ToolRun; timestamp?: number | undefined } & RevertibleItem)
+  | ({ id: string; kind: 'notice'; notice: Notice; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'status'; text: string; tone?: 'normal' | 'error'; timestamp?: number | undefined } & RevertibleItem)
 
 export function buildTimeline(
@@ -19,6 +20,7 @@ export function buildTimeline(
   liveTools: ToolRun[],
   forkMessages: PiForkMessage[] = [],
   messageIndexOffset = 0,
+  notices: Notice[] = [],
 ): TimelineItem[] {
   const items: TimelineItem[] = []
   const toolIndexes = new Map<string, number>()
@@ -142,7 +144,65 @@ export function buildTimeline(
     if (existing?.kind === 'tool') items[index] = { ...existing, tool: { ...existing.tool, ...liveTool } }
   }
 
-  return items
+  return interleaveTraceNotices(items, notices)
+}
+
+export function currentTurnTracePosition(messages: PiMessage[], liveAssistant: LiveAssistant | undefined, liveTools: ToolRun[], forkMessages: PiForkMessage[] = []): number {
+  const items = buildTimeline(messages, liveAssistant, liveTools, forkMessages)
+  const turnStart = items.findLastIndex((item) => item.kind === 'user')
+  return items.slice(turnStart + 1).filter(isTraceItem).length
+}
+
+function interleaveTraceNotices(items: TimelineItem[], notices: Notice[]): TimelineItem[] {
+  const byTurn = new Map<number, Notice[]>()
+  for (const notice of notices) {
+    if (notice.transcriptTurn === undefined) continue
+    const turnNotices = byTurn.get(notice.transcriptTurn) ?? []
+    turnNotices.push(notice)
+    byTurn.set(notice.transcriptTurn, turnNotices)
+  }
+  for (const turnNotices of byTurn.values()) {
+    turnNotices.sort((left, right) => (left.transcriptPosition ?? 0) - (right.transcriptPosition ?? 0) || left.createdAt - right.createdAt || left.id - right.id)
+  }
+
+  const merged: TimelineItem[] = []
+  let turn = -1
+  let position = 0
+  let pending: Notice[] = []
+  const appendThrough = (limit: number) => {
+    while (pending[0] && (pending[0].transcriptPosition ?? 0) <= limit) {
+      const notice = pending.shift()!
+      const anchor = merged.at(-1)
+      merged.push({ id: `notice-${notice.id}`, kind: 'notice', notice, timestamp: notice.createdAt, ...(anchor?.revertEntryId ? { revertEntryId: anchor.revertEntryId } : {}) })
+    }
+  }
+  const appendRemaining = () => appendThrough(Number.POSITIVE_INFINITY)
+
+  for (const item of items) {
+    if (item.kind === 'user') {
+      appendRemaining()
+      turn += 1
+      position = 0
+      pending = [...(byTurn.get(turn) ?? [])]
+      merged.push(item)
+      appendThrough(0)
+      continue
+    }
+    if (isTraceItem(item)) {
+      merged.push(item)
+      position += 1
+      appendThrough(position)
+      continue
+    }
+    appendRemaining()
+    merged.push(item)
+  }
+  appendRemaining()
+  return merged
+}
+
+function isTraceItem(item: TimelineItem): item is Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' }> {
+  return item.kind === 'thinking' || item.kind === 'context-injection' || item.kind === 'tool'
 }
 
 export function messageText(message: PiMessage): string {

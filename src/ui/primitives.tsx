@@ -8,12 +8,6 @@ import {
   ComboboxList,
   ComboboxTrigger,
   type ComboboxItemState,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  type SelectItemState,
-  type SelectTriggerState,
 } from '@gpuix/react'
 import { Icon, type IconName } from './icons.tsx'
 import { colors } from './theme.ts'
@@ -181,6 +175,7 @@ export function ChipSelect({
   width = 190,
   icon,
   searchable = false,
+  onOpenChange,
 }: {
   value: string
   label?: string
@@ -190,44 +185,57 @@ export function ChipSelect({
   width?: number
   icon?: IconName
   searchable?: boolean
+  onOpenChange?(open: boolean): void
 }) {
-  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} testId={testId} width={width} icon={icon} />
+  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} testId={testId} width={width} icon={icon} />
+  const [open, setOpen] = React.useState(false)
   const selected = options.find((option) => option.value === value)
+  const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
+  const items = options.map((option) => option.value)
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    onOpenChange?.(nextOpen)
+  }
   return (
-    <Select value={value} onValueChange={onChange} disabled={options.length === 0}>
-      <SelectTrigger
-        {...(testId ? { testId } : {})}
-        style={(state: SelectTriggerState) => chipTriggerStyle(state.open, width)}
-      >
+    <Combobox
+      items={items}
+      value={value}
+      open={open}
+      filter={null}
+      autoHighlight="always"
+      disabled={options.length === 0}
+      itemToStringValue={(item) => optionByValue.get(item)?.label ?? item}
+      onOpenChange={handleOpenChange}
+      onValueChange={(nextValue) => {
+        if (typeof nextValue === 'string') onChange(nextValue)
+      }}
+    >
+      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(open, width)}>
         <ChipSelectValue selected={selected} label={label} icon={icon} />
-      </SelectTrigger>
-      <SelectContent
+      </ComboboxTrigger>
+      <ComboboxContent
         {...(testId ? { testId: `${testId}-content` } : {})}
         side="top"
         sideOffset={7}
-        style={{
-          width,
-          maxHeight: 340,
-          minHeight: 0,
-          padding: 5,
-          borderRadius: 10,
-          borderWidth: 1,
-          borderColor: colors.borderStrong,
-          backgroundColor: colors.popover,
-          overflow: 'scroll',
-        }}
+        style={{ width, maxHeight: 340, minHeight: 0, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll' }}
       >
-        {options.map((option) => <SelectOptionRow key={option.value} option={option} testId={testId} />)}
-      </SelectContent>
-    </Select>
+        <ComboboxList style={{ maxHeight: 330, minHeight: 0, overflow: 'scroll' }}>
+          {(item: string) => {
+            const option = optionByValue.get(item)
+            return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
+          }}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   )
 }
 
-function SearchableChipSelect({ value, label, options, onChange, testId, width, icon }: {
+function SearchableChipSelect({ value, label, options, onChange, onOpenChange, testId, width, icon }: {
   value: string
   label?: string | undefined
   options: SelectOption[]
   onChange(value: string): void
+  onOpenChange?(open: boolean): void
   testId?: string | undefined
   width: number
   icon?: IconName | undefined
@@ -252,6 +260,7 @@ function SearchableChipSelect({ value, label, options, onChange, testId, width, 
       onInputValueChange={setQuery}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
+        onOpenChange?.(nextOpen)
         if (!nextOpen) setQuery('')
       }}
       onValueChange={(nextValue) => {
@@ -294,19 +303,6 @@ function ChipSelectValue({ selected, label, icon }: { selected: SelectOption | u
       <text style={{ color: colors.composerControlText, fontSize: 12, fontWeight: 550, whiteSpace: 'nowrap', textOverflow: 'ellipsis', minWidth: 0 }}>{selected?.label ?? 'Choose'}</text>
       <Icon name="chevronDown" size={12} color={colors.composerControlIcon} />
     </>
-  )
-}
-
-function SelectOptionRow({ option, testId }: { option: SelectOption; testId?: string | undefined }) {
-  return (
-    <SelectItem
-      {...(testId ? { testId: `${testId}-option` } : {})}
-      value={option.value}
-      textValue={option.label}
-      style={(state: SelectItemState) => optionStyle(state.highlighted || state.selected)}
-    >
-      {(state: SelectItemState) => <OptionText option={option} active={state.selected} />}
-    </SelectItem>
   )
 }
 

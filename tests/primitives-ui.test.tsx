@@ -87,4 +87,34 @@ describeNative('bounded select content', () => {
     root.unmount()
     applyResolvedTheme('dark')
   })
+
+  it('keeps floating option clicks from reaching controls behind the menu', async () => {
+    let behindClicks = 0
+    let selected = ''
+    const root = createTestRoot()
+    function OverlapFixture() {
+      const [open, setOpen] = useState(false)
+      return (
+        <div style={{ position: 'relative', width: 620, height: 560 }}>
+          <div testId="picker-underlay" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: '#111111', pointerEvents: open ? 'none' : 'auto' }} onClick={() => { behindClicks += 1 }} />
+          <div style={{ position: 'absolute', left: 160, bottom: 40 }}>
+            <ChipSelect testId="shielded-picker" value={options.at(-1)!.value} options={options} width={300} onOpenChange={setOpen} onChange={(value) => { selected = value }} />
+          </div>
+        </div>
+      )
+    }
+    root.render(<OverlapFixture />)
+    const automation = await connectTest(root.renderer)
+
+    await automation.getByTestId('shielded-picker').click()
+    await Bun.sleep(20)
+    root.renderer.flush()
+    await automation.getByText('Model 0').click()
+
+    expect(selected).toBe(options[0]!.value)
+    expect(behindClicks).toBe(0)
+    expect(await automation.getByTestId('shielded-picker-content').count()).toBe(0)
+    await automation.close()
+    root.unmount()
+  })
 })

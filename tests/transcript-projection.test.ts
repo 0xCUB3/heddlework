@@ -54,4 +54,19 @@ describe('transcript projection', () => {
     expect(rows.filter((row) => row.kind === 'trace-entry')).toHaveLength(3)
     expect(rows.some((row) => row.kind === 'trace-continuation')).toBe(false)
   })
+  it('groups only adjacent notifications emitted close together', () => {
+    const notices: TimelineItem[] = [
+      { id: 'notice-1', kind: 'notice', notice: { id: 1, kind: 'info', message: 'One', createdAt: 1_000 } },
+      { id: 'notice-2', kind: 'notice', notice: { id: 2, kind: 'info', message: 'Two', createdAt: 2_000 } },
+      { id: 'notice-3', kind: 'notice', notice: { id: 3, kind: 'info', message: 'Three', createdAt: 8_000 } },
+    ]
+    const grouped = groupWorkItems([items[0]!, items[1]!, ...notices, items[2]!])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    const rows = projectTranscriptRows(grouped, new Set([trace.id]), new Map())
+    const notificationRows = rows.filter((row) => row.kind === 'trace-notices')
+
+    expect(notificationRows).toHaveLength(2)
+    expect(notificationRows.map((row) => row.notices.length)).toEqual([2, 1])
+    expect(rows.map((row) => row.kind)).toEqual(['timeline-item', 'trace-header', 'trace-entry', 'trace-notices', 'trace-notices', 'trace-entry'])
+  })
 })

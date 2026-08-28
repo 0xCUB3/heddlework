@@ -20,7 +20,7 @@ afterEach(async () => {
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('notification surfaces', () => {
-  it('pins the latest notice above the composer and keeps an immutable balanced ledger', async () => {
+  it('keeps notices out of the composer while retaining the notification ledger', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/notification-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     controllers.push(controller)
     const root = createTestRoot()
@@ -31,36 +31,13 @@ describeNative('notification surfaces', () => {
     controller.settleThread('fixture-thread')
     await Bun.sleep(40)
     root.renderer.flush()
-    expect(await automation.getByTestId('notification-toast').count()).toBe(1)
+    expect(await automation.getByTestId('notification-toast').count()).toBe(0)
+    expect(await automation.getByTestId('composer-notification-stack').count()).toBe(0)
     expect(controller.getSnapshot().notices).toHaveLength(1)
-    const toastBounds = await automation.getByTestId('notification-toast').bounds()
-    const composerBounds = await automation.getByTestId('composer-surface').bounds()
-    expect(toastBounds.y + toastBounds.height).toBeLessThanOrEqual(composerBounds.y)
-    expect(toastBounds.height).toBeLessThanOrEqual(40)
-    expect(await automation.getByText('Workbench update').count()).toBe(0)
-    const toastMessage = await automation.getByTestId('notification-toast-message').bounds()
-    root.renderer.dragSelect(toastMessage.x + 2, toastMessage.y + toastMessage.height / 2, toastMessage.x + toastMessage.width - 2, toastMessage.y + toastMessage.height / 2)
-    expect(root.renderer.getSelectedText()?.length ?? 0).toBeGreaterThan(0)
 
-    const screenshotDirectory = resolve(import.meta.dir, '../screenshots')
-    if (process.platform === 'darwin') {
-      mkdirSync(screenshotDirectory, { recursive: true })
-      const screenshot = resolve(screenshotDirectory, 'workbench-notification.png')
-      root.renderer.captureScreenshot(screenshot)
-      expect(statSync(screenshot).size).toBeGreaterThan(10_000)
-    }
-
-    root.renderer.clearSelection()
     controller.settleThread('fixture-thread-two')
     await Bun.sleep(40)
     root.renderer.flush()
-    expect(await automation.getByTestId('notification-stack-item').count()).toBe(1)
-    expect(await automation.getByTestId('notification-toast').count()).toBe(1)
-
-    await Bun.sleep(2_350)
-    root.renderer.flush()
-    expect(await automation.getByTestId('notification-stack-item').count()).toBe(1)
-    expect(await automation.getByTestId('notification-toast').count()).toBe(1)
     expect(controller.getSnapshot().notices).toHaveLength(2)
 
     await automation.getByTestId('sidebar-notifications').click()
@@ -79,6 +56,8 @@ describeNative('notification surfaces', () => {
     expect(Math.abs(leftInset - rightInset - 24)).toBeLessThanOrEqual(2)
 
     if (process.platform === 'darwin') {
+      const screenshotDirectory = resolve(import.meta.dir, '../screenshots')
+      mkdirSync(screenshotDirectory, { recursive: true })
       const screenshot = resolve(screenshotDirectory, 'workbench-notification-ledger.png')
       root.renderer.captureScreenshot(screenshot)
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
@@ -94,11 +73,9 @@ describeNative('notification surfaces', () => {
     controller.settleThread('fixture-thread-three')
     await Bun.sleep(25)
     root.renderer.flush()
-    await automation.getByTestId('clear-notifications').click()
-    await Bun.sleep(25)
-    root.renderer.flush()
-    expect(controller.getSnapshot().notices).toHaveLength(0)
     expect(await automation.getByTestId('notification-toast').count()).toBe(0)
+    controller.clearNotices()
+    expect(controller.getSnapshot().notices).toHaveLength(0)
 
     await automation.close()
     root.unmount()

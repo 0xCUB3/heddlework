@@ -46,6 +46,7 @@ export function WorkbenchApp({
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
   const renderer = useGpuixRequired()
   const [surface, setSurface] = useState<Surface>('chat')
+  const [composerPickerOpen, setComposerPickerOpen] = useState(false)
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true)
   const leftSidebarProgress = useSpringProgress(leftSidebarOpen)
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
@@ -183,9 +184,9 @@ export function WorkbenchApp({
                     <DraftWorkspaceChooser state={state} controller={controller} />
                   ) : (
                     <>
-                      <Transcript state={state} presenters={presenters} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.forkFrom(entryId)} onLoadEarlier={controller.loadEarlierMessages} />
+                      <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.forkFrom(entryId)} onDismissNotice={(id) => controller.dismissNotice(id)} onLoadEarlier={controller.loadEarlierMessages} />
                       <TranscriptFade />
-                      <Composer state={state} controller={controller} />
+                      <Composer state={state} controller={controller} onPickerOpenChange={setComposerPickerOpen} />
                     </>
                   )}
                   <ConversationExtensionOverlay state={state} controller={controller} />

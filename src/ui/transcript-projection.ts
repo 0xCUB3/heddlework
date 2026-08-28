@@ -1,8 +1,8 @@
 import type { TimelineItem } from '../workbench/timeline.ts'
 
-export type TraceTimelineItem = Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' }>
+export type TraceTimelineItem = Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'notice' }>
 
-export type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' }> | {
+export type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'notice' }> | {
   id: string
   kind: 'work-trace'
   items: TraceTimelineItem[]
@@ -15,7 +15,8 @@ export type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'thinking' | 'co
 export type TranscriptProjectionRow =
   | { id: string; kind: 'timeline-item'; item: Exclude<DisplayTimelineItem, { kind: 'work-trace' }> }
   | { id: string; kind: 'trace-header'; trace: Extract<DisplayTimelineItem, { kind: 'work-trace' }> }
-  | { id: string; kind: 'trace-entry'; traceId: string; item: TraceTimelineItem }
+  | { id: string; kind: 'trace-entry'; traceId: string; item: Exclude<TraceTimelineItem, { kind: 'notice' }> }
+  | { id: string; kind: 'trace-notices'; traceId: string; notices: Array<Extract<TraceTimelineItem, { kind: 'notice' }>> }
   | { id: string; kind: 'trace-files'; traceId: string; paths: string[] }
   | { id: string; kind: 'trace-continuation'; traceId: string; remaining: number }
 
@@ -23,7 +24,7 @@ export function groupWorkItems(items: TimelineItem[]): DisplayTimelineItem[] {
   const grouped: DisplayTimelineItem[] = []
   let boundaryId: string | undefined
   for (const item of items) {
-    if (item.kind !== 'thinking' && item.kind !== 'context-injection' && item.kind !== 'tool') {
+    if (item.kind !== 'thinking' && item.kind !== 'context-injection' && item.kind !== 'tool' && item.kind !== 'notice') {
       grouped.push(item)
       boundaryId = item.id
       continue
@@ -68,7 +69,23 @@ export function projectTranscriptRows(items: DisplayTimelineItem[], expandedTrac
     rows.push({ id: item.id, kind: 'trace-header', trace: item })
     if (expandedTraceIds.has(item.id)) {
       const limit = Math.min(item.items.length, Math.max(0, traceLimits.get(item.id) ?? item.items.length))
-      for (const entry of item.items.slice(0, limit)) rows.push({ id: `${item.id}:entry:${entry.id}`, kind: 'trace-entry', traceId: item.id, item: entry })
+      const entries = item.items.slice(0, limit)
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index]!
+        if (entry.kind !== 'notice') {
+          rows.push({ id: `${item.id}:entry:${entry.id}`, kind: 'trace-entry', traceId: item.id, item: entry })
+          continue
+        }
+        const notices = [entry]
+        while (entries[index + 1]?.kind === 'notice') {
+          const next = entries[index + 1] as Extract<TraceTimelineItem, { kind: 'notice' }>
+          const previous = notices.at(-1)!
+          if (next.notice.createdAt - previous.notice.createdAt > 5_000) break
+          notices.push(next)
+          index += 1
+        }
+        rows.push({ id: `${item.id}:notices:${notices[0]!.id}:${notices.at(-1)!.id}`, kind: 'trace-notices', traceId: item.id, notices })
+      }
       if (limit < item.items.length) rows.push({ id: `${item.id}:continuation`, kind: 'trace-continuation', traceId: item.id, remaining: item.items.length - limit })
     }
     if (item.changedPaths.length > 0) rows.push({ id: `${item.id}:files`, kind: 'trace-files', traceId: item.id, paths: item.changedPaths })

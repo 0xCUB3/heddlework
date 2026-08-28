@@ -42,7 +42,7 @@ export function SettingsView({
               <ThemeModePicker theme={theme} onChange={onThemeModeChange} />
             </SettingsControlRow>
             <SettingsRow icon="terminal" label="Code font" value={nativeTheme.fontMono} />
-            <SettingsRow icon="bell" label="Notifications" value="Pinned above composer" />
+            <SettingsRow icon="bell" label="Notifications" value="Interleaved with work traces" />
             <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
           </SettingsSection>
 

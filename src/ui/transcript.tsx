@@ -4,12 +4,11 @@ import type { PiImageContent } from '../pi/types.ts'
 import type { WorkbenchState, ToolRun } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon, type IconName } from './icons.tsx'
-import { colors, nativeTheme } from './theme.ts'
+import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
 import { openExternal } from './open-external.ts'
 import { formatElapsedSeconds } from './duration.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
-import { composerNotificationStackHeight } from './notifications.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
@@ -82,13 +81,19 @@ export const Transcript = memo(function Transcript({
   presenters,
   onOpenDiff,
   onRevert,
+  onDismissNotice = () => undefined,
   onLoadEarlier,
+  appearance,
+  interactionDisabled = false,
 }: {
   state: WorkbenchState
   presenters: ReadonlyMap<string, ToolPresenter>
   onOpenDiff(): void
   onRevert(entryId: string): void
+  onDismissNotice?(id: number): void
   onLoadEarlier?(): void | Promise<void>
+  appearance?: ResolvedTheme
+  interactionDisabled?: boolean
 }) {
   const paging = useRef(false)
   const visibleStartIndex = useRef<number | undefined>(undefined)
@@ -112,8 +117,8 @@ export const Transcript = memo(function Transcript({
 
   const hydratedMessages = useMemo(() => hydrateMessageImages(state.messages), [state.messages])
   const items = useMemo(
-    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages)),
-    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools],
+    () => groupWorkItems(buildTimeline(hydratedMessages, state.liveAssistant, state.liveTools, state.forkMessages, 0, state.notices)),
+    [hydratedMessages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices],
   )
   const traceLengths = useMemo(() => new Map(items.flatMap((item) => item.kind === 'work-trace' ? [[item.id, item.items.length] as const] : [])), [items])
   const projectedRows = useMemo(() => projectTranscriptRows(items, expandedTraceIds, traceLimits), [expandedTraceIds, items, traceLimits])
@@ -224,9 +229,9 @@ export const Transcript = memo(function Transcript({
 
   // Direct keyed children preserve measured prepend anchors; each expanded entry is its own native virtual row.
   return (
-    <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }} onScroll={handleHistoryScroll}>
+    <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', pointerEvents: interactionDisabled ? 'none' : 'auto' }} onScroll={handleHistoryScroll}>
       <NativeVirtualList
-        key={`${sessionKey}:virtual`}
+        key={`${sessionKey}:${appearance ?? nativeTheme.appearance}:virtual`}
         testId="transcript-list"
         alignment="bottom"
         followTail={state.session.isStreaming}
@@ -243,7 +248,6 @@ export const Transcript = memo(function Transcript({
             workspacePath={state.workspacePath}
             historyHasOlder={state.messagesHasOlder}
             activity={state.activity}
-            noticeCount={state.notices.length}
             questionnaireCollapsed={state.questionnaireCollapsed !== undefined}
             queue={state.queue}
             statusItems={state.statusItems}
@@ -253,12 +257,15 @@ export const Transcript = memo(function Transcript({
             onToggleEntry={toggleEntry}
             onOpenDiff={onOpenDiff}
             onRevert={onRevert}
+            onDismissNotice={onDismissNotice}
           />
         ))}
       </NativeVirtualList>
     </div>
   )
-}, (previous, next) => previous.presenters === next.presenters
+}, (previous, next) => previous.appearance === next.appearance
+  && previous.interactionDisabled === next.interactionDisabled
+  && previous.presenters === next.presenters
   && previous.state.messages === next.state.messages
   && previous.state.messagesHasOlder === next.state.messagesHasOlder
   && previous.state.messagesLoadingEarlier === next.state.messagesLoadingEarlier
@@ -282,7 +289,6 @@ function ProjectedTranscriptRow({
   workspacePath,
   historyHasOlder,
   activity,
-  noticeCount,
   questionnaireCollapsed,
   queue,
   statusItems,
@@ -292,13 +298,13 @@ function ProjectedTranscriptRow({
   onToggleEntry,
   onOpenDiff,
   onRevert,
+  onDismissNotice,
 }: {
   row: TranscriptRenderRow
   presenters: ReadonlyMap<string, ToolPresenter>
   workspacePath: string
   historyHasOlder: boolean
   activity: string
-  noticeCount: number
   questionnaireCollapsed: boolean
   queue: WorkbenchState['queue']
   statusItems: WorkbenchState['statusItems']
@@ -308,15 +314,25 @@ function ProjectedTranscriptRow({
   onToggleEntry(rowId: string): void
   onOpenDiff(): void
   onRevert(entryId: string): void
+  onDismissNotice(id: number): void
 }) {
   if (row.kind === 'empty-conversation') return <EmptyConversation workspacePath={workspacePath} />
   if (row.kind === 'working') return <WorkingRow activity={activity} />
-  if (row.kind === 'composer-spacer') return <ComposerSpacer noticeCount={noticeCount} questionnaireCollapsed={questionnaireCollapsed} queue={queue} statusItems={statusItems} widgets={widgets} />
+  if (row.kind === 'composer-spacer') return <ComposerSpacer questionnaireCollapsed={questionnaireCollapsed} queue={queue} statusItems={statusItems} widgets={widgets} />
   if (row.kind === 'timeline-item') return <TimelineItemRow item={row.item} onRevert={onRevert} />
   if (row.kind === 'trace-header') {
     return (
       <TranscriptRowShell>
         <ExecutionTraceHeader trace={row.trace} expanded={expanded} durationKnown={Boolean(row.trace.boundaryId) || !historyHasOlder} onToggle={() => onToggleTrace(row.id)} />
+      </TranscriptRowShell>
+    )
+  }
+  if (row.kind === 'trace-notices') {
+    return (
+      <TranscriptRowShell compact>
+        <div testId="execution-timeline" style={{ display: 'flex', flexDirection: 'column', marginLeft: 8, paddingLeft: 18, paddingTop: 4, paddingBottom: 5, borderLeftWidth: 1, borderColor: colors.borderStrong }}>
+          <TraceNotificationGroup items={row.notices} onDismiss={onDismissNotice} />
+        </div>
       </TranscriptRowShell>
     )
   }
@@ -350,6 +366,23 @@ function ProjectedTranscriptRow({
   )
 }
 
+function TraceNotificationGroup({ items, onDismiss }: { items: Array<Extract<TraceTimelineItem, { kind: 'notice' }>>; onDismiss(id: number): void }) {
+  return (
+    <div testId="trace-notification-group" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+      {items.map(({ notice }) => (
+        <div key={notice.id} testId="trace-notification" style={{ minHeight: 24, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 650, whiteSpace: 'nowrap' }}>NOTIFICATION</text>
+          <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 11, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{notice.message}</text>
+          <Timestamp value={notice.createdAt} />
+          <div testId={`dismiss-trace-notification:${notice.id}`} tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onDismiss(notice.id)} onKeyDown={(event) => { if (event.key === 'enter') onDismiss(notice.id) }}>
+            <Icon name="x" size={10} color={colors.textFaint} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function TimelineItemRow({ item, onRevert }: { item: Exclude<DisplayTimelineItem, { kind: 'work-trace' }>; onRevert(entryId: string): void }) {
   return (
     <TranscriptRowShell user={item.kind === 'user'}>
@@ -379,7 +412,7 @@ function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { 
       )}
       {item.text && (
         <div style={{ maxWidth: '80%', paddingTop: 10, paddingBottom: 10, paddingLeft: 13, paddingRight: 13, borderRadius: 16, backgroundColor: colors.message }}>
-          <text style={{ color: colors.text, fontSize: 14, lineHeight: 21, whiteSpace: 'normal' }}>{item.text}</text>
+          <text testId="user-message-text" style={{ color: colors.text, fontSize: 14, lineHeight: 21, whiteSpace: 'normal' }}>{item.text}</text>
         </div>
       )}
       <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="end" onRevert={onRevert} />
@@ -473,6 +506,9 @@ function TraceDisclosure({ label, text, testId, streaming = false, expanded, onT
 function TracePreview({ item }: { item: TraceTimelineItem }) {
   if (item.kind === 'thinking' || item.kind === 'context-injection') {
     return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{markdownPreview(item.text)}</text></div>
+  }
+  if (item.kind === 'notice') {
+    return <div testId="execution-preview" style={{ minWidth: 0, overflow: 'hidden', paddingLeft: 1 }}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.notice.message}</text></div>
   }
   const content = item.tool.output?.trim().split('\n').at(-1)
   return (
@@ -785,8 +821,8 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   )
 }
 
-function ComposerSpacer({ noticeCount, questionnaireCollapsed, queue, statusItems, widgets }: { noticeCount: number; questionnaireCollapsed: boolean; queue: WorkbenchState['queue']; statusItems: WorkbenchState['statusItems']; widgets: WorkbenchState['widgets'] }) {
-  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems) }} />
+function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets }: { questionnaireCollapsed: boolean; queue: WorkbenchState['queue']; statusItems: WorkbenchState['statusItems']; widgets: WorkbenchState['widgets'] }) {
+  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems) }} />
 }
 
 function Timestamp({ value }: { value: number }) {

@@ -462,7 +462,7 @@ describeNative('reverse-infinite transcript', () => {
     render('Streaming answer')
     const automation = await connectTest(root.renderer)
     const list = root.renderer.findByTestId('transcript-list')!
-    expect((await automation.getByTestId('composer-spacer').bounds()).height).toBe(260)
+    expect((await automation.getByTestId('composer-spacer').bounds()).height).toBe(194)
     const beforeGrowth = root.renderer.getScrollOffset(list.id)?.[1] ?? 0
 
     render(Array.from({ length: 30 }, (_, index) => `Streaming line ${index}`).join('\n'))

@@ -10,6 +10,8 @@ export interface Notice {
   kind: NoticeKind
   message: string
   createdAt: number
+  transcriptTurn?: number
+  transcriptPosition?: number
 }
 
 export interface ThreadLifecycle {
@@ -224,8 +226,14 @@ export function applyRpcEvent(state: WorkbenchState, event: RpcRecord): Workbenc
   }
 }
 
-export function addNotice(state: WorkbenchState, kind: NoticeKind, message: string): WorkbenchState {
-  const notice: Notice = { id: ++noticeId, kind, message, createdAt: Date.now() }
+export function addNotice(state: WorkbenchState, kind: NoticeKind, message: string, transcriptPosition?: number): WorkbenchState {
+  const notice: Notice = {
+    id: ++noticeId,
+    kind,
+    message,
+    createdAt: Date.now(),
+    ...(transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, state.messages.filter((candidate) => candidate.role === 'user').length - 1), transcriptPosition }),
+  }
   return { ...state, notices: [...state.notices, notice] }
 }
 

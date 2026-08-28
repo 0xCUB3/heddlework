@@ -92,4 +92,41 @@ describe('buildTimeline', () => {
     expect(assistant).toMatchObject({ kind: 'assistant', revertEntryId: 'entry-user' })
     expect(tool).toMatchObject({ kind: 'tool', revertEntryId: 'entry-user' })
   })
+  it('interleaves extension notifications between reasoning and tool calls in their turn', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'Inspect the project', timestamp: 1 },
+      {
+        role: 'assistant',
+        timestamp: 2,
+        content: [
+          { type: 'thinking', thinking: 'I should inspect the files.' },
+          { type: 'toolCall', id: 'call-notice', name: 'read', arguments: { path: 'README.md' } },
+        ],
+      },
+    ]
+    const notices = [{ id: 7, kind: 'info' as const, message: 'TPS 25.6 tok/s', createdAt: 3, transcriptTurn: 0, transcriptPosition: 1 }]
+
+    const items = buildTimeline(messages, undefined, [], [], 0, notices)
+
+    expect(items.map((item) => item.kind)).toEqual(['user', 'thinking', 'notice', 'tool'])
+    expect(items[2]).toMatchObject({ kind: 'notice', notice: { message: 'TPS 25.6 tok/s' } })
+  })
+  it('orders notifications at their captured trace positions and by time within a position', () => {
+    const messages: PiMessage[] = [
+      { role: 'user', content: 'Inspect the project', timestamp: 1 },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'First reasoning' }, { type: 'toolCall', id: 'first-tool', name: 'read', arguments: {} }], timestamp: 2 },
+      { role: 'toolResult', toolCallId: 'first-tool', toolName: 'read', content: 'done', timestamp: 3 },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'Second reasoning' }, { type: 'toolCall', id: 'second-tool', name: 'grep', arguments: {} }], timestamp: 4 },
+    ]
+    const notices = [
+      { id: 3, kind: 'info' as const, message: 'Third', createdAt: 30, transcriptTurn: 0, transcriptPosition: 3 },
+      { id: 1, kind: 'info' as const, message: 'First', createdAt: 10, transcriptTurn: 0, transcriptPosition: 1 },
+      { id: 2, kind: 'info' as const, message: 'Second', createdAt: 20, transcriptTurn: 0, transcriptPosition: 3 },
+    ]
+
+    const items = buildTimeline(messages, undefined, [], [], 0, notices)
+
+    expect(items.map((item) => item.kind)).toEqual(['user', 'thinking', 'notice', 'tool', 'thinking', 'notice', 'notice', 'tool'])
+    expect(items.filter((item) => item.kind === 'notice').map((item) => item.notice.message)).toEqual(['First', 'Second', 'Third'])
+  })
 })

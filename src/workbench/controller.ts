@@ -31,6 +31,7 @@ import {
   type WorkbenchState,
 } from './state.ts'
 import { createQueueState, moveQueuedInput, parseQueuedControl, type QueuedControl, type QueuedInput } from './queue.ts'
+import { currentTurnTracePosition } from './timeline.ts'
 import {
   buildAskUserDialogActions,
   dialogMatchesAskUserAction,
@@ -880,7 +881,7 @@ export class WorkbenchController {
       return
     }
     if (request.method === 'notify') {
-      this.#setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification'))
+      this.#setState((state) => addNotice(state, request.notifyType ?? 'info', request.message ?? 'Pi notification', currentTurnTracePosition(state.messages, state.liveAssistant, state.liveTools, state.forkMessages)))
       return
     }
     if (request.method === 'setStatus') {

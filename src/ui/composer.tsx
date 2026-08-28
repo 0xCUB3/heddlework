@@ -7,7 +7,6 @@ import { Icon } from './icons.tsx'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
-import { ComposerNotificationStack } from './notifications.tsx'
 import { MotionDiv } from './motion.ts'
 import { QueueDock } from './queue-dock.tsx'
 import { plainExtensionText } from './extension-ui.ts'
@@ -34,7 +33,7 @@ export function extensionSurfaceRailReserveHeight(
   return EXTENSION_SURFACE_BASE_RESERVE_HEIGHT + Math.max(0, maxWidgetLines - 1) * EXTENSION_WIDGET_EXTRA_LINE_RESERVE_HEIGHT
 }
 
-export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
+export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
   const [pastingImage, setPastingImage] = useState(false)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
@@ -146,7 +145,6 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
         overflow: 'visible',
       }}
     >
-      <ComposerNotificationStack notices={state.notices} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => controller.clearNotices()} />
       {collapsedQuestionnaire && <QuestionnaireWaitingDock questionnaire={collapsedQuestionnaire} controller={controller} />}
       {matchingCommands.length > 0 && <CommandPalette commands={matchingCommands} activeIndex={Math.min(activeCommandIndex, matchingCommands.length - 1)} onChoose={chooseCommand} />}
       <ExtensionSurfaceRail above={above} below={below} statuses={state.statusItems} />
@@ -216,6 +214,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
             options={modelOptions}
             width={320}
             searchable
+            {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => {
               const model = state.models.find((candidate) => modelKey(candidate) === value)
               if (model) void controller.setModel(model)
@@ -227,6 +226,7 @@ export function Composer({ state, controller, draft = false }: { state: Workbenc
             value={state.session.thinkingLevel}
             options={thinkingOptions}
             width={130}
+            {...(onPickerOpenChange ? { onOpenChange: onPickerOpenChange } : {})}
             onChange={(value) => void controller.setThinkingLevel(value as ThinkingLevel)}
           />
           <div style={{ flexGrow: 1 }} />
