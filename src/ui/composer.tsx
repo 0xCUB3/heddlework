@@ -13,12 +13,25 @@ import { QueueDock } from './queue-dock.tsx'
 import { plainExtensionText } from './extension-ui.ts'
 
 const EXTENSION_SURFACE_GAP = 6
+const EXTENSION_SURFACE_BASE_RESERVE_HEIGHT = 35
+const EXTENSION_WIDGET_EXTRA_LINE_RESERVE_HEIGHT = 18
 const EXTENSION_SURFACE_STAGGER_SECONDS = 0.035
 const QUESTIONNAIRE_WAITING_DOCK_HEIGHT = 44
 const QUESTIONNAIRE_WAITING_DOCK_MARGIN = 9
 
 export function questionnaireWaitingDockReserveHeight(visible: boolean): number {
   return visible ? QUESTIONNAIRE_WAITING_DOCK_HEIGHT + QUESTIONNAIRE_WAITING_DOCK_MARGIN : 0
+}
+
+export function extensionSurfaceRailReserveHeight(
+  widgets: Readonly<Record<string, ExtensionWidget>>,
+  statuses: Readonly<Record<string, string>>,
+): number {
+  const widgetEntries = Object.values(widgets)
+  const hasStatus = Object.values(statuses).some((value) => plainExtensionText(value).trim().length > 0)
+  if (widgetEntries.length === 0 && !hasStatus) return 0
+  const maxWidgetLines = widgetEntries.reduce((maximum, widget) => Math.max(maximum, widget.lines.length), 1)
+  return EXTENSION_SURFACE_BASE_RESERVE_HEIGHT + Math.max(0, maxWidgetLines - 1) * EXTENSION_WIDGET_EXTRA_LINE_RESERVE_HEIGHT
 }
 
 export function Composer({ state, controller, draft = false }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean }) {
@@ -457,7 +470,7 @@ function ExtensionWidgetItem({ widget, placement, order }: { widget: ExtensionWi
 }
 
 function WidgetLine({ line }: { line: string }) {
-  return <text style={{ color: colors.textMuted, fontSize: 10, lineHeight: 15, whiteSpace: 'normal' }}>{plainExtensionText(line)}</text>
+  return <text style={{ minWidth: 0, width: '100%', color: colors.textMuted, fontSize: 10, lineHeight: 15, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{plainExtensionText(line)}</text>
 }
 
 function composerCommandQuery(value: string): string | undefined {

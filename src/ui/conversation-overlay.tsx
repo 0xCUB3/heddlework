@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import {
   questionnaireFromTool,
@@ -12,6 +12,17 @@ import { Button } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { filterExtensionOptions, parseExtensionOption, parseExtensionTitle } from './extension-ui.ts'
 import { openExternal } from './open-external.ts'
+import { MotionDiv } from './motion.ts'
+
+const DIALOG_TRANSITION_SECONDS = 0.16
+const DIALOG_EXIT_DELAY_SECONDS = 0.08
+const DIALOG_RETAIN_MS = (DIALOG_TRANSITION_SECONDS + DIALOG_EXIT_DELAY_SECONDS) * 1_000 + 20
+
+interface ExtensionDialogResponse {
+  value?: string
+  confirmed?: boolean
+  cancelled?: boolean
+}
 
 interface AnswerDraft {
   kind: 'none' | 'option' | 'multi' | 'custom'
@@ -32,9 +43,14 @@ export function ConversationExtensionOverlay({ state, controller }: { state: Wor
       || questionnaireMatchesDialog(candidate, state.dialog)
     ))
   }, [state.dialog, state.liveTools, state.questionnaireCollapsed, state.questionnaireSubmitting])
+  const [presentedDialog, beginDialogTransition] = useRetainedDialog(state.dialog)
+  const respondToPresentedDialog = (response: ExtensionDialogResponse) => {
+    beginDialogTransition()
+    controller.respondToDialog(response)
+  }
 
   if (questionnaire && questionnaire.toolCallId === state.questionnaireCollapsed) return null
-  if (!questionnaire && !state.dialog) return null
+  if (!questionnaire && !presentedDialog) return null
   return (
     <div
       testId="conversation-extension-overlay"
@@ -52,10 +68,47 @@ export function ConversationExtensionOverlay({ state, controller }: { state: Wor
     >
       {questionnaire
         ? <QuestionnaireOverlay key={questionnaire.toolCallId} questionnaire={questionnaire} submitting={state.questionnaireSubmitting === questionnaire.toolCallId} controller={controller} />
-        : state.dialog
-          ? <GenericDialog key={state.dialog.id} dialog={state.dialog} queued={state.dialogQueue.length} controller={controller} />
+        : presentedDialog
+          ? <TransitionedGenericDialog dialog={presentedDialog} active={state.dialog?.id === presentedDialog.id} queued={state.dialogQueue.length} onRespond={respondToPresentedDialog} />
           : null}
     </div>
+  )
+}
+
+function useRetainedDialog(dialog: ExtensionDialog | undefined): readonly [ExtensionDialog | undefined, () => void] {
+  const [retained, setRetained] = useState(dialog)
+  const retainOnExit = useRef(false)
+  useEffect(() => {
+    if (dialog) {
+      retainOnExit.current = false
+      setRetained(dialog)
+      return
+    }
+    if (!retainOnExit.current) {
+      setRetained(undefined)
+      return
+    }
+    const timer = setTimeout(() => {
+      retainOnExit.current = false
+      setRetained(undefined)
+    }, DIALOG_RETAIN_MS)
+    return () => clearTimeout(timer)
+  }, [dialog])
+  const presented = dialog ?? (retainOnExit.current ? retained : undefined)
+  return [presented, () => { retainOnExit.current = true }]
+}
+
+function TransitionedGenericDialog({ dialog, active, queued, onRespond }: { dialog: ExtensionDialog; active: boolean; queued: number; onRespond(response: ExtensionDialogResponse): void }) {
+  return (
+    <MotionDiv
+      testId="extension-dialog-transition"
+      initial={{ opacity: 0.96, top: 4 }}
+      animate={{ opacity: active ? 1 : 0, top: active ? 0 : 4 }}
+      transition={{ duration: DIALOG_TRANSITION_SECONDS, delay: active ? 0 : DIALOG_EXIT_DELAY_SECONDS, ease: 'easeOut' }}
+      style={{ position: 'relative', pointerEvents: active ? 'auto' : 'none', width: '100%', maxWidth: 820, maxHeight: '92%', minWidth: 0, display: 'flex', flexDirection: 'column' }}
+    >
+      <GenericDialog dialog={dialog} interactive={active} queued={queued} onRespond={onRespond} />
+    </MotionDiv>
   )
 }
 
@@ -221,9 +274,11 @@ function QuestionnaireReview({ questionnaire, drafts, complete, onSelect }: { qu
   )
 }
 
-function GenericDialog({ dialog, queued, controller }: { dialog: ExtensionDialog; queued: number; controller: WorkbenchController }) {
-  const [value, setValue] = useState(dialog.prefill ?? '')
-  const [query, setQuery] = useState('')
+function GenericDialog({ dialog, interactive, queued, onRespond }: { dialog: ExtensionDialog; interactive: boolean; queued: number; onRespond(response: ExtensionDialogResponse): void }) {
+  const [valueState, setValueState] = useState(() => ({ dialogId: dialog.id, value: dialog.prefill ?? '' }))
+  const [queryState, setQueryState] = useState(() => ({ dialogId: dialog.id, value: '' }))
+  const value = valueState.dialogId === dialog.id ? valueState.value : dialog.prefill ?? ''
+  const query = queryState.dialogId === dialog.id ? queryState.value : ''
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     if (dialog.deadlineAt === undefined) return
@@ -237,7 +292,7 @@ function GenericDialog({ dialog, queued, controller }: { dialog: ExtensionDialog
   const cancelLabel = title.title.includes('›') ? 'Back' : 'Cancel'
 
   return (
-    <div testId="extension-dialog" style={{ pointerEvents: 'auto', width: '100%', maxWidth: 820, maxHeight: '92%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, overflow: 'hidden' }}>
+    <div testId="extension-dialog" style={{ pointerEvents: interactive ? 'auto' : 'none', width: '100%', maxWidth: 820, maxHeight: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, overflow: 'hidden' }}>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', minWidth: 0, gap: 9 }}>
         <div testId="extension-dialog-marker" style={{ width: 6, height: 6, marginTop: 6, flexShrink: 0, borderRadius: 3, backgroundColor: colors.warning }} />
         <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -249,10 +304,14 @@ function GenericDialog({ dialog, queued, controller }: { dialog: ExtensionDialog
       {dialog.message && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, minWidth: 0, width: '100%', whiteSpace: 'normal' }}>{dialog.message}</text>}
       {dialog.method === 'select' && (
         <>
-          {options.length > 5 && <input testId="extension-dialog-search" value={query} placeholder="Search choices…" autoFocus theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }} style={{ width: '100%', height: 34, paddingLeft: 10, paddingRight: 10, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 11 }} onChange={(event) => setQuery(String(event.value ?? ''))} />}
-          <div testId="extension-dialog-options" style={{ minHeight: 0, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 2, overflow: 'scroll' }}>
+          {options.length > 5 && (
+            <div testId="extension-dialog-search-frame" style={{ width: '100%', height: 34, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 10, paddingRight: 10, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
+              <input testId="extension-dialog-search" value={query} placeholder="Search choices…" autoFocus theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }} style={{ minWidth: 0, height: 28, flexGrow: 1, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 11 }} onChange={(event) => setQueryState({ dialogId: dialog.id, value: String(event.value ?? '') })} />
+            </div>
+          )}
+          <MotionDiv key={dialog.id} testId="extension-dialog-options" initial={{ opacity: 0.96, top: 4 }} animate={{ opacity: 1, top: 0 }} transition={{ duration: DIALOG_TRANSITION_SECONDS, ease: 'easeOut' }} style={{ position: 'relative', minHeight: 0, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 2, overflow: 'scroll' }}>
             {filtered.map((option, index) => (
-              <div key={`${index}-${option.value}`} testId={`extension-dialog-option-${index}`} tabIndex={0} style={{ minHeight: option.detail ? 52 : 48, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingTop: option.detail ? 9 : 0, paddingRight: 9, paddingBottom: option.detail ? 9 : 0, paddingLeft: 9, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => controller.respondToDialog({ value: option.value })} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') controller.respondToDialog({ value: option.value }) }}>
+              <div key={`${index}-${option.value}`} testId={`extension-dialog-option-${index}`} tabIndex={0} style={{ minHeight: option.detail ? 52 : 48, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingTop: option.detail ? 9 : 0, paddingRight: 9, paddingBottom: option.detail ? 9 : 0, paddingLeft: 9, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => onRespond({ value: option.value })} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onRespond({ value: option.value }) }}>
                 {option.ordinal && <text style={{ width: 19, color: colors.textFaint, fontSize: 10, flexShrink: 0 }}>{option.ordinal}</text>}
                 <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3 }}>
                   <text testId={`extension-dialog-option-label-${index}`} style={{ color: colors.text, fontSize: 11, lineHeight: 16, fontWeight: 600, whiteSpace: 'normal' }}>{option.label}</text>
@@ -261,23 +320,23 @@ function GenericDialog({ dialog, queued, controller }: { dialog: ExtensionDialog
               </div>
             ))}
             {filtered.length === 0 && <text style={{ color: colors.textFaint, fontSize: 10, padding: 12 }}>No choices match your search.</text>}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'row' }}><Button label={cancelLabel} tone="quiet" compact onClick={() => controller.respondToDialog({ cancelled: true })} /></div>
+          </MotionDiv>
+          <div style={{ display: 'flex', flexDirection: 'row' }}><Button label={cancelLabel} tone="quiet" compact onClick={() => onRespond({ cancelled: true })} /></div>
         </>
       )}
       {dialog.method === 'confirm' && (
         <div style={{ display: 'flex', flexDirection: 'row', gap: 7 }}>
-          <Button label="Confirm" tone="primary" onClick={() => controller.respondToDialog({ confirmed: true })} />
-          <Button label="Decline" onClick={() => controller.respondToDialog({ confirmed: false })} />
-          <Button label={cancelLabel} tone="quiet" onClick={() => controller.respondToDialog({ cancelled: true })} />
+          <Button label="Confirm" tone="primary" onClick={() => onRespond({ confirmed: true })} />
+          <Button label="Decline" onClick={() => onRespond({ confirmed: false })} />
+          <Button label={cancelLabel} tone="quiet" onClick={() => onRespond({ cancelled: true })} />
         </div>
       )}
       {(dialog.method === 'input' || dialog.method === 'editor') && (
         <>
-          <textarea testId="extension-dialog-input" value={value} placeholder={dialog.placeholder ?? ''} minRows={dialog.method === 'editor' ? 5 : 1} maxRows={dialog.method === 'editor' ? 12 : 4} autoFocus theme={nativeTheme} style={{ width: '100%', minWidth: 0, padding: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 12, lineHeight: 18 }} onChange={(event) => setValue(String(event.value ?? ''))} onSubmit={() => controller.respondToDialog({ value })} />
+          <textarea testId="extension-dialog-input" value={value} placeholder={dialog.placeholder ?? ''} minRows={dialog.method === 'editor' ? 5 : 1} maxRows={dialog.method === 'editor' ? 12 : 4} autoFocus theme={nativeTheme} style={{ width: '100%', minWidth: 0, padding: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 12, lineHeight: 18 }} onChange={(event) => setValueState({ dialogId: dialog.id, value: String(event.value ?? '') })} onSubmit={() => onRespond({ value })} />
           <div style={{ display: 'flex', flexDirection: 'row', gap: 7 }}>
-            <Button label="Submit" tone="primary" onClick={() => controller.respondToDialog({ value })} />
-            <Button label={cancelLabel} tone="quiet" onClick={() => controller.respondToDialog({ cancelled: true })} />
+            <Button label="Submit" tone="primary" onClick={() => onRespond({ value })} />
+            <Button label={cancelLabel} tone="quiet" onClick={() => onRespond({ cancelled: true })} />
           </div>
         </>
       )}

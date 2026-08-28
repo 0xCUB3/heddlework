@@ -10,7 +10,7 @@ import { formatElapsedSeconds } from './duration.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { composerNotificationStackHeight } from './notifications.tsx'
-import { questionnaireWaitingDockReserveHeight } from './composer.tsx'
+import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { resolveToolPresentation, type FabricAuditPresentation, type FabricToolPresentation, type ToolPresenter } from './tool-presenters.ts'
 import {
@@ -246,6 +246,8 @@ export const Transcript = memo(function Transcript({
             noticeCount={state.notices.length}
             questionnaireCollapsed={state.questionnaireCollapsed !== undefined}
             queue={state.queue}
+            statusItems={state.statusItems}
+            widgets={state.widgets}
             expanded={row.kind === 'trace-header' ? expandedTraceIds.has(row.id) : expandedEntryIds.has(row.id)}
             onToggleTrace={toggleTrace}
             onToggleEntry={toggleEntry}
@@ -270,7 +272,9 @@ export const Transcript = memo(function Transcript({
   && previous.state.session.isStreaming === next.state.session.isStreaming
   && previous.state.notices.length === next.state.notices.length
   && previous.state.questionnaireCollapsed === next.state.questionnaireCollapsed
-  && previous.state.queue === next.state.queue)
+  && previous.state.queue === next.state.queue
+  && previous.state.statusItems === next.state.statusItems
+  && previous.state.widgets === next.state.widgets)
 
 function ProjectedTranscriptRow({
   row,
@@ -281,6 +285,8 @@ function ProjectedTranscriptRow({
   noticeCount,
   questionnaireCollapsed,
   queue,
+  statusItems,
+  widgets,
   expanded,
   onToggleTrace,
   onToggleEntry,
@@ -295,6 +301,8 @@ function ProjectedTranscriptRow({
   noticeCount: number
   questionnaireCollapsed: boolean
   queue: WorkbenchState['queue']
+  statusItems: WorkbenchState['statusItems']
+  widgets: WorkbenchState['widgets']
   expanded: boolean
   onToggleTrace(traceId: string): void
   onToggleEntry(rowId: string): void
@@ -303,7 +311,7 @@ function ProjectedTranscriptRow({
 }) {
   if (row.kind === 'empty-conversation') return <EmptyConversation workspacePath={workspacePath} />
   if (row.kind === 'working') return <WorkingRow activity={activity} />
-  if (row.kind === 'composer-spacer') return <ComposerSpacer noticeCount={noticeCount} questionnaireCollapsed={questionnaireCollapsed} queue={queue} />
+  if (row.kind === 'composer-spacer') return <ComposerSpacer noticeCount={noticeCount} questionnaireCollapsed={questionnaireCollapsed} queue={queue} statusItems={statusItems} widgets={widgets} />
   if (row.kind === 'timeline-item') return <TimelineItemRow item={row.item} onRevert={onRevert} />
   if (row.kind === 'trace-header') {
     return (
@@ -777,8 +785,8 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   )
 }
 
-function ComposerSpacer({ noticeCount, questionnaireCollapsed, queue }: { noticeCount: number; questionnaireCollapsed: boolean; queue: WorkbenchState['queue'] }) {
-  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) }} />
+function ComposerSpacer({ noticeCount, questionnaireCollapsed, queue, statusItems, widgets }: { noticeCount: number; questionnaireCollapsed: boolean; queue: WorkbenchState['queue']; statusItems: WorkbenchState['statusItems']; widgets: WorkbenchState['widgets'] }) {
+  return <div testId="composer-spacer" style={{ width: '100%', height: 194 + composerNotificationStackHeight(noticeCount) + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems) }} />
 }
 
 function Timestamp({ value }: { value: number }) {

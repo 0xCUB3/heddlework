@@ -114,6 +114,41 @@ describeNative('conversation extension overlays', () => {
     }
   })
 
+  it('keeps conversation actions above persistent extension statuses', async () => {
+    const transport = new OverlayTransport()
+    const controller = new WorkbenchController(transport, '/tmp/status-spacing', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    const root = createTestRoot({ width: 1_280, height: 800 })
+    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
+    await controller.start()
+    const automation = await connectTest(root.renderer)
+    try {
+      await Bun.sleep(30)
+      root.renderer.flush()
+      const baseSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      transport.emit({ type: 'extension_ui_request', id: 'fabric-status', method: 'setStatus', statusKey: 'fabric', statusText: '2 agents · 1 approval pending' })
+      await Bun.sleep(30)
+      root.renderer.flush()
+
+      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBe(baseSpacerHeight + 35)
+      const railBounds = await automation.getByTestId('extension-surface-rail').bounds()
+      const conversationBottom = Math.max(...(await automation.getByTestId('message-footer').all()).flatMap((footer) => {
+        const bounds = footer.bounds
+        return bounds ? [bounds.y + bounds.height] : []
+      }))
+      expect(conversationBottom).toBeLessThanOrEqual(railBounds.y)
+
+      transport.emit({ type: 'extension_ui_request', id: 'fabric-status-clear', method: 'setStatus', statusKey: 'fabric', statusText: '' })
+      await Bun.sleep(30)
+      root.renderer.flush()
+      expect(await automation.getByTestId('extension-surface-rail').count()).toBe(0)
+      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBe(baseSpacerHeight)
+    } finally {
+      await automation.close()
+      root.unmount()
+      await controller.dispose()
+    }
+  })
+
   it('renders nested Fabric settings as searchable rows in the main conversation area', async () => {
     const transport = new OverlayTransport()
     const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
@@ -147,6 +182,15 @@ describeNative('conversation extension overlays', () => {
       expect(root.renderer.findByTestId('extension-dialog-option-0')?.style.borderBottomWidth).toBe(0)
       expect(root.renderer.findByTestId('extension-dialog-option-1')?.style.borderBottomWidth).toBe(0)
       expect((root.renderer.findByTestId('extension-dialog-option-0')?.style.hover as { backgroundColor?: string } | undefined)?.backgroundColor).toBe(colors.sidebarHover)
+      const searchFrameBounds = await automation.getByTestId('extension-dialog-search-frame').bounds()
+      const searchBounds = await automation.getByTestId('extension-dialog-search').bounds()
+      expect(root.renderer.findByTestId('extension-dialog-search-frame')?.style.height).toBe(34)
+      expect(root.renderer.findByTestId('extension-dialog-search')?.style.height).toBe(28)
+      expect(searchFrameBounds.height).toBeGreaterThan(searchBounds.height)
+      expect(Math.abs(searchBounds.y + searchBounds.height / 2 - (searchFrameBounds.y + searchFrameBounds.height / 2))).toBeLessThanOrEqual(1)
+      const dialogElementId = root.renderer.findByTestId('extension-dialog')!.id
+      const searchElementId = root.renderer.findByTestId('extension-dialog-search')!.id
+      const optionsElementId = root.renderer.findByTestId('extension-dialog-options')!.id
       await automation.getByTestId('extension-dialog-option-0').hover()
       await Bun.sleep(20)
       root.renderer.flush()
@@ -155,7 +199,18 @@ describeNative('conversation extension overlays', () => {
         root.renderer.captureScreenshot(screenshot)
         expect(statSync(screenshot).size).toBeGreaterThan(10_000)
       }
-      controller.respondToDialog({ value: 'UI · auto — Fabric activity widget and dashboard.' })
+      await automation.getByTestId('extension-dialog-search').fill('activity widget')
+      await Bun.sleep(20)
+      root.renderer.flush()
+      expect(await automation.getByTestId('extension-dialog-option-label-0').textContent()).toBe('UI')
+      await automation.getByTestId('extension-dialog-option-0').click()
+      await Bun.sleep(40)
+      root.renderer.flush()
+      expect(await automation.getByTestId('extension-dialog').count()).toBe(1)
+      expect(root.renderer.findByTestId('extension-dialog-transition')?.style.pointerEvents).toBe('none')
+      const exitMotion = root.renderer.findByTestId('extension-dialog-transition')?.customProps?.motion as { animate?: { opacity?: number; top?: number }; transition?: { delay?: number; duration?: number } } | undefined
+      expect(exitMotion?.animate).toEqual({ opacity: 0, top: 4 })
+      expect(exitMotion?.transition?.delay).toBe(0.08)
       transport.emit({ type: 'extension_ui_request', id: 'fabric-settings-ui', method: 'select', title: 'Fabric settings › UI\nFabric activity widget and dashboard.', options: [
         'Enabled · true — Render Fabric UI surfaces.',
         'Widget · auto — Show activity automatically, always, or keep it hidden.',
@@ -170,7 +225,14 @@ describeNative('conversation extension overlays', () => {
       await Bun.sleep(20)
       root.renderer.flush()
       expect(await automation.getByTestId('extension-dialog-search').count()).toBe(1)
+      expect(root.renderer.findByTestId('extension-dialog')?.id).toBe(dialogElementId)
+      expect(root.renderer.findByTestId('extension-dialog-search')?.id).toBe(searchElementId)
+      expect(root.renderer.findByTestId('extension-dialog-options')?.id).not.toBe(optionsElementId)
       expect(root.renderer.findByTestId('extension-dialog-option-0')?.style.borderBottomWidth).toBe(0)
+      const optionsMotion = root.renderer.findByTestId('extension-dialog-options')?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number }; transition?: { duration?: number } } | undefined
+      expect(optionsMotion?.initial).toEqual({ opacity: 0.96, top: 4 })
+      expect(optionsMotion?.animate).toEqual({ opacity: 1, top: 0 })
+      expect(optionsMotion?.transition?.duration).toBe(0.16)
       if (process.platform === 'darwin') {
         const screenshot = screenshotPath('workbench-fabric-settings-nested.png')
         root.renderer.captureScreenshot(screenshot)
