@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { ChipSelect, matchSelectOptions, type SelectOption } from '../src/ui/primitives.tsx'
-import { applyResolvedTheme, lightColors } from '../src/ui/theme.ts'
+import { applyResolvedTheme, colors, lightColors } from '../src/ui/theme.ts'
 
 describe('select option matching', () => {
   it('uses Localterm-style fuzzy matching across model names and provider IDs', () => {
@@ -48,13 +48,20 @@ describeNative('bounded select content', () => {
     await Bun.sleep(20)
     root.renderer.flush()
     const content = root.renderer.findByTestId('overflow-model-picker-content')!
-    expect(content.style.overflow).toBe('scroll')
-    expect((await automation.getByTestId('overflow-model-picker-content').bounds()).height).toBeLessThanOrEqual(340)
+    const surface = root.renderer.findByTestId('overflow-model-picker-surface')!
+    const list = root.renderer.findByTestId('overflow-model-picker-list')!
+    const motion = surface.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+    expect(content.style.backgroundColor).toBe(colors.background)
+    expect(surface.style.overflow).toBe('hidden')
+    expect(list.style.overflow).toBe('scroll')
+    expect((await automation.getByTestId('overflow-model-picker-surface').bounds()).height).toBeLessThanOrEqual(340)
+    expect(motion.initial).toEqual({ opacity: 0, top: 4 })
+    expect(motion.animate).toEqual({ opacity: 1, top: 0 })
     expect(await automation.getByTestId('overflow-model-picker-option').count()).toBe(24)
 
-    root.renderer.scrollTo(content.id, 0, -10_000)
+    root.renderer.scrollTo(list.id, 0, -10_000)
     root.renderer.flush()
-    expect(root.renderer.getScrollOffset(content.id)?.[1]).toBeLessThan(0)
+    expect(root.renderer.getScrollOffset(list.id)?.[1]).toBeLessThan(0)
     expect(root.renderer.getPaintedText()).toContain('Model 23')
 
     await automation.close()
@@ -71,7 +78,8 @@ describeNative('bounded select content', () => {
     await Bun.sleep(20)
     root.renderer.flush()
     expect(await automation.getByTestId('searchable-model-picker-search').count()).toBe(1)
-    expect(root.renderer.findByTestId('searchable-model-picker-content')?.style.backgroundColor).toBe(lightColors.popover)
+    expect(root.renderer.findByTestId('searchable-model-picker-content')?.style.backgroundColor).toBe(lightColors.background)
+    expect(root.renderer.findByTestId('searchable-model-picker-surface')?.style.backgroundColor).toBe(lightColors.popover)
     expect(await automation.getByTestId('searchable-model-picker-option').count()).toBe(options.length)
     expect(root.renderer.getPaintedText()).toContain(`${options.length} of ${options.length} models`)
 
@@ -82,6 +90,12 @@ describeNative('bounded select content', () => {
     expect(root.renderer.getPaintedText()).toContain(`1 of ${options.length} models`)
 
     await automation.getByTestId('searchable-model-picker-option').click()
+    expect(await automation.getByTestId('searchable-model-picker-content').count()).toBe(1)
+    const exitMotion = root.renderer.findByTestId('searchable-model-picker-surface')?.customProps?.motion as { animate: { opacity: number; top: number } }
+    expect(exitMotion.animate).toEqual({ opacity: 0, top: 4 })
+    expect(root.renderer.findByTestId('searchable-model-picker-content')?.style.pointerEvents).toBe('none')
+    await Bun.sleep(180)
+    root.renderer.flush()
     expect(await automation.getByTestId('searchable-model-picker-content').count()).toBe(0)
     await automation.close()
     root.unmount()
@@ -113,6 +127,10 @@ describeNative('bounded select content', () => {
 
     expect(selected).toBe(options[0]!.value)
     expect(behindClicks).toBe(0)
+    expect(await automation.getByTestId('shielded-picker-content').count()).toBe(1)
+    expect(root.renderer.findByTestId('shielded-picker-content')?.style.pointerEvents).toBe('none')
+    await Bun.sleep(180)
+    root.renderer.flush()
     expect(await automation.getByTestId('shielded-picker-content').count()).toBe(0)
     await automation.close()
     root.unmount()

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import type { ThreadPriority } from '../workbench/state.ts'
+import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
 
@@ -27,28 +28,28 @@ export function FlowPriorityPicker({ priority, overridden, counts, showLabel = f
   testId?: string | undefined
   onChange(priority: ThreadPriority | undefined): void
 }) {
-  const [open, setOpen] = useState(false)
+  const dropdown = useDropdownState()
   const selected = overridden ? String(priority) : 'auto'
   const options = [
     { id: 'auto', label: `Automatic · ${flowPriorityLabel(priority)}`, priority },
     ...PRIORITIES.map((option) => ({ id: String(option.value), label: option.label, priority: option.value })),
   ]
-  const toggleOpen = () => setOpen((value) => !value)
   const choose = (id: string) => {
     onChange(id === 'auto' ? undefined : Number(id) as ThreadPriority)
-    setOpen(false)
+    dropdown.setOpen(false)
   }
   return (
     <>
-      <div testId={testId} tabIndex={0} style={{ ...(showLabel ? { minWidth: 108 } : { width: 30, minWidth: 30 }), position: 'relative', height: 30, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: showLabel ? 'flex-start' : 'center', gap: 6, paddingLeft: showLabel ? 6 : 0, paddingRight: showLabel ? 6 : 0, borderRadius: 6, backgroundColor: open ? colors.hover : colors.transparent, cursor: 'pointer' }} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') toggleOpen() }}>
-        <div testId={`${testId}-hit`} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: 6, backgroundColor: PRIORITY_HIT_FILL, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={toggleOpen} />
+      <div testId={testId} tabIndex={0} style={{ ...(showLabel ? { minWidth: 108 } : { width: 30, minWidth: 30 }), position: 'relative', height: 30, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: showLabel ? 'flex-start' : 'center', gap: 6, paddingLeft: showLabel ? 6 : 0, paddingRight: showLabel ? 6 : 0, borderRadius: 6, backgroundColor: dropdown.open ? colors.hover : colors.transparent, cursor: 'pointer' }} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') dropdown.toggle() }}>
+        <div testId={`${testId}-hit`} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: 6, backgroundColor: PRIORITY_HIT_FILL, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={dropdown.toggle} />
         <div style={{ width: 15, height: 15, display: 'flex', pointerEvents: 'none' }}><FlowPriorityIcon priority={priority} monochrome={monochrome} testId={`${testId}-icon`} /></div>
         {showLabel && <text style={{ minWidth: 0, flexGrow: 1, color: monochrome ? colors.textMuted : priorityTone(priority), fontSize: 9, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', pointerEvents: 'none' }}>{`${flowPriorityLabel(priority)}${overridden ? '' : ' · Auto'}`}</text>}
         {showLabel && <div style={{ width: 10, height: 10, pointerEvents: 'none' }}><Icon name="chevronDown" size={10} color={colors.textFaint} /></div>}
       </div>
-      {open && (
+      {dropdown.mounted && (
         <anchored side="bottom" align="start" gap={6} fit="snap" snapMargin={8} deferred priority={9} occlude>
-          <div testId="flow-priority-menu" tabIndex={0} onMouseDownOutside={() => setOpen(false)} style={{ width: 216, display: 'flex', flexDirection: 'column', padding: 5, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
+          <div testId="flow-priority-positioner" style={{ display: 'flex', backgroundColor: showLabel ? colors.card : colors.background, pointerEvents: dropdown.open ? 'auto' : 'none' }}>
+          <DropdownSurface testId="flow-priority-menu" open={dropdown.open} tabIndex={0} onMouseDownOutside={() => dropdown.setOpen(false)} style={{ width: 216, padding: 5, borderRadius: 9 }}>
             {options.map((option) => {
               const active = option.id === selected
               const count = option.id === 'auto' ? undefined : counts?.[option.priority] ?? 0
@@ -64,6 +65,7 @@ export function FlowPriorityPicker({ priority, overridden, counts, showLabel = f
                 </div>
               )
             })}
+          </DropdownSurface>
           </div>
         </anchored>
       )}
@@ -95,7 +97,7 @@ export function FlowLabelPills({ labels, max = 2 }: { labels: readonly string[];
 }
 
 export function FlowLabelPicker({ selected, options, onChange }: { selected: readonly string[]; options: readonly string[]; onChange(labels: string[]): void }) {
-  const [open, setOpen] = useState(false)
+  const dropdown = useDropdownState()
   const [query, setQuery] = useState('')
   const all = useMemo(() => [...new Set([...selected, ...options])].toSorted((left, right) => left.localeCompare(right)), [options, selected])
   const normalized = query.trim().toLowerCase()
@@ -108,13 +110,14 @@ export function FlowLabelPicker({ selected, options, onChange }: { selected: rea
   }
   return (
     <div style={{ minWidth: 0, flexGrow: 1 }}>
-      <div testId="flow-label-trigger" tabIndex={0} style={{ minHeight: 28, minWidth: 0, width: '100%', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, paddingLeft: 7, paddingRight: 6, borderRadius: 7, borderWidth: 1, borderColor: colors.border, backgroundColor: open ? colors.hover : colors.background, cursor: 'pointer' }} onClick={() => setOpen((value) => !value)}>
+      <div testId="flow-label-trigger" tabIndex={0} style={{ minHeight: 28, minWidth: 0, width: '100%', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, paddingLeft: 7, paddingRight: 6, borderRadius: 7, borderWidth: 1, borderColor: colors.border, backgroundColor: dropdown.open ? colors.hover : colors.background, cursor: 'pointer' }} onClick={dropdown.toggle}>
         <div style={{ minWidth: 0, flexGrow: 1 }}>{selected.length > 0 ? <FlowLabelPills labels={selected} max={2} /> : <text style={{ color: colors.textFaint, fontSize: 9 }}>Add labels…</text>}</div>
         <Icon name="chevronDown" size={10} color={colors.textFaint} />
       </div>
-      {open && (
+      {dropdown.mounted && (
         <anchored side="bottom" align="end" gap={5} fit="snap" snapMargin={8} deferred priority={8} occlude>
-          <div testId="flow-label-menu" tabIndex={0} onMouseDownOutside={() => setOpen(false)} style={{ width: 250, maxHeight: 310, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 5, padding: 5, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}>
+          <div testId="flow-label-positioner" style={{ display: 'flex', backgroundColor: colors.card, pointerEvents: dropdown.open ? 'auto' : 'none' }}>
+          <DropdownSurface testId="flow-label-menu" open={dropdown.open} tabIndex={0} onMouseDownOutside={() => dropdown.setOpen(false)} style={{ width: 250, maxHeight: 310, minHeight: 0, gap: 5, padding: 5, borderRadius: 9 }}>
             <div style={{ height: 34, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 8, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
               <Icon name="search" size={12} color={colors.textFaint} />
               <input testId="flow-label-search" value={query} placeholder="Search or create a label…" theme={{ caret: colors.text, text: colors.text, textMuted: colors.placeholder, bg: colors.transparent }} style={{ minWidth: 0, flexGrow: 1, height: 29, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 10 }} onChange={(event) => setQuery(String(event.value ?? ''))} />
@@ -124,6 +127,7 @@ export function FlowLabelPicker({ selected, options, onChange }: { selected: rea
               {canCreate && <div testId="flow-label-create" tabIndex={0} style={{ height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => toggle(candidate)}><Icon name="plus" size={12} color={colors.textMuted} /><text style={{ minWidth: 0, color: colors.textMuted, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{`Create “${candidate}”`}</text></div>}
               {visible.length === 0 && !canCreate && <div style={{ height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><text style={{ color: colors.textFaint, fontSize: 9 }}>No labels match</text></div>}
             </div>
+          </DropdownSurface>
           </div>
         </anchored>
       )}

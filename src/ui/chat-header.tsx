@@ -3,6 +3,7 @@ import { basename } from 'node:path'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
+import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
@@ -58,6 +59,7 @@ export function ChatHeader({
 }
 
 function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchController; compact: boolean }) {
+  const dropdown = useDropdownState()
   const options = [
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },
     { value: 'open', label: 'Open project', detail: 'Open this workspace externally' },
@@ -69,6 +71,8 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
   return (
     <Select
       value=""
+      open={dropdown.mounted}
+      onOpenChange={dropdown.setOpen}
       onValueChange={(value) => {
         if (value === 'new') void controller.newSession()
         if (value === 'open') openPath(state.workspacePath)
@@ -80,28 +84,30 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
     >
       <SelectTrigger
         testId="add-action"
-        style={(trigger: SelectTriggerState) => ({ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, width: compact ? 30 : 'auto', height: 28, paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 9, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: trigger.open ? colors.hover : colors.raised, cursor: 'pointer', hover: { backgroundColor: colors.hover } })}
+        style={(_trigger: SelectTriggerState) => ({ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, width: compact ? 30 : 'auto', height: 28, paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 9, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: dropdown.open ? colors.hover : colors.raised, cursor: 'pointer', hover: { backgroundColor: colors.hover } })}
       >
         <Icon name="plus" size={13} color={colors.text} />
         {!compact && <text style={{ color: colors.text, fontSize: 11, fontWeight: 550 }}>Add action</text>}
       </SelectTrigger>
-      <SelectContent side="bottom" sideOffset={7} align="end" style={{ width: 254, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
-        {options.map((option) => {
-          const alwaysEnabled = option.value === 'refresh' || option.value === 'open'
-          const disabled = alwaysEnabled ? false : state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
-          return (
-            <SelectItem
-              key={option.value}
-              value={option.value}
-              textValue={option.label}
-              disabled={disabled}
-              style={(item: SelectItemState) => ({ display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 7, paddingBottom: 7, paddingLeft: 9, paddingRight: 9, borderRadius: 7, opacity: disabled ? 0.4 : 1, backgroundColor: item.highlighted ? colors.hover : colors.popover, cursor: disabled ? 'default' : 'pointer' })}
-            >
-              <text style={{ color: colors.text, fontSize: 11, lineHeight: 16, fontWeight: 600, fontFamily: nativeTheme.fontMono }}>{option.label}</text>
-              <text style={{ color: colors.textFaint, fontSize: 10, lineHeight: 15, fontFamily: nativeTheme.fontMono }}>{option.detail}</text>
-            </SelectItem>
-          )
-        })}
+      <SelectContent testId="add-action-content" side="bottom" sideOffset={7} align="end" style={{ width: 254, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: colors.background, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}>
+        <DropdownSurface testId="add-action-menu" open={dropdown.open} style={{ width: '100%', padding: 5 }}>
+          {options.map((option) => {
+            const alwaysEnabled = option.value === 'refresh' || option.value === 'open'
+            const disabled = alwaysEnabled ? false : state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
+            return (
+              <SelectItem
+                key={option.value}
+                value={option.value}
+                textValue={option.label}
+                disabled={disabled}
+                style={(item: SelectItemState) => ({ display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 7, paddingBottom: 7, paddingLeft: 9, paddingRight: 9, borderRadius: 7, opacity: disabled ? 0.4 : 1, backgroundColor: item.highlighted ? colors.hover : colors.popover, cursor: disabled ? 'default' : 'pointer' })}
+              >
+                <text style={{ color: colors.text, fontSize: 11, lineHeight: 16, fontWeight: 600, fontFamily: nativeTheme.fontMono }}>{option.label}</text>
+                <text style={{ color: colors.textFaint, fontSize: 10, lineHeight: 15, fontFamily: nativeTheme.fontMono }}>{option.detail}</text>
+              </SelectItem>
+            )
+          })}
+        </DropdownSurface>
       </SelectContent>
     </Select>
   )

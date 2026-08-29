@@ -2,7 +2,7 @@ import { motion } from '@gpuix/react'
 import { useEffect, useRef, useState, type ComponentProps, type ComponentType } from 'react'
 
 export const SPRING_SETTLE_MS = 500
-export const MotionDiv = motion.div as ComponentType<ComponentProps<typeof motion.div> & { testId?: string }>
+export const MotionDiv = motion.div as ComponentType<ComponentProps<typeof motion.div> & { testId?: string; tabIndex?: number }>
 
 const STIFFNESS = 420
 const DAMPING = 38

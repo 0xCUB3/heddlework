@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { ThreadLifecycle } from '../workbench/state.ts'
 import { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
+import { DropdownSurface, useDropdownPresence } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { colors } from './theme.ts'
@@ -52,6 +53,7 @@ export function SessionRow({
   const { compact } = useResponsiveLayout()
   const [hovered, setHovered] = useState(false)
   const [settleHovered, setSettleHovered] = useState(false)
+  const snoozeMounted = useDropdownPresence(snoozeOpen)
   if (lifecycle !== 'active') {
     return (
       <SessionRowInset sidebarWidth={sidebarWidth} height={36}>
@@ -77,13 +79,13 @@ export function SessionRow({
         <Icon name="folder" size={13} color={colors.textFaint} />
         <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
         <div style={{ width: 70, height: 20, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-          {compact || hovered || snoozeOpen ? (
+          {compact || hovered || snoozeMounted ? (
             <>
               <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
                 <div testId="sidebar-snooze" tabIndex={0} style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={onSnooze}>
                   <Icon name="clock" size={12} color={colors.textFaint} />
                 </div>
-                {snoozeOpen && <SnoozeMenu onSchedule={onSchedule} onClose={onSnooze} />}
+                {snoozeMounted && <SnoozeMenu open={snoozeOpen} onSchedule={onSchedule} onClose={onSnooze} />}
               </div>
               <div testId="sidebar-settle" tabIndex={0} style={{ height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, paddingLeft: 3, paddingRight: 0, cursor: 'pointer', backgroundColor: colors.transparent }} onMouseEnter={() => setSettleHovered(true)} onMouseLeave={() => setSettleHovered(false)} onClick={onSettle}>
                 <Icon name="check" size={11} color={settleHovered ? colors.text : colors.textFaint} />
@@ -110,7 +112,7 @@ export function SessionRow({
   )
 }
 
-function SnoozeMenu({ onSchedule, onClose }: { onSchedule(until: number): void; onClose(): void }) {
+function SnoozeMenu({ open, onSchedule, onClose }: { open: boolean; onSchedule(until: number): void; onClose(): void }) {
   const now = Date.now()
   const tomorrow = new Date(now)
   tomorrow.setDate(tomorrow.getDate() + 1)
@@ -126,16 +128,18 @@ function SnoozeMenu({ onSchedule, onClose }: { onSchedule(until: number): void; 
   ]
   return (
     <anchored side="bottom" align="end" gap={5} fit="snap" snapMargin={8} deferred priority={8} occlude>
-      <div testId="snooze-menu" tabIndex={0} onMouseDownOutside={onClose} style={{ width: 204, display: 'flex', flexDirection: 'column', padding: 5, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}>
-        {options.map((option, index) => (
-          <React.Fragment key={option.label}>
-            <div testId={`snooze-option-${index}`} tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onSchedule(option.value)}>
-              <text style={{ color: colors.textMuted, fontSize: 11 }}>{option.label}</text>
-              <div style={{ flexGrow: 1 }} />
-              <text style={{ color: colors.textFaint, fontSize: 9 }}>{new Date(option.value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</text>
-            </div>
-          </React.Fragment>
-        ))}
+      <div testId="snooze-menu-positioner" style={{ display: 'flex', backgroundColor: colors.sidebar, pointerEvents: open ? 'auto' : 'none' }}>
+        <DropdownSurface testId="snooze-menu" open={open} tabIndex={0} onMouseDownOutside={onClose} style={{ width: 204, padding: 5, borderRadius: 9 }}>
+          {options.map((option, index) => (
+            <React.Fragment key={option.label}>
+              <div testId={`snooze-option-${index}`} tabIndex={0} style={{ height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onSchedule(option.value)}>
+                <text style={{ color: colors.textMuted, fontSize: 11 }}>{option.label}</text>
+                <div style={{ flexGrow: 1 }} />
+                <text style={{ color: colors.textFaint, fontSize: 9 }}>{new Date(option.value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</text>
+              </div>
+            </React.Fragment>
+          ))}
+        </DropdownSurface>
       </div>
     </anchored>
   )

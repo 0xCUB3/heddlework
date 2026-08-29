@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
+import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
@@ -252,12 +253,13 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch)
 
 function ProjectFilter({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange(value: string): void }) {
+  const dropdown = useDropdownState()
   const selected = options.find((option) => option.value === value) ?? options[0]!
   return (
-    <Select value={value} onValueChange={onChange} style={{ minWidth: 0, flexGrow: 1 }}>
+    <Select value={value} open={dropdown.mounted} onOpenChange={dropdown.setOpen} onValueChange={onChange} style={{ minWidth: 0, flexGrow: 1 }}>
       <SelectTrigger
         testId="sidebar-project-toggle"
-        style={(trigger: SelectTriggerState) => ({ minWidth: 0, width: '100%', height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 14, borderRadius: 8, backgroundColor: trigger.open ? colors.sidebarHover : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } })}
+        style={(_trigger: SelectTriggerState) => ({ minWidth: 0, width: '100%', height: 32, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 14, borderRadius: 8, backgroundColor: dropdown.open ? colors.sidebarHover : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } })}
       >
         <Icon name="folder" size={15} color={colors.textFaint} />
         <text testId="sidebar-project-label" style={{ color: colors.textMuted, fontSize: 12, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{selected.label}</text>
@@ -265,24 +267,26 @@ function ProjectFilter({ value, options, onChange }: { value: string; options: A
           <Icon name="chevronDown" size={12} color={colors.textFaint} />
         </div>
       </SelectTrigger>
-      <SelectContent testId="sidebar-project-filter" side="bottom" sideOffset={5} align="start" style={{ width: 238, maxHeight: 320, minHeight: 0, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll' }}>
-        {options.map((option, index) => (
-          <SelectItem
-            key={option.value}
-            testId={`sidebar-project-option-${index}`}
-            value={option.value}
-            textValue={option.label}
-            style={(item: SelectItemState) => ({ height: 34, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 7, backgroundColor: item.highlighted || item.selected ? colors.hover : colors.popover, cursor: 'pointer' })}
-          >
-            {(item: SelectItemState) => (
-              <>
-                <Icon name="folder" size={14} color={item.selected ? colors.text : colors.textFaint} />
-                <text style={{ minWidth: 0, flexGrow: 1, color: item.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: item.selected ? 650 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
-                {item.selected && <Icon name="check" size={12} color={colors.textMuted} />}
-              </>
-            )}
-          </SelectItem>
-        ))}
+      <SelectContent testId="sidebar-project-filter" side="bottom" sideOffset={5} align="start" style={{ width: 238, minHeight: 0, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: colors.sidebar, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}>
+        <DropdownSurface testId="sidebar-project-menu" open={dropdown.open} style={{ width: '100%', maxHeight: 320, minHeight: 0, padding: 5, overflow: 'scroll' }}>
+          {options.map((option, index) => (
+            <SelectItem
+              key={option.value}
+              testId={`sidebar-project-option-${index}`}
+              value={option.value}
+              textValue={option.label}
+              style={(item: SelectItemState) => ({ height: 34, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 7, backgroundColor: item.highlighted || item.selected ? colors.hover : colors.popover, cursor: 'pointer' })}
+            >
+              {(item: SelectItemState) => (
+                <>
+                  <Icon name="folder" size={14} color={item.selected ? colors.text : colors.textFaint} />
+                  <text style={{ minWidth: 0, flexGrow: 1, color: item.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: item.selected ? 650 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
+                  {item.selected && <Icon name="check" size={12} color={colors.textMuted} />}
+                </>
+              )}
+            </SelectItem>
+          ))}
+        </DropdownSurface>
       </SelectContent>
     </Select>
   )

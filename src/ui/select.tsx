@@ -9,6 +9,7 @@ import {
   ComboboxTrigger,
   type ComboboxItemState,
 } from '@gpuix/react'
+import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon, type IconName } from './icons.tsx'
 import { colors } from './theme.ts'
 
@@ -30,6 +31,7 @@ export function ChipSelect({
   searchable = false,
   onOpenChange,
   openRequest,
+  backdropColor = colors.background,
 }: {
   value: string
   label?: string
@@ -42,54 +44,54 @@ export function ChipSelect({
   searchable?: boolean
   onOpenChange?(open: boolean): void
   openRequest?: number
+  // Native anchored layers clear dark outside rounded children; match the host surface there.
+  backdropColor?: string
 }) {
-  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} {...(openRequest === undefined ? {} : { openRequest })} testId={testId} width={width} triggerMaxWidth={triggerMaxWidth} icon={icon} />
-  const [open, setOpen] = React.useState(false)
+  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} {...(openRequest === undefined ? {} : { openRequest })} testId={testId} width={width} triggerMaxWidth={triggerMaxWidth} icon={icon} backdropColor={backdropColor} />
+  const dropdown = useDropdownState(onOpenChange)
   const selected = options.find((option) => option.value === value)
   const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
   const items = options.map((option) => option.value)
-  const handleOpenChange = (nextOpen: boolean) => {
-    setOpen(nextOpen)
-    onOpenChange?.(nextOpen)
-  }
   React.useEffect(() => {
-    if (openRequest !== undefined) handleOpenChange(true)
+    if (openRequest !== undefined) dropdown.setOpen(true)
   }, [openRequest])
   return (
     <Combobox
       items={items}
       value={value}
-      open={open}
+      open={dropdown.mounted}
       filter={null}
       autoHighlight="always"
       disabled={options.length === 0}
       itemToStringValue={(item) => optionByValue.get(item)?.label ?? item}
-      onOpenChange={handleOpenChange}
+      onOpenChange={dropdown.setOpen}
       onValueChange={(nextValue) => {
         if (typeof nextValue === 'string') onChange(nextValue)
       }}
     >
-      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(open, triggerMaxWidth)}>
+      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(dropdown.open, triggerMaxWidth)}>
         <ChipSelectValue selected={selected} label={label} icon={icon} />
       </ComboboxTrigger>
       <ComboboxContent
         {...(testId ? { testId: `${testId}-content` } : {})}
         side="top"
         sideOffset={7}
-        style={{ width, maxHeight: 340, minHeight: 0, padding: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll' }}
+        style={{ width, minHeight: 0, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: backdropColor, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}
       >
-        <ComboboxList style={{ maxHeight: 330, minHeight: 0, overflow: 'scroll' }}>
-          {(item: string) => {
-            const option = optionByValue.get(item)
-            return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
-          }}
-        </ComboboxList>
+        <DropdownSurface {...(testId ? { testId: `${testId}-surface` } : {})} open={dropdown.open} style={{ width: '100%', maxHeight: 340, minHeight: 0, padding: 5 }}>
+          <ComboboxList {...(testId ? { testId: `${testId}-list` } : {})} style={{ maxHeight: 330, minHeight: 0, overflow: 'scroll' }}>
+            {(item: string) => {
+              const option = optionByValue.get(item)
+              return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
+            }}
+          </ComboboxList>
+        </DropdownSurface>
       </ComboboxContent>
     </Combobox>
   )
 }
 
-function SearchableChipSelect({ value, label, options, onChange, onOpenChange, openRequest, testId, width, triggerMaxWidth, icon }: {
+function SearchableChipSelect({ value, label, options, onChange, onOpenChange, openRequest, testId, width, triggerMaxWidth, icon, backdropColor }: {
   value: string
   label?: string | undefined
   options: SelectOption[]
@@ -100,8 +102,9 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, o
   width: number
   triggerMaxWidth: number
   icon?: IconName | undefined
+  backdropColor: string
 }) {
-  const [open, setOpen] = React.useState(false)
+  const dropdown = useDropdownState(onOpenChange)
   const [query, setQuery] = React.useState('')
   const selected = options.find((option) => option.value === value)
   const filtered = React.useMemo(() => matchSelectOptions(options, query), [options, query])
@@ -109,8 +112,7 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, o
   const items = filtered.map((option) => option.value)
   React.useEffect(() => {
     if (openRequest === undefined) return
-    setOpen(true)
-    onOpenChange?.(true)
+    dropdown.setOpen(true)
   }, [openRequest])
 
   return (
@@ -118,44 +120,45 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, o
       items={items}
       value={value}
       inputValue={query}
-      open={open}
+      open={dropdown.mounted}
       filter={null}
       autoHighlight="always"
       disabled={options.length === 0}
       itemToStringValue={(item) => optionByValue.get(item)?.label ?? item}
       onInputValueChange={setQuery}
       onOpenChange={(nextOpen) => {
-        setOpen(nextOpen)
-        onOpenChange?.(nextOpen)
+        dropdown.setOpen(nextOpen)
         if (!nextOpen) setQuery('')
       }}
       onValueChange={(nextValue) => {
         if (typeof nextValue === 'string') onChange(nextValue)
       }}
     >
-      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(open, triggerMaxWidth)}>
+      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(dropdown.open, triggerMaxWidth)}>
         <ChipSelectValue selected={selected} label={label} icon={icon} />
       </ComboboxTrigger>
       <ComboboxContent
         {...(testId ? { testId: `${testId}-content` } : {})}
         side="top"
         sideOffset={7}
-        style={{ width, minHeight: 0, padding: 5, gap: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover }}
+        style={{ width, minHeight: 0, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: backdropColor, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}
       >
-        <div style={{ height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
-          <Icon name="search" size={13} color={colors.textFaint} />
-          <ComboboxInput {...(testId ? { testId: `${testId}-search` } : {})} placeholder="Search models…" style={{ minWidth: 0, flexGrow: 1, height: 30, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 11 }} />
-        </div>
-        <ComboboxList {...(testId ? { testId: `${testId}-list` } : {})} style={{ maxHeight: 290, minHeight: 0, overflow: 'scroll' }}>
-          {(item: string) => {
-            const option = optionByValue.get(item)
-            return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
-          }}
-        </ComboboxList>
-        <ComboboxEmpty style={{ height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <text style={{ color: colors.textFaint, fontSize: 10 }}>No models match your search</text>
-        </ComboboxEmpty>
-        <text {...(testId ? { testId: `${testId}-count` } : {})} style={{ color: colors.textFaint, fontSize: 9, paddingLeft: 9, paddingBottom: 2 }}>{`${filtered.length} of ${options.length} models`}</text>
+        <DropdownSurface {...(testId ? { testId: `${testId}-surface` } : {})} open={dropdown.open} style={{ width: '100%', minHeight: 0, padding: 5, gap: 5 }}>
+          <div style={{ height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 9, paddingRight: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
+            <Icon name="search" size={13} color={colors.textFaint} />
+            <ComboboxInput {...(testId ? { testId: `${testId}-search` } : {})} placeholder="Search models…" style={{ minWidth: 0, flexGrow: 1, height: 30, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 11 }} />
+          </div>
+          <ComboboxList {...(testId ? { testId: `${testId}-list` } : {})} style={{ maxHeight: 290, minHeight: 0, overflow: 'scroll' }}>
+            {(item: string) => {
+              const option = optionByValue.get(item)
+              return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
+            }}
+          </ComboboxList>
+          <ComboboxEmpty style={{ height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <text style={{ color: colors.textFaint, fontSize: 10 }}>No models match your search</text>
+          </ComboboxEmpty>
+          <text {...(testId ? { testId: `${testId}-count` } : {})} style={{ color: colors.textFaint, fontSize: 9, paddingLeft: 9, paddingBottom: 2 }}>{`${filtered.length} of ${options.length} models`}</text>
+        </DropdownSurface>
       </ComboboxContent>
     </Combobox>
   )

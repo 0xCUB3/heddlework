@@ -94,6 +94,10 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('workspace-chooser-trigger').click()
     root.renderer.flush()
     expect(await automation.getByTestId('workspace-menu').count()).toBe(1)
+    const workspaceMenuMotion = root.renderer.findByTestId('workspace-menu')?.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+    expect(workspaceMenuMotion.initial).toEqual({ opacity: 0, top: 4 })
+    expect(workspaceMenuMotion.animate).toEqual({ opacity: 1, top: 0 })
+    expect(root.renderer.findByTestId('workspace-menu')?.style.backgroundColor).toBe(colors.popover)
     expect(await automation.getByTestId('workspace-choice-current').count()).toBe(1)
     expect(await automation.getByTestId('workspace-new-project').count()).toBe(1)
     expect(await automation.getByTestId('workspace-search').count()).toBe(1)
@@ -116,6 +120,12 @@ describeNative('WorkbenchApp', () => {
     const composerLayer = root.renderer.findByTestId('draft-composer-layer')!
     expect(workspaceStack.children.indexOf(workspacePositioner.id)).toBeGreaterThan(workspaceStack.children.indexOf(composerLayer.id))
     await automation.getByTestId('workspace-chooser-trigger').press('enter')
+    root.renderer.flush()
+    expect(await automation.getByTestId('workspace-menu').count()).toBe(1)
+    const workspaceExitMotion = root.renderer.findByTestId('workspace-menu')?.customProps?.motion as { animate: { opacity: number; top: number } }
+    expect(workspaceExitMotion.animate).toEqual({ opacity: 0, top: 4 })
+    expect(root.renderer.findByTestId('workspace-menu-positioner')?.style.pointerEvents).toBe('none')
+    await Bun.sleep(180)
     root.renderer.flush()
     expect(await automation.getByTestId('workspace-menu').count()).toBe(0)
     expect(await automation.getByTestId('sidebar-session-active').count()).toBe(0)
@@ -271,16 +281,36 @@ describeNative('WorkbenchApp', () => {
     expect(await automation.getByTestId('transcript-bottom-fade').count()).toBe(1)
 
     await automation.getByTestId('add-action').click()
+    expect(root.renderer.findByTestId('add-action-content')?.style.backgroundColor).toBe(colors.background)
+    expect(root.renderer.findByTestId('add-action-menu')?.style.backgroundColor).toBe(colors.popover)
+    const actionMotion = root.renderer.findByTestId('add-action-menu')?.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+    expect(actionMotion.initial).toEqual({ opacity: 0, top: 4 })
+    expect(actionMotion.animate).toEqual({ opacity: 1, top: 0 })
     expect(root.renderer.getPaintedText()).toContain('Clone thread')
     expect(root.renderer.getPaintedText()).toContain('Compact context')
     expect(root.renderer.getPaintedText()).toContain('Refresh sessions')
     expect(root.renderer.getPaintedText()).toContain('Export transcript')
     await automation.getByTestId('add-action').click()
+    const actionExitMotion = root.renderer.findByTestId('add-action-menu')?.customProps?.motion as { animate: { opacity: number; top: number } }
+    expect(actionExitMotion.animate).toEqual({ opacity: 0, top: 4 })
+    expect(root.renderer.findByTestId('add-action-content')?.style.pointerEvents).toBe('none')
+    await Bun.sleep(180)
+    root.renderer.flush()
     await automation.getByTestId('sidebar-project-toggle').click()
     expect(await automation.getByTestId('sidebar-project-filter').count()).toBe(1)
+    expect(root.renderer.findByTestId('sidebar-project-filter')?.style.backgroundColor).toBe(colors.sidebar)
+    expect(root.renderer.findByTestId('sidebar-project-menu')?.style.backgroundColor).toBe(colors.popover)
+    const projectMotion = root.renderer.findByTestId('sidebar-project-menu')?.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+    expect(projectMotion.initial).toEqual({ opacity: 0, top: 4 })
+    expect(projectMotion.animate).toEqual({ opacity: 1, top: 0 })
     expect(await automation.getByTestId('sidebar-session-active').count()).toBe(1)
     await automation.getByTestId('sidebar-project-option-1').click()
     expect(await automation.getByTestId('sidebar-session-active').count()).toBe(1)
+    const projectExitMotion = root.renderer.findByTestId('sidebar-project-menu')?.customProps?.motion as { animate: { opacity: number; top: number } }
+    expect(projectExitMotion.animate).toEqual({ opacity: 0, top: 4 })
+    expect(root.renderer.findByTestId('sidebar-project-filter')?.style.pointerEvents).toBe('none')
+    await Bun.sleep(180)
+    root.renderer.flush()
     await automation.getByTestId('sidebar-search').fill('no such thread')
     expect(root.renderer.getPaintedText()).toContain('No threads found')
     await automation.getByTestId('sidebar-search').fill('')
@@ -453,6 +483,10 @@ describeNative('WorkbenchApp', () => {
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
     await automation.getByTestId('sidebar-snooze').click()
+    expect(root.renderer.findByTestId('snooze-menu-positioner')?.style.backgroundColor).toBe(colors.sidebar)
+    const snoozeMotion = root.renderer.findByTestId('snooze-menu')?.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+    expect(snoozeMotion.initial).toEqual({ opacity: 0, top: 4 })
+    expect(snoozeMotion.animate).toEqual({ opacity: 1, top: 0 })
     expect(root.renderer.getPaintedText()).toContain('In 1 hour')
     await automation.getByTestId('snooze-option-0').click()
     expect(root.renderer.getPaintedText()).toContain('Snoozed (1)')

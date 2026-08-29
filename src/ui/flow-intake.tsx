@@ -59,11 +59,11 @@ export function FlowIntake({ state, runtime, purpose, onCreated, onCancel }: {
         <FramedInput testId="flow-title" value={title} placeholder="Derived from the first prompt if blank" onChange={setTitle} />
       </Field>
       <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-        <ChipSelect testId="flow-mode" label="Mode" value={mode} options={[
+        <ChipSelect backdropColor={colors.card} testId="flow-mode" label="Mode" value={mode} options={[
           { value: 'sequential', label: 'Sequential', detail: '/new → /model → prompt for every step' },
           { value: 'parallel', label: 'Parallel', detail: 'One prompt orchestrated through pi-fabric' },
         ]} width={290} triggerMaxWidth={190} onChange={chooseMode} />
-        <ChipSelect testId="flow-model" icon="sparkles" value={model} options={modelOptions} width={320} triggerMaxWidth={260} searchable onChange={setModel} />
+        <ChipSelect backdropColor={colors.card} testId="flow-model" icon="sparkles" value={model} options={modelOptions} width={320} triggerMaxWidth={260} searchable onChange={setModel} />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
         {prompts.map((prompt, index) => (
@@ -88,7 +88,7 @@ export function FlowIntake({ state, runtime, purpose, onCreated, onCancel }: {
       {purpose === 'schedule' && (
         <div testId="schedule-controls" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10 }}>
           <Field label="Cadence">
-            <ChipSelect testId="schedule-kind" value={timingKind} options={[
+            <ChipSelect backdropColor={colors.card} testId="schedule-kind" value={timingKind} options={[
               { value: 'once', label: 'Once' },
               { value: 'interval', label: 'Interval' },
               { value: 'daily', label: 'Daily' },

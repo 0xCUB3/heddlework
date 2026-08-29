@@ -11,6 +11,7 @@ import { FlowRuntime } from '../src/flows/runtime.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { FlowsView } from '../src/ui/flows-view.tsx'
+import { FlowRail } from '../src/ui/flow-rail.tsx'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from '../src/ui/responsive.tsx'
 import { colors } from '../src/ui/theme.ts'
 import { createInitialState } from '../src/workbench/state.ts'
@@ -19,6 +20,22 @@ import { createTestUiRegistry, testControllerDependencies } from './helpers/work
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('Flows surface', () => {
+  it('keeps the failed rail marker aligned with the other rail glyphs', async () => {
+    const root = createTestRoot({ width: 80, height: 92 })
+    root.render(<div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}><FlowRail status="succeeded" before={false} after /><FlowRail status="failed" before after={false} /></div>)
+    const automation = await connectTest(root.renderer)
+    try {
+      const succeeded = await automation.getByTestId('flow-rail-glyph-succeeded').bounds()
+      const failed = await automation.getByTestId('flow-rail-glyph-failed').bounds()
+      expect(root.renderer.findByTestId('flow-rail-glyph-failed')?.style.fontSize).toBe(10)
+      expect(failed.width).toBeLessThanOrEqual(succeeded.width)
+      expect(failed.height).toBeLessThanOrEqual(succeeded.height)
+    } finally {
+      await automation.close()
+      root.unmount()
+    }
+  })
+
   it('opens above Search, launches projected work, renders rails, and creates a schedule', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/flows-ui', testControllerDependencies())
     const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
@@ -376,6 +393,10 @@ describeNative('Flows surface', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       expect(await automation.getByTestId('flow-priority-menu').count()).toBe(1)
+      expect(root.renderer.findByTestId('flow-priority-positioner')?.style.backgroundColor).toBe(colors.background)
+      const priorityMotion = root.renderer.findByTestId('flow-priority-menu')?.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+      expect(priorityMotion.initial).toEqual({ opacity: 0, top: 4 })
+      expect(priorityMotion.animate).toEqual({ opacity: 1, top: 0 })
       const trailingSlots = await automation.getByTestId('flow-priority-trailing').all()
       const priorityChecks = await automation.getByTestId('flow-priority-check').all()
       expect(trailingSlots).toHaveLength(6)
@@ -393,6 +414,12 @@ describeNative('Flows surface', () => {
       expect(Math.abs((urgentStem.y + urgentDot.y + urgentDot.height) / 2 - urgentGlyph.y - urgentGlyph.height / 2)).toBeLessThanOrEqual(1)
       await automation.getByTestId('flow-priority-option-1').click()
       expect(controller.getSnapshot().threadLifecycle[activePath]?.priority).toBe(1)
+      const priorityExitMotion = root.renderer.findByTestId('flow-priority-menu')?.customProps?.motion as { animate: { opacity: number; top: number } }
+      expect(priorityExitMotion.animate).toEqual({ opacity: 0, top: 4 })
+      expect(root.renderer.findByTestId('flow-priority-positioner')?.style.pointerEvents).toBe('none')
+      await Bun.sleep(180)
+      root.renderer.flush()
+      expect(await automation.getByTestId('flow-priority-menu').count()).toBe(0)
 
       await automation.getByTestId('flow-task-PI-ACTIVE01').click()
       root.renderer.flush()
@@ -428,6 +455,10 @@ describeNative('Flows surface', () => {
       expect(root.renderer.getAllText()).not.toContain('Project')
 
       await automation.getByTestId('flow-label-trigger').click()
+      expect(root.renderer.findByTestId('flow-label-positioner')?.style.backgroundColor).toBe(colors.card)
+      const labelMotion = root.renderer.findByTestId('flow-label-menu')?.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
+      expect(labelMotion.initial).toEqual({ opacity: 0, top: 4 })
+      expect(labelMotion.animate).toEqual({ opacity: 1, top: 0 })
       await automation.getByTestId('flow-label-search').fill('customer')
       root.renderer.flush()
       await automation.getByTestId('flow-label-create').click()

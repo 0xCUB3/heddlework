@@ -7,7 +7,7 @@ import { Icon } from './icons.tsx'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media.ts'
-import { MotionDiv } from './motion.ts'
+import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { QueueDock } from './queue-dock.tsx'
 import { CommandPalette, ExtensionSurfaceRail, QuestionnaireWaitingDock } from './composer-surfaces.tsx'
@@ -50,7 +50,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     contextPopoverExitTimer.current = setTimeout(() => {
       contextPopoverExitTimer.current = undefined
       setContextPopoverMounted(false)
-    }, CONTEXT_POPOVER_MOTION_MS)
+    }, DROPDOWN_MOTION_MS)
   }
   const toggleContextPopover = () => {
     if (contextPopoverOpen) hideContextPopover()
@@ -198,6 +198,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
 
         <div testId="composer-toolbar" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 2 : 4, marginTop: 10, paddingLeft: layout.mobile ? 8 : 10, paddingRight: layout.mobile ? 8 : 11, overflow: 'visible', userSelect: 'none' }}>
           <ChipSelect
+            backdropColor={colors.composer}
             testId="model-picker"
             icon="sparkles"
             value={currentModel}
@@ -214,6 +215,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           />
           {!layout.mobile && <ToolbarSeparator />}
           <ChipSelect
+            backdropColor={colors.composer}
             testId="thinking-picker"
             value={state.session.thinkingLevel}
             options={thinkingOptions}
@@ -251,8 +253,6 @@ function ToolbarSeparator() {
   return <div style={{ width: 1, height: 16, backgroundColor: colors.borderStrong, marginLeft: 1, marginRight: 1 }} />
 }
 
-const CONTEXT_POPOVER_MOTION_MS = 160
-
 function ContextMeter({ stats, compact, popoverOpen, onToggle, onMouseEnter, onMouseLeave }: { stats: PiSessionStats; compact: boolean; popoverOpen: boolean; onToggle(): void; onMouseEnter(): void; onMouseLeave(): void }) {
   const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
   const rounded = Math.round(percent * 10) / 10
@@ -271,13 +271,7 @@ function ContextPopover({ stats, open, width }: { stats: PiSessionStats; open: b
   const tokens = stats.contextUsage?.tokens ?? 0
   const contextWindow = stats.contextUsage?.contextWindow ?? 0
   return (
-    <MotionDiv
-      testId="context-popover"
-      initial={{ opacity: 0, top: 4 }}
-      animate={{ opacity: open ? 1 : 0, top: open ? 0 : 4 }}
-      transition={{ duration: CONTEXT_POPOVER_MOTION_MS / 1_000, ease: 'easeOut' }}
-      style={{ position: 'relative', width, display: 'flex', flexDirection: 'column', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden' }}
-    >
+    <DropdownSurface testId="context-popover" open={open} style={{ width, borderRadius: 12 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14 }}>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
           <text style={{ color: colors.text, fontSize: 13, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>
@@ -299,7 +293,7 @@ function ContextPopover({ stats, open, width }: { stats: PiSessionStats; open: b
         <div style={{ flexGrow: 1 }} />
         <text style={{ color: colors.text, fontSize: 12, fontFamily: nativeTheme.fontMono }}>{`$${(stats.cost ?? 0).toFixed(2)}`}</text>
       </div>
-    </MotionDiv>
+    </DropdownSurface>
   )
 }
 

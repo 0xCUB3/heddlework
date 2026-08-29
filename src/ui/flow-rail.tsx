@@ -41,7 +41,7 @@ export function FlowRail({
         </>
       )}
       <div testId="flow-rail-node" style={{ position: 'absolute', left: x - 7, top: center - 8, width: 15, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <text style={{ color: tone, fontSize: status === 'running' ? 15 : 13, fontWeight: 700 }}>{railGlyph(shape, status)}</text>
+        <text testId={`flow-rail-glyph-${status}`} style={{ color: tone, fontSize: status === 'running' ? 15 : status === 'failed' ? 10 : 13, fontWeight: 700 }}>{railGlyph(shape, status)}</text>
       </div>
       {!compact && label && (
         <div style={{ position: 'absolute', left: 27 + lane * 14, right: 0, ...(detail ? { top: 8 } : { top: 0, bottom: 0 }), display: 'flex', flexDirection: 'column', justifyContent: detail ? 'flex-start' : 'center', gap: detail ? 1 : 0, minWidth: 0 }}>
