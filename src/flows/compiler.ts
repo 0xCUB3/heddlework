@@ -29,15 +29,17 @@ export function compileFlowQueue(launchInput: FlowLaunch): QueueInputDraft[] {
       row('/new', 'new-session'),
       ...(launch.model ? [row(`/model ${launch.model}`, 'set-model')] : []),
       row(`/name ${formatFlowSessionName(launch, taskIndex)}`, 'set-name'),
-      row(launch.mode === 'parallel' ? parallelFlowPrompt(launch, prompt) : prompt, 'prompt'),
+      row(launch.mode === 'parallel' ? parallelFlowPrompt(launch, prompt, taskIndex) : prompt, 'prompt'),
     ]
   })
 }
 
-export function parallelFlowPrompt(launch: FlowLaunch, prompt: string): string {
+export function parallelFlowPrompt(launch: FlowLaunch, prompt: string, taskIndex = 0): string {
+  const taskId = `${launch.id}-${taskIndex + 1}`
   return [
     `[Flow ${launch.id}]`,
-    'Run this as a parallel pi-fabric flow. Use fabric_exec as the orchestration surface, set display.name to the flow ID above, decompose the work into genuinely independent workers, launch them concurrently with workflow.parallel, and label every worker with the flow ID as a prefix. Wait for every worker and synthesize one final result. Do not create or maintain a separate task database, status, or labels.',
+    `[Flow Task ${taskId}]`,
+    `Run this as a parallel Pi Fabric flow. Use fabric_exec as the only orchestration surface and set display.name exactly to "${taskId}". Decompose the work into genuinely independent workers, then launch them concurrently with workflow.parallel using thunk items such as () => workflow.agent(prompt, { name: "${taskId}/B1" }). Give every worker a unique ${taskId}/B<N> name so Heddlework can project the live branch graph from Fabric's existing audit trail. Wait for every branch to settle, join their results, and synthesize one final answer before returning. Do not create or maintain a separate task database, status, or labels.`,
     '',
     'Task:',
     prompt.trim(),

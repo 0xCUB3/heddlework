@@ -3,15 +3,17 @@ import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import { PiSessionHistoryPager } from '../pi/session-history.ts'
 import type { PiMessage } from '../pi/types.ts'
 import { projectFlowActivity, type FlowActivityEntry } from '../flows/activity.ts'
+import { projectFlowFabricGraph, type FabricBranchStatus, type FlowFabricProjection } from '../flows/fabric-projection.ts'
 import { projectFlowRuns, terminalFlowTasks, type FlowRunProjection, type FlowTaskProjection, type FlowTaskStatus } from '../flows/projection.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import { flowProjectName, formatFlowDate, scheduleTimingLabel, type FlowSchedule } from '../flows/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
-import type { ThreadPriority, WorkbenchState } from '../workbench/state.ts'
+import { queueSize } from '../workbench/queue.ts'
+import type { ThreadPriority, ToolRun, WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline } from '../workbench/timeline.ts'
-import { resolveToolPresentation, type FabricAuditPresentation, type ToolPresenter } from './tool-presenters.ts'
+import type { ToolPresenter } from './tool-presenters.ts'
 import { Button, NativeVirtualList } from './primitives.tsx'
-import { FlowIntake } from './flow-intake.tsx'
+import { FlowScheduleIntake } from './flow-schedule-intake.tsx'
 import { FlowLabelPicker, FlowLabelPills, FlowPriorityPicker } from './flow-metadata.tsx'
 import { FlowRail, statusTone, type FlowRailShape } from './flow-rail.tsx'
 import { Icon, type IconName } from './icons.tsx'
@@ -32,7 +34,6 @@ interface FlowWorkGroup {
 }
 
 type WorkRenderRow =
-  | { id: 'flow-intake-row'; kind: 'intake' }
   | { id: string; kind: 'group'; group: FlowWorkGroup }
   | { id: string; kind: 'task'; group: FlowWorkGroup; run: FlowRunProjection; task: FlowTaskProjection; index: number; count: number }
   | { id: 'flows-settled-header'; kind: 'settled-header'; count: number; expanded: boolean }
@@ -49,6 +50,8 @@ const FLOW_CONTENT_MAX_WIDTH = 1_152
 const FLOW_ACTIVITY_MESSAGE_LIMIT = 480
 const FLOW_ACTIVITY_CACHE_LIMIT = 12
 const flowActivityHistory = new Map<string, Promise<PiMessage[]>>()
+const EMPTY_FLOW_MESSAGES: PiMessage[] = []
+const EMPTY_FLOW_TOOLS: ToolRun[] = []
 
 interface FlowsViewProps {
   state: WorkbenchState
@@ -60,13 +63,13 @@ interface FlowsViewProps {
   onOpenSession(session: PiSessionSummary): void
 }
 
-export const FlowsView = memo(function FlowsView({ state, controller, runtime, presenters, titlebarInset, onClose, onOpenSession }: FlowsViewProps) {
+export const FlowsView = memo(function FlowsView({ state, controller, runtime, titlebarInset, onClose, onOpenSession }: FlowsViewProps) {
   const layout = useResponsiveLayout()
   const runtimeState = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
   const projectionNow = useProjectionClock()
   const runs = useProjectedFlowRuns(state, projectionNow)
   const [tab, setTab] = useState<FlowTab>('work')
-  const [creating, setCreating] = useState(false)
+  const [scheduleCreating, setScheduleCreating] = useState(false)
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>()
   const selectedRun = useMemo(() => runs.find((run) => run.tasks.some((task) => task.id === selectedTaskId)), [runs, selectedTaskId])
   const selectedTask = selectedRun?.tasks.find((task) => task.id === selectedTaskId)
@@ -76,7 +79,11 @@ export const FlowsView = memo(function FlowsView({ state, controller, runtime, p
   const switchTab = (next: FlowTab) => {
     setTab(next)
     setSelectedTaskId(undefined)
-    setCreating(false)
+    setScheduleCreating(false)
+  }
+  const openQueueComposer = async () => {
+    if (!state.session.isStreaming && state.messages.length > 0 && queueSize(state.queue) === 0) await controller.newSession()
+    onClose()
   }
   const titleInset = titlebarInset ?? (process.platform === 'darwin' ? 132 : layout.compact ? 54 : 24)
 
@@ -97,27 +104,25 @@ export const FlowsView = memo(function FlowsView({ state, controller, runtime, p
       </div>
       <div style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
         {tab === 'work' && selectedTask && selectedRun ? (
-          <TaskPage task={selectedTask} run={selectedRun} controller={controller} presenters={presenters} priorityCounts={priorityCounts} labelOptions={labelOptions} onBack={() => setSelectedTaskId(undefined)} onOpenSession={onOpenSession} />
+          <TaskPage task={selectedTask} run={selectedRun} controller={controller} priorityCounts={priorityCounts} labelOptions={labelOptions} onBack={() => setSelectedTaskId(undefined)} onOpenSession={onOpenSession} />
         ) : tab === 'work' ? (
-          <WorkPage runs={runs} creating={creating} state={state} runtime={runtime} controller={controller} priorityCounts={priorityCounts} onCreating={setCreating} onOpenTask={(task) => { setSelectedTaskId(task.id); setCreating(false) }} />
+          <WorkPage runs={runs} state={state} controller={controller} priorityCounts={priorityCounts} onQueueInChat={() => { void openQueueComposer() }} onOpenTask={(task) => setSelectedTaskId(task.id)} />
         ) : tab === 'triage' ? (
           <TriagePage runs={runs} controller={controller} onOpenTask={(task) => { setSelectedTaskId(task.id); setTab('work') }} />
         ) : (
-          <ScheduledPage schedules={runtimeState.schedules} pendingCount={runtimeState.pending.length} state={state} runtime={runtime} creating={creating} onCreating={setCreating} controller={controller} />
+          <ScheduledPage schedules={runtimeState.schedules} pendingCount={runtimeState.pending.length} state={state} runtime={runtime} creating={scheduleCreating} onCreating={setScheduleCreating} controller={controller} />
         )}
       </div>
     </div>
   )
 }, flowsViewPropsEqual)
 
-function WorkPage({ runs, creating, state, runtime, controller, priorityCounts, onCreating, onOpenTask }: {
+function WorkPage({ runs, state, controller, priorityCounts, onQueueInChat, onOpenTask }: {
   runs: FlowRunProjection[]
-  creating: boolean
   state: WorkbenchState
-  runtime: FlowRuntime
   controller: WorkbenchController
   priorityCounts: Readonly<Record<ThreadPriority, number>>
-  onCreating(value: boolean): void
+  onQueueInChat(): void
   onOpenTask(task: FlowTaskProjection): void
 }) {
   const layout = useResponsiveLayout()
@@ -132,7 +137,7 @@ function WorkPage({ runs, creating, state, runtime, controller, priorityCounts, 
   const counts = useMemo(() => workFilterCounts(runs), [runs])
   const revealSettled = settledExpanded || deferredQuery.trim().length > 0
   const rows = useMemo<WorkRenderRow[]>(() => {
-    const next: WorkRenderRow[] = creating ? [{ id: 'flow-intake-row', kind: 'intake' }] : []
+    const next: WorkRenderRow[] = []
     for (const group of groups) {
       next.push({ id: `group:${group.id}`, kind: 'group', group })
       group.tasks.forEach(({ task, run }, index) => next.push({ id: `task:${task.runId}:${task.id}`, kind: 'task', group, run, task, index, count: group.tasks.length }))
@@ -141,10 +146,10 @@ function WorkPage({ runs, creating, state, runtime, controller, priorityCounts, 
       next.push({ id: 'flows-settled-header', kind: 'settled-header', count: settled.length, expanded: revealSettled })
       if (revealSettled) settled.forEach(({ task, run }, index) => next.push({ id: `settled:${task.runId}:${task.id}`, kind: 'settled-task', run, task, index, count: settled.length }))
     }
-    if (groups.length === 0 && settled.length === 0 && !creating) next.push({ id: 'flows-work-empty', kind: 'empty' })
+    if (groups.length === 0 && settled.length === 0) next.push({ id: 'flows-work-empty', kind: 'empty' })
     return next
-  }, [creating, groups, revealSettled, settled])
-  const projectionKey = `${filter}:${deferredQuery.trim().toLowerCase()}:${creating}:${revealSettled}:${rows.length}:${rows[0]?.id ?? ''}:${rows.at(-1)?.id ?? ''}`
+  }, [groups, revealSettled, settled])
+  const projectionKey = `${filter}:${deferredQuery.trim().toLowerCase()}:${revealSettled}:${rows.length}:${rows[0]?.id ?? ''}:${rows.at(-1)?.id ?? ''}`
   const { projected, remaining } = useProgressiveRows(rows, projectionKey)
   const alignedContentWidth = FLOW_CONTENT_MAX_WIDTH - 6
 
@@ -164,17 +169,17 @@ function WorkPage({ runs, creating, state, runtime, controller, priorityCounts, 
             <FilterButton label="Done" count={counts.done} active={filter === 'done'} onClick={() => setFilter('done')} />
           </div>
           {!layout.mobile && <div style={{ flexGrow: 1 }} />}
-          <Button testId="new-flow" label={creating ? 'Close intake' : 'New flow'} tone={creating ? 'default' : 'primary'} icon={creating ? 'x' : 'plus'} compact onClick={() => onCreating(!creating)} />
+          <Button testId="flows-queue-in-chat" label={layout.mobile ? 'Queue' : 'Queue in chat'} tone="primary" icon="squarePen" compact onClick={onQueueInChat} />
         </div>
       </div>
       <div testId="flows-work-scroll-surface" style={{ height: 0, flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter }}>
         <NativeVirtualList testId="flows-work-list" alignment="top" estimatedItemHeight={42} overdraw={240} style={{ flexGrow: 1, minHeight: 0, width: '100%', maxWidth: alignedContentWidth }}>
           {projected.map((row) => {
-            if (row.kind === 'intake') return <div key={row.id} style={contentRowStyle(18)}><FlowIntake state={state} runtime={runtime} purpose="run" onCreated={() => onCreating(false)} onCancel={() => onCreating(false)} /></div>
             if (row.kind === 'group') return <WorkGroupHeader key={row.id} group={row.group} />
             if (row.kind === 'settled-header') return <SettledWorkHeader key={row.id} count={row.count} expanded={row.expanded} onToggle={() => setSettledExpanded((value) => !value)} />
-            if (row.kind === 'empty') return <div key={row.id} style={contentRowStyle(0)}><EmptyState icon="gitBranch" title="No projected work" detail={query.trim() ? 'No Pi session or Flow matches this search.' : 'Create a flow or start a Pi session. Work appears here automatically.'} /></div>
-            return <WorkTaskRow key={row.id} row={row} mobile={layout.mobile} compact={layout.compact} controller={controller} priorityCounts={priorityCounts} onOpenTask={onOpenTask} />
+            if (row.kind === 'empty') return <div key={row.id} style={contentRowStyle(0)}><EmptyState icon="gitBranch" title="No projected work" detail={query.trim() ? 'No Pi session or queued row matches this search.' : 'Queue work in chat or start a Pi session. Work appears here automatically.'} /></div>
+            const activeFabric = Boolean(row.task.session && (row.task.session.id === state.session.sessionId || row.task.session.path === state.session.sessionFile))
+            return <WorkTaskRow key={row.id} row={row} mobile={layout.mobile} compact={layout.compact} activeFabric={activeFabric} controller={controller} priorityCounts={priorityCounts} onOpenTask={onOpenTask} />
           })}
           {remaining > 0 && <ProjectionContinuation key="flows-work-continuation" remaining={remaining} />}
         </NativeVirtualList>
@@ -183,18 +188,19 @@ function WorkPage({ runs, creating, state, runtime, controller, priorityCounts, 
   )
 }
 
-const WorkTaskRow = memo(function WorkTaskRow({ row, mobile, compact, controller, priorityCounts, onOpenTask }: {
+const WorkTaskRow = memo(function WorkTaskRow({ row, mobile, compact, activeFabric, controller, priorityCounts, onOpenTask }: {
   row: Extract<WorkRenderRow, { kind: 'task' | 'settled-task' }>
   mobile: boolean
   compact: boolean
+  activeFabric: boolean
   controller: WorkbenchController
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   onOpenTask(task: FlowTaskProjection): void
 }) {
   const { task } = row
-  const dependency = taskDependency(task)
+  const dependency = taskDependency(task, row.run)
   return (
-    <div style={{ ...contentRowStyle(0), height: 42 }}>
+    <div style={{ ...contentRowStyle(0), minHeight: 42 }}>
       <div testId={`flow-task-${task.id}`} style={{ width: '100%', height: 42, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', backgroundColor: colors.transparent, opacity: task.settled ? 0.78 : 1, hover: { backgroundColor: colors.hover } }}>
         <div testId={`flow-priority-slot-${task.id}`} style={{ flexShrink: 0, marginLeft: 10, marginRight: 8 }}><FlowPriorityPicker priority={task.priority} overridden={task.priorityOverridden} counts={priorityCounts} monochrome testId={`flow-priority-${task.id}`} onChange={(priority) => controller.setThreadPriority(task.metadataKey, priority)} /></div>
         <div testId={`flow-task-open-${task.id}`} tabIndex={0} style={{ width: 0, minWidth: 0, height: '100%', flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => onOpenTask(task)}>
@@ -204,11 +210,46 @@ const WorkTaskRow = memo(function WorkTaskRow({ row, mobile, compact, controller
           {!compact && task.labels.length > 0 && <div style={{ width: 154, minWidth: 0, flexShrink: 0, marginLeft: 14, marginRight: 10, pointerEvents: 'none' }}><FlowLabelPills labels={task.labels} /></div>}
         </div>
         {!compact && task.settled && <Button testId={`unsettle-${task.id}`} label="Unsettle" tone="quiet" icon="undo" compact onClick={() => controller.wakeThread(task.metadataKey)} />}
-        <div tabIndex={0} style={{ flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 10, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => onOpenTask(task)}><FlowRail status={task.status} before={dependency.before} after={dependency.after} label={dependency.label} detail={dependency.detail} shape={dependency.shape} compact={mobile} /><div style={{ width: 11, height: 11, pointerEvents: 'none' }}><Icon name="chevronRight" size={11} color={colors.textFaint} /></div></div>
+        {activeFabric
+          ? <ActiveFabricRail task={task} dependency={dependency} controller={controller} mobile={mobile} onOpenTask={onOpenTask} />
+          : <WorkTaskRail task={task} dependency={dependency} mobile={mobile} onOpenTask={onOpenTask} />}
       </div>
+      {activeFabric && <ActiveFabricWorkGraph task={task} controller={controller} compact={compact} />}
     </div>
   )
 })
+
+function WorkTaskRail({ task, dependency, mobile, onOpenTask, fabricAfter = false }: {
+  task: FlowTaskProjection
+  dependency: ReturnType<typeof taskDependency>
+  mobile: boolean
+  onOpenTask(task: FlowTaskProjection): void
+  fabricAfter?: boolean
+}) {
+  return <div tabIndex={0} style={{ flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 10, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => onOpenTask(task)}><FlowRail status={task.status} before={dependency.before} after={dependency.after || fabricAfter} lane={dependency.lane} branchFrom={dependency.branchFrom} label={dependency.label} detail={dependency.detail} shape={dependency.shape} compact={mobile} /><div style={{ width: 11, height: 11, pointerEvents: 'none' }}><Icon name="chevronRight" size={11} color={colors.textFaint} /></div></div>
+}
+
+function ActiveFabricRail({ task, dependency, controller, mobile, onOpenTask }: {
+  task: FlowTaskProjection
+  dependency: ReturnType<typeof taskDependency>
+  controller: WorkbenchController
+  mobile: boolean
+  onOpenTask(task: FlowTaskProjection): void
+}) {
+  const graph = useActiveFabricGraph(task, controller)
+  return <WorkTaskRail task={task} dependency={dependency} mobile={mobile} onOpenTask={onOpenTask} fabricAfter={graph.branches.length > 0} />
+}
+
+function ActiveFabricWorkGraph({ task, controller, compact }: { task: FlowTaskProjection; controller: WorkbenchController; compact: boolean }) {
+  const graph = useActiveFabricGraph(task, controller)
+  if (graph.branches.length === 0) return null
+  return <FabricBranchRows graph={graph} compact={compact} embedded />
+}
+
+function useActiveFabricGraph(task: FlowTaskProjection, controller: WorkbenchController): FlowFabricProjection {
+  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  return useMemo(() => projectFlowFabricGraph(task, state.messages, state.liveTools), [state.liveTools, state.messages, task])
+}
 
 function SettledWorkHeader({ count, expanded, onToggle }: { count: number; expanded: boolean; onToggle(): void }) {
   return (
@@ -227,7 +268,7 @@ function WorkGroupHeader({ group }: { group: FlowWorkGroup }) {
     <div testId={`flow-run-${group.id}`} style={{ ...contentRowStyle(0), height: 56, display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingLeft: 7, paddingRight: 7, paddingBottom: 9 }}>
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: group.detail ? 2 : 0 }}>
         <div testId="flow-group-title-row" style={{ minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-          <div testId="flow-group-icon" style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name={group.source === 'observed' ? 'folder' : group.source === 'scheduled' ? 'clock' : 'gitBranch'} size={12} color={colors.textFaint} /></div>
+          <div testId="flow-group-icon" style={{ width: 12, height: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name={group.source === 'observed' ? 'folder' : group.source === 'scheduled' ? 'clock' : group.source === 'queue' ? 'list' : 'gitBranch'} size={12} color={colors.textFaint} /></div>
           <text testId="flow-group-title" style={{ minWidth: 0, color: colors.textMuted, fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{group.title}</text>
         </div>
         {group.detail && <text style={{ paddingLeft: 19, color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{group.detail}</text>}
@@ -238,11 +279,10 @@ function WorkGroupHeader({ group }: { group: FlowWorkGroup }) {
   )
 }
 
-function TaskPage({ task, run, controller, presenters, priorityCounts, labelOptions, onBack, onOpenSession }: {
+function TaskPage({ task, run, controller, priorityCounts, labelOptions, onBack, onOpenSession }: {
   task: FlowTaskProjection
   run: FlowRunProjection
   controller: WorkbenchController
-  presenters: ReadonlyMap<string, ToolPresenter>
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   labelOptions: readonly string[]
   onBack(): void
@@ -250,8 +290,8 @@ function TaskPage({ task, run, controller, presenters, priorityCounts, labelOpti
 }) {
   const layout = useResponsiveLayout()
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
-  const audits = liveFabricAudits(task, state, presenters)
-  const activity = useTaskActivity(task, state)
+  const transcript = useTaskTranscript(task, state)
+  const fabric = useMemo(() => projectFlowFabricGraph(task, transcript.messages, transcript.liveTools), [task, transcript.liveTools, transcript.messages])
   const phases = state.queue.items.filter((item) => item.flow?.taskId === task.id).map((item) => item.flow?.phase).filter((phase): phase is NonNullable<typeof phase> => Boolean(phase))
   const previous = run.tasks.find((candidate) => candidate.taskIndex === task.taskIndex - 1)
   const next = run.tasks.find((candidate) => candidate.taskIndex === task.taskIndex + 1)
@@ -264,7 +304,10 @@ function TaskPage({ task, run, controller, presenters, priorityCounts, labelOpti
         <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>{task.id}</text>
         <div style={{ flexGrow: 1 }} />
         {task.settled && <Button testId="flow-task-unsettle" label="Unsettle" tone="quiet" icon="undo" compact onClick={() => controller.wakeThread(task.metadataKey)} />}
-        {task.queueItemIds.length > 0 && <Button label="Cancel queue" tone="danger" compact onClick={() => controller.removeQueuedFlow(task.runId)} />}
+        {task.queueItemIds.length > 0 && <Button testId="flow-cancel-queue" label={task.mode === 'queue' ? 'Remove queued row' : 'Cancel queue'} tone="danger" compact onClick={() => {
+          if (task.mode === 'queue') task.queueItemIds.forEach((id) => controller.removeQueuedInput(id))
+          else controller.removeQueuedFlow(task.runId)
+        }} />}
         {task.session && <Button testId="flow-open-thread" label="Open thread" icon="squarePen" compact onClick={() => { void controller.switchSession(task.session!).then(() => onOpenSession(task.session!)) }} />}
       </div>
       <div testId="flow-task-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', overflowX: 'hidden', overflowY: 'scroll', paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter }}>
@@ -277,11 +320,11 @@ function TaskPage({ task, run, controller, presenters, priorityCounts, labelOpti
             </div>
             <DisclosureTaskSection key={`prompt:${task.id}`} title="Prompt" testId="flow-task-prompt" collapsedHeight={95}><text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 19, whiteSpace: 'normal' }}>{task.prompt || 'The prompt has not reached its queue step yet.'}</text></DisclosureTaskSection>
             {phases.length > 0 && <TaskSection title="Queue primitives"><div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>{phases.map((phase, index) => <MetaPill key={`${phase}-${index}`} label={phaseLabel(phase)} />)}</div></TaskSection>}
-            {audits.length > 0 && <FabricBranches audits={audits} />}
+            {fabric.branches.length > 0 && <FabricBranches graph={fabric} compact={layout.mobile} />}
             <DisclosureTaskSection key={`output:${task.id}`} title={task.status === 'failed' ? 'Failure' : 'Output'} testId="flow-task-output" collapsedHeight={160}>
               {task.result ? <div testId="flow-task-result-card" style={{ width: '100%', maxWidth: '100%', minWidth: 0, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.code, overflow: 'hidden' }}><text testId="flow-task-result-text" style={{ width: '100%', minWidth: 0, color: task.status === 'failed' ? colors.error : colors.textMuted, fontSize: 10, lineHeight: 17, whiteSpace: 'normal' }}>{task.result}</text></div> : <text style={{ color: colors.textFaint, fontSize: 11, lineHeight: 17 }}>{task.status === 'running' ? 'Pi is still working. Output will settle from the session transcript.' : 'No assistant output has been projected yet.'}</text>}
             </DisclosureTaskSection>
-            <ActivityLog entries={activity} />
+            <ActivityLog entries={transcript.activity} />
           </div>
           <div style={{ width: asideWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>
             <div style={{ display: 'flex', flexDirection: 'column', borderRadius: 9, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, overflow: 'hidden' }}>
@@ -334,7 +377,13 @@ function ActivityGlyph({ entry }: { entry: FlowActivityEntry }) {
   return <div testId="flow-activity-icon" style={{ position: 'relative', width: 18, height: 18, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: colors.background }}><Icon name={icon} size={11} color={tone} /></div>
 }
 
-function useTaskActivity(task: FlowTaskProjection, state: WorkbenchState): FlowActivityEntry[] {
+interface TaskTranscriptProjection {
+  messages: PiMessage[]
+  liveTools: ToolRun[]
+  activity: FlowActivityEntry[]
+}
+
+function useTaskTranscript(task: FlowTaskProjection, state: WorkbenchState): TaskTranscriptProjection {
   const active = Boolean(task.session && (task.session.id === state.session.sessionId || task.session.path === state.session.sessionFile))
   const sessionPath = task.session?.path
   const historyKey = task.session ? `${task.session.path}:${task.session.modifiedAt}` : ''
@@ -347,9 +396,11 @@ function useTaskActivity(task: FlowTaskProjection, state: WorkbenchState): FlowA
     })
     return () => { cancelled = true }
   }, [active, historyKey, sessionPath])
-  const messages = active ? state.messages : history?.key === historyKey ? history.messages : []
-  const timeline = useMemo(() => buildTimeline(messages, active ? state.liveAssistant : undefined, active ? state.liveTools : [], active ? state.forkMessages : [], 0, active ? state.notices : []), [active, messages, state.forkMessages, state.liveAssistant, state.liveTools, state.notices])
-  return useMemo(() => projectFlowActivity(task, timeline), [task, timeline])
+  const messages = active ? state.messages : history?.key === historyKey ? history.messages : EMPTY_FLOW_MESSAGES
+  const liveTools = active ? state.liveTools : EMPTY_FLOW_TOOLS
+  const timeline = useMemo(() => buildTimeline(messages, active ? state.liveAssistant : undefined, liveTools, active ? state.forkMessages : [], 0, active ? state.notices : []), [active, liveTools, messages, state.forkMessages, state.liveAssistant, state.notices])
+  const activity = useMemo(() => projectFlowActivity(task, timeline), [task, timeline])
+  return useMemo(() => ({ messages, liveTools, activity }), [activity, liveTools, messages])
 }
 
 function loadFlowActivityHistory(key: string, path: string): Promise<PiMessage[]> {
@@ -361,27 +412,47 @@ function loadFlowActivityHistory(key: string, path: string): Promise<PiMessage[]
   return pending
 }
 
-function FabricBranches({ audits }: { audits: FabricAuditPresentation[] }) {
+function FabricBranches({ graph, compact }: { graph: FlowFabricProjection; compact: boolean }) {
+  return <TaskSection title="Fabric branches"><FabricBranchRows graph={graph} compact={compact} /></TaskSection>
+}
+
+function FabricBranchRows({ graph, compact, embedded = false }: { graph: FlowFabricProjection; compact: boolean; embedded?: boolean }) {
   return (
-    <TaskSection title="Fabric branches">
-      <div style={{ display: 'flex', flexDirection: 'column', borderRadius: 9, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, overflow: 'hidden' }}>
-        {audits.map((audit, index) => {
-          const status: FlowTaskStatus = audit.success === false ? 'failed' : audit.success === true ? 'succeeded' : 'running'
-          const label = stringArg(audit.args, 'label') || stringArg(audit.args, 'name') || [audit.provider, audit.tool].filter(Boolean).join('.') || audit.ref
-          return (
-            <div key={`${audit.ref}-${index}`} style={{ minHeight: 46, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingRight: 10, borderTopWidth: index > 0 ? 1 : 0, borderColor: colors.border }}>
-              <FlowRail status={status} before={index > 0} after={index < audits.length - 1} lane={1} branchFrom={0} compact />
-              <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <text style={{ color: colors.text, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{label}</text>
-                <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontMono }}>{audit.ref}</text>
-              </div>
-              <StatusText status={status} />
+    <div testId="flow-fabric-graph" style={{ width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', borderRadius: embedded ? 0 : 9, borderWidth: embedded ? 0 : 1, borderColor: colors.border, backgroundColor: embedded ? colors.background : colors.card, overflow: 'hidden' }}>
+      {graph.branches.map((branch, index) => {
+        const status = fabricFlowStatus(branch.status)
+        const lane = Math.min(3, branch.depth + 1)
+        return (
+          <div key={branch.id} testId={`flow-fabric-branch-${branch.id}`} style={{ minHeight: embedded ? 36 : 44, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: embedded ? 48 + branch.depth * 10 : branch.depth * 10, paddingRight: embedded ? 11 : 8, borderTopWidth: index > 0 ? 1 : 0, borderColor: colors.border }}>
+            <div style={{ width: 14, height: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 7 }}><Icon name="gitBranch" size={11} color={statusTone(status)} /></div>
+            <div style={{ width: 0, minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <text style={{ color: colors.text, fontSize: embedded ? 10 : 11, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{branch.name}</text>
+              <text style={{ color: colors.textFaint, fontSize: 8, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{branch.detail ?? branch.runner ?? branch.id}</text>
             </div>
-          )
-        })}
-      </div>
-    </TaskSection>
+            {!compact && <FabricStatusText status={branch.status} />}
+            <FlowRail status={status} before={index > 0} after={index < graph.branches.length - 1 || Boolean(graph.join)} lane={lane} branchFrom={Math.max(0, lane - 1)} shape="circle" compact />
+          </div>
+        )
+      })}
+      {graph.join && (
+        <div testId="flow-fabric-join" style={{ minHeight: embedded ? 38 : 44, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: embedded ? 48 : 0, paddingRight: embedded ? 11 : 8, borderTopWidth: 1, borderColor: colors.border }}>
+          <div style={{ width: 14, height: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 7 }}><Icon name="check" size={11} color={statusTone(fabricFlowStatus(graph.join.status))} /></div>
+          <div style={{ width: 0, minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 2 }}><text style={{ color: colors.text, fontSize: embedded ? 10 : 11, fontWeight: 650 }}>Join</text><text style={{ color: colors.textFaint, fontSize: 8 }}>{graph.join.detail}</text></div>
+          {!compact && <FabricStatusText status={graph.join.status} />}
+          <FlowRail status={fabricFlowStatus(graph.join.status)} before after={false} lane={0} shape="square" compact />
+        </div>
+      )}
+      {graph.truncated && <text testId="flow-fabric-truncated" style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 6, paddingBottom: 6, color: colors.textFaint, fontSize: 8 }}>Additional nested branches are outside the Fabric preview budget.</text>}
+    </div>
   )
+}
+
+function FabricStatusText({ status }: { status: FabricBranchStatus }) {
+  return <text style={{ marginRight: 5, color: statusTone(fabricFlowStatus(status)), fontSize: 8, fontWeight: 600 }}>{status === 'stopped' ? 'Stopped' : statusLabel(status)}</text>
+}
+
+function fabricFlowStatus(status: FabricBranchStatus): FlowTaskStatus {
+  return status === 'stopped' ? 'failed' : status
 }
 
 function TriagePage({ runs, controller, onOpenTask }: { runs: FlowRunProjection[]; controller: WorkbenchController; onOpenTask(task: FlowTaskProjection): void }) {
@@ -506,7 +577,7 @@ function ScheduledPage({ schedules, pendingCount, state, runtime, creating, onCr
       </div>
       <div testId="flows-scheduled-scroll-surface" style={{ flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <NativeVirtualList testId="flows-scheduled-list" alignment="top" estimatedItemHeight={64} overdraw={240} style={{ flexGrow: 1, minHeight: 0, width: '100%', maxWidth: FLOW_CONTENT_MAX_WIDTH, paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter, paddingBottom: 28 }}>
-          {creating && <div key="schedule-intake-row" style={contentRowStyle(18)}><FlowIntake state={state} runtime={runtime} purpose="schedule" onCreated={() => onCreating(false)} onCancel={() => onCreating(false)} /></div>}
+          {creating && <div key="schedule-intake-row" style={contentRowStyle(18)}><FlowScheduleIntake state={state} runtime={runtime} onCreated={() => onCreating(false)} onCancel={() => onCreating(false)} /></div>}
           {projected.map(({ id, schedule }) => <ScheduleRow key={id} schedule={schedule} mobile={layout.mobile} runtime={runtime} controller={controller} />)}
           {remaining > 0 && <ProjectionContinuation key="flows-schedule-continuation" remaining={remaining} />}
           {schedules.length === 0 && !creating && <div key="schedules-empty" style={contentRowStyle(0)}><EmptyState icon="clock" title="No scheduled jobs" detail="Create a one-time, interval, or daily Flow. Pi sessions remain the run history." /></div>}
@@ -649,7 +720,7 @@ function buildWorkGroups(runs: readonly FlowRunProjection[], filter: WorkFilter,
     const tasks = run.tasks.filter((task) => !task.settled && matchesWorkFilter(task, filter) && matchesTaskQuery(task, query, run.title))
     if (tasks.length === 0) continue
     if (run.source !== 'observed') {
-      groups.push({ id: run.id, title: run.title, detail: `${run.source === 'scheduled' ? 'Scheduled flow' : run.tasks[0]?.mode === 'parallel' ? 'Fabric flow' : 'Sequential flow'} · ${tasks.length} task${tasks.length === 1 ? '' : 's'}`, source: run.source, tasks: tasks.map((task) => ({ task, run })), updatedAt: run.updatedAt })
+      groups.push({ id: run.id, title: run.title, detail: `${run.source === 'queue' ? 'Live queue projection' : run.source === 'scheduled' ? 'Scheduled flow' : run.tasks[0]?.mode === 'parallel' ? 'Fabric flow' : 'Sequential flow'} · ${tasks.length} task${tasks.length === 1 ? '' : 's'}`, source: run.source, tasks: tasks.map((task) => ({ task, run })), updatedAt: run.updatedAt })
       continue
     }
     const workspacePath = tasks[0]?.workspacePath ?? ''
@@ -666,7 +737,9 @@ function buildWorkGroups(runs: readonly FlowRunProjection[], filter: WorkFilter,
   }
   for (const group of groups) {
     group.tasks.sort(group.source === 'observed'
-      ? (left, right) => right.task.updatedAt - left.task.updatedAt || left.task.id.localeCompare(right.task.id)
+      ? (left, right) => left.run.id === right.run.id
+        ? left.task.taskIndex - right.task.taskIndex || left.task.createdAt - right.task.createdAt
+        : right.run.updatedAt - left.run.updatedAt || left.run.id.localeCompare(right.run.id)
       : (left, right) => left.task.taskIndex - right.task.taskIndex || left.task.createdAt - right.task.createdAt)
   }
   return groups.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
@@ -714,8 +787,38 @@ function flowTotals(runs: readonly FlowRunProjection[]) {
   return { ...counts, active: counts.active, waiting: counts.waiting, done: counts.done }
 }
 
-function taskDependency(task: FlowTaskProjection): { before: boolean; after: boolean; label: string; detail: string; shape: FlowRailShape } {
-  if (task.mode === 'observed') return { before: false, after: false, label: 'Independent', detail: '', shape: 'circle' }
+interface FlowTaskDependency {
+  before: boolean
+  after: boolean
+  label: string
+  detail: string
+  shape: FlowRailShape
+  lane?: number | undefined
+  branchFrom?: number | undefined
+}
+
+function taskDependency(task: FlowTaskProjection, run?: FlowRunProjection): FlowTaskDependency {
+  if (task.mode === 'queue') {
+    const before = task.taskIndex > 0
+    const after = task.taskIndex < task.taskCount - 1
+    const text = task.prompt.trim()
+    const previous = run?.tasks.find((candidate) => candidate.taskIndex === task.taskIndex - 1)
+    const joinsFabricGate = previous ? /^\/fabric\s+await(?:\s+\S+)?$/.test(previous.prompt.trim()) : false
+    const join = joinsFabricGate ? { branchFrom: 1 } : {}
+    if (text === '/new') return { before, after, label: 'New session', detail: 'After parent settles', shape: 'diamond', ...join }
+    const awaitPeer = /^\/fabric\s+await(?:\s+(\S+))?$/.exec(text)
+    if (awaitPeer) return { before, after, label: 'Fabric gate', detail: awaitPeer[1] ? `Waiting for ${awaitPeer[1]}` : 'Waiting for active peers', shape: 'triangle', lane: 1, branchFrom: 0 }
+    if (text === '/fabric prewalk') return { before, after, label: 'Fabric prewalk', detail: 'Before next dispatch', shape: 'triangle', ...join }
+    if (text.startsWith('/model')) return { before, after, label: 'Model change', detail: text.slice('/model'.length).trim(), shape: 'diamond', ...join }
+    if (text.startsWith('/')) return { before, after, label: 'Queue control', detail: text.split(/\s+/, 1)[0] ?? text, shape: 'diamond', ...join }
+    return { before, after, label: task.taskIndex === 0 ? 'Queue root' : 'Sequential', detail: task.taskIndex === 0 ? task.queueLane === 'steer' ? 'Next turn boundary' : 'After current run' : 'After previous row', shape: after ? 'circle' : 'square', ...join }
+  }
+  if (task.mode === 'observed') {
+    if (task.taskCount === 1) return { before: false, after: false, label: 'Independent', detail: '', shape: 'circle' }
+    const first = task.taskIndex === 0
+    const last = task.taskIndex === task.taskCount - 1
+    return { before: !first, after: !last, label: first ? 'Parent session' : 'Child session', detail: first ? 'Pi causal root' : 'Created after parent settled', shape: last ? 'square' : first ? 'circle' : 'diamond' }
+  }
   if (task.mode === 'parallel') return { before: false, after: false, label: 'Fabric fan-out', detail: 'Parallel agent branches', shape: 'triangle' }
   if (task.source === 'scheduled') return { before: task.taskIndex > 0, after: task.taskIndex < task.taskCount - 1, label: task.taskIndex === 0 ? 'Scheduled root' : 'Sequential', detail: task.taskIndex === 0 ? 'Fresh occurrence' : `After step ${task.taskIndex}`, shape: task.taskIndex === task.taskCount - 1 ? 'square' : 'diamond' }
   return { before: task.taskIndex > 0, after: task.taskIndex < task.taskCount - 1, label: task.taskIndex === 0 ? 'Flow root' : 'Sequential', detail: task.taskIndex === 0 ? 'No prerequisites' : `After step ${task.taskIndex}`, shape: task.taskIndex === task.taskCount - 1 ? 'square' : 'circle' }
@@ -732,20 +835,6 @@ function statusLabel(status: FlowTaskStatus): string {
 
 function contentRowStyle(paddingBottom: number): Record<string, unknown> {
   return { width: '100%', minWidth: 0, flexShrink: 0, ...(paddingBottom ? { paddingBottom } : {}) }
-}
-
-function liveFabricAudits(task: FlowTaskProjection, state: WorkbenchState, presenters: ReadonlyMap<string, ToolPresenter>): FabricAuditPresentation[] {
-  const active = task.session && (task.session.id === state.session.sessionId || task.session.path === state.session.sessionFile)
-  if (!active) return []
-  return state.liveTools.flatMap((tool) => tool.name === 'fabric_exec' ? resolveToolPresentation(tool, presenters).fabric?.audits ?? [] : []).filter((audit) => {
-    const identity = `${audit.provider ?? ''}.${audit.tool ?? ''}.${audit.ref}`.toLowerCase()
-    return identity.includes('agent') || identity.includes('workflow')
-  })
-}
-
-function stringArg(args: Record<string, unknown> | undefined, key: string): string {
-  const value = args?.[key]
-  return typeof value === 'string' ? value : ''
 }
 
 function phaseLabel(phase: 'new-session' | 'set-model' | 'set-name' | 'prompt'): string {

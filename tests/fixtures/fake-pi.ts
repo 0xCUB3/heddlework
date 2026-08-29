@@ -13,6 +13,8 @@ process.stdin.on('data', (chunk: string) => {
     if (command.type === 'ping') {
       write({ type: 'queue_update', steering: ['hello\u2028world'], followUp: [] })
       write({ type: 'response', id: command.id, command: 'ping', success: true, data: { pong: true } })
+    } else if (command.type === 'argv') {
+      write({ type: 'response', id: command.id, command: 'argv', success: true, data: { argv: process.argv.slice(2) } })
     } else if (command.type === 'fail') {
       write({ type: 'response', id: command.id, command: 'fail', success: false, error: 'expected failure' })
     } else {

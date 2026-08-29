@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { PiSessionState, RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { parseBuiltinSlashCommand } from '../src/pi/slash-commands.ts'
+import { HEDDLEWORK_FABRIC_BRIDGE_PREFIX, HEDDLEWORK_FABRIC_BRIDGE_WIDGET } from '../src/pi/fabric-bridge.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { moveQueuedInput } from '../src/workbench/queue.ts'
 import { compileFlowQueue } from '../src/flows/compiler.ts'
@@ -35,6 +36,7 @@ class QueueTransport implements AgentTransport {
     if (command.type === 'get_available_models') return { models: [] } as T
     if (command.type === 'get_available_thinking_levels') return { levels: ['off'] } as T
     if (command.type === 'get_session_stats') return { sessionId: 'queue-session', totalMessages: 0, toolCalls: 0, cost: 0 } as T
+    if (command.type === 'prompt' && String(command.message).startsWith(HEDDLEWORK_FABRIC_BRIDGE_PREFIX)) return {} as T
     if (command.type === 'prompt' && !command.streamingBehavior) {
       this.streaming = true
       this.emit({ type: 'agent_start' })
@@ -71,6 +73,16 @@ async function waitFor(predicate: () => boolean, label: string): Promise<void> {
     await Bun.sleep(5)
   }
   throw new Error(`Timed out waiting for ${label}`)
+}
+
+function fabricBridgeRecord(payload: Record<string, unknown>): RpcRecord {
+  return {
+    type: 'extension_ui_request',
+    id: `bridge-${String(payload.requestId ?? 'event')}`,
+    method: 'setWidget',
+    widgetKey: HEDDLEWORK_FABRIC_BRIDGE_WIDGET,
+    widgetLines: [JSON.stringify({ version: 1, ...payload })],
+  }
 }
 
 describe('owned workbench queue', () => {
@@ -110,9 +122,9 @@ describe('owned workbench queue', () => {
       expect(controller.getSnapshot().notices.at(-1)).toMatchObject({ kind: 'warning' })
       expect(transport.commands.filter((command) => command.type === 'prompt')).toEqual([])
 
-      await controller.submit('/fabric prewalk')
+      await controller.submit('/fabric status')
       expect(transport.commands.filter((command) => command.type === 'prompt')).toEqual([
-        expect.objectContaining({ message: '/fabric prewalk' }),
+        expect.objectContaining({ message: '/fabric status' }),
       ])
     } finally {
       await controller.dispose()
@@ -153,7 +165,7 @@ describe('owned workbench queue', () => {
       controller.resumeQueue()
       await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Start only when resumed')
         && controller.getSnapshot().queue.items.length === 0, 'the resumed prompt')
-      expect(transport.commands.some((command) => command.type === 'new_session')).toBe(true)
+      expect(transport.commands.find((command) => command.type === 'new_session')).toEqual({ type: 'new_session', parentSession: '/tmp/queue-session.jsonl' })
       expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: 'Start only when resumed' })
       expect(controller.getSnapshot().queue.items).toEqual([])
     } finally {
@@ -214,15 +226,18 @@ describe('owned workbench queue', () => {
       await controller.start()
       await controller.submit('Start')
       await controller.submit('Steer at the next turn')
+      await controller.submit('/new')
       await controller.submit('Follow after the run', { queue: true })
-      expect(controller.getSnapshot().queue.items.map((item) => item.lane)).toEqual(['steer', 'followUp'])
+      expect(controller.getSnapshot().queue.items.map((item) => item.lane)).toEqual(['steer', 'steer', 'followUp'])
 
       transport.turnEnd()
       await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Steer at the next turn' && command.streamingBehavior === 'steer') && !controller.getSnapshot().queue.items.some((item) => item.text === 'Steer at the next turn'), 'the turn-boundary steering row')
-      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['Follow after the run'])
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/new', 'Follow after the run'])
+      expect(transport.commands.some((command) => command.type === 'new_session')).toBe(false)
 
       transport.settle()
-      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Follow after the run' && !command.streamingBehavior) && !controller.getSnapshot().queue.items.some((item) => item.text === 'Follow after the run'), 'the settled follow-up row')
+      await waitFor(() => transport.commands.some((command) => command.type === 'new_session') && transport.commands.some((command) => command.type === 'prompt' && command.message === 'Follow after the run' && !command.streamingBehavior) && !controller.getSnapshot().queue.items.some((item) => item.text === 'Follow after the run'), 'the settled session handoff and follow-up row')
+      expect(transport.commands.find((command) => command.type === 'new_session')).toEqual({ type: 'new_session', parentSession: '/tmp/queue-session.jsonl' })
       expect(controller.getSnapshot().queue.items).toEqual([])
     } finally {
       await controller.dispose()
@@ -238,10 +253,11 @@ describe('owned workbench queue', () => {
       await controller.submit('First queued message')
       await controller.submit('Second queued message', { queue: true })
       controller.queueInput('/compact keep decisions', [], { lane: 'followUp' })
+      controller.queueInput('/name Release train', [], { lane: 'followUp' })
       await controller.drainQueueMessages()
       const drained = transport.commands.filter((command) => command.type === 'prompt').at(-1)
       expect(drained).toMatchObject({ message: 'First queued message\n\nSecond queued message', streamingBehavior: 'steer' })
-      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/compact keep decisions'])
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/compact keep decisions', '/name Release train'])
     } finally {
       await controller.dispose()
     }
@@ -272,19 +288,19 @@ describe('owned workbench queue', () => {
     try {
       await controller.start()
       await controller.submit('Start')
-      await controller.submit('/fabric prewalk')
-      await controller.submit('Implement after prewalk')
+      await controller.submit('/fabric status')
+      await controller.submit('Implement after extension command')
 
       transport.settle()
-      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === '/fabric prewalk')
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === '/fabric status')
         && controller.getSnapshot().queue.items.length === 1, 'the first queued prompt')
-      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: '/fabric prewalk' })
-      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['Implement after prewalk'])
+      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: '/fabric status' })
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['Implement after extension command'])
 
       transport.settle()
-      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Implement after prewalk')
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Implement after extension command')
         && controller.getSnapshot().queue.items.length === 0, 'the second queued prompt')
-      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: 'Implement after prewalk' })
+      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: 'Implement after extension command' })
       expect(controller.getSnapshot().queue.items).toEqual([])
     } finally {
       await controller.dispose()
@@ -302,18 +318,18 @@ describe('owned workbench queue', () => {
       await controller.submit('/thinking off')
       await controller.submit('/new')
       await controller.submit('/reload')
-      await controller.submit('/fabric prewalk')
+      await controller.submit('/fabric status')
       await controller.submit('Implement after controls')
 
       transport.settle()
-      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === '/fabric prewalk')
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === '/fabric status')
         && controller.getSnapshot().queue.items.length === 1
         && controller.getSnapshot().queue.items[0]?.text === 'Implement after controls', 'the queued controls and extension command')
       const controlCommands = transport.commands.filter((command) => ['compact', 'set_model', 'set_thinking_level', 'new_session', 'switch_session'].includes(command.type))
       expect(controlCommands.map((command) => command.type)).toEqual(['compact', 'set_model', 'set_thinking_level', 'new_session', 'switch_session'])
       expect(controlCommands[0]).toMatchObject({ type: 'compact', customInstructions: 'focus on decisions' })
       expect(controlCommands.at(-1)).toMatchObject({ type: 'switch_session', sessionPath: '/tmp/queue-session.jsonl' })
-      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: '/fabric prewalk' })
+      expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: '/fabric status' })
       expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['Implement after controls'])
     } finally {
       await controller.dispose()
@@ -435,6 +451,98 @@ describe('owned workbench queue', () => {
         { type: 'set_session_name', name: 'Flow HW-CONTROL/1:2 · Controller flow · Step 1' },
         { type: 'set_session_name', name: 'Flow HW-CONTROL/2:2 · Controller flow · Step 2' },
       ])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+
+  it('keeps row holds lane-local and stops delivery behind each held head', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-row-holds', testControllerDependencies())
+    try {
+      await controller.start()
+      const [held] = controller.enqueueQueueInputs([
+        { text: 'Held steer', lane: 'steer', paused: true },
+        { text: 'Next steer', lane: 'steer' },
+        { text: 'Independent follow-up', lane: 'followUp' },
+      ], { start: true })
+      expect(held).toBeDefined()
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Independent follow-up')
+        && controller.getSnapshot().queue.items.length === 2, 'the independent follow-up lane')
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['Held steer', 'Next steer'])
+
+      transport.settle()
+      await Bun.sleep(20)
+      expect(transport.commands.filter((command) => command.type === 'prompt' && (command.message === 'Held steer' || command.message === 'Next steer'))).toEqual([])
+
+      controller.toggleQueuedInputPause(held!.id)
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Held steer')
+        && controller.getSnapshot().queue.items.length === 1, 'the released steer-lane head')
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['Next steer'])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('holds prewalk controls until Pi Fabric acknowledges the arm without creating transcript context', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-fabric-prewalk', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('/fabric prewalk')
+      const prewalk = controller.getSnapshot().queue.items.find((item) => item.text === '/fabric prewalk')
+      controller.queueInput('Continue after prewalk', [], { lane: 'followUp' })
+      expect(prewalk).toBeDefined()
+      await waitFor(() => controller.getSnapshot().queue.dispatchingId === prewalk!.id, 'the prewalk bridge request')
+      const hidden = transport.commands.find((command) => command.type === 'prompt' && String(command.message).startsWith(HEDDLEWORK_FABRIC_BRIDGE_PREFIX))
+      expect(hidden).toBeDefined()
+      expect(controller.getSnapshot().messages).toEqual([])
+      expect(controller.getSnapshot().session.isStreaming).toBe(false)
+      expect(controller.getSnapshot().queue).toMatchObject({ blockingActivity: 'fabric-prewalk' })
+
+      controller.acceptAgentEvent(fabricBridgeRecord({ requestId: prewalk!.id, event: 'started', activity: 'prewalk', note: 'prewalk armed by Fabric' }))
+      expect(controller.getSnapshot().queue.blockingNote).toBe('prewalk armed by Fabric')
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/fabric prewalk', 'Continue after prewalk'])
+
+      controller.acceptAgentEvent(fabricBridgeRecord({ requestId: prewalk!.id, event: 'settled', activity: 'prewalk' }))
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Continue after prewalk'), 'the row after acknowledged prewalk')
+      expect(controller.getSnapshot().queue.items).toEqual([])
+      expect(controller.getSnapshot().queue.blockingActivity).toBeUndefined()
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('uses a local Fabric peer picker and exposes cancellable await progress', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-fabric-await', testControllerDependencies())
+    try {
+      await controller.start()
+      const picking = controller.queueFabricPeerGate()
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && String(command.message).includes('"action":"peers"')), 'the peer projection request')
+      const request = transport.commands.find((command) => command.type === 'prompt' && String(command.message).includes('"action":"peers"'))
+      expect(request?.type).toBe('prompt')
+      const requestPayload = request?.type === 'prompt' ? JSON.parse(String(request.message).slice(HEDDLEWORK_FABRIC_BRIDGE_PREFIX.length)) as { requestId: string } : undefined
+      controller.acceptAgentEvent(fabricBridgeRecord({
+        requestId: requestPayload!.requestId,
+        event: 'peers',
+        peers: [{ id: 'peer-review', label: 'Review worker', status: 'running', model: 'provider/model', cwd: '/tmp/project', startedAt: 1, updatedAt: 2, pendingMessages: false }],
+      }))
+      await picking
+      const option = controller.getSnapshot().dialog?.options?.[1]
+      expect(option).toContain('Review worker')
+      controller.respondToDialog({ value: option! })
+      await waitFor(() => Boolean(controller.getSnapshot().queue.blockingActivity), 'the peer settle gate')
+      const gate = controller.getSnapshot().queue.items[0]!
+      expect(gate.text).toBe('/fabric await peer-review')
+
+      controller.acceptAgentEvent(fabricBridgeRecord({ requestId: gate.id, event: 'progress', activity: 'await', note: 'waiting for Review worker (running)', waiting: [{ label: 'Review worker', status: 'running' }] }))
+      expect(controller.getSnapshot().queue).toMatchObject({ blockingActivity: 'fabric-await', blockingNote: 'waiting for Review worker (running)' })
+      controller.cancelBlockingQueueActivity()
+      expect(controller.getSnapshot().queue).toMatchObject({ items: [], dispatchingId: undefined, blockingActivity: undefined })
+      expect(transport.sent.at(-1)?.type).toBe('prompt')
+      expect(String(transport.sent.at(-1)?.message)).toContain('"action":"cancel"')
     } finally {
       await controller.dispose()
     }

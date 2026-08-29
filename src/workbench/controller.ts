@@ -10,6 +10,12 @@ import {
 } from '../pi/session-history.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
 import {
+  encodeFabricBridgeRequest,
+  parseFabricBridgeEvent,
+  type FabricBridgeEvent,
+  type FabricPeerCard,
+} from '../pi/fabric-bridge.ts'
+import {
   errorMessage,
   isExtensionUiRequest,
   type ComposerImage,
@@ -31,7 +37,17 @@ import {
   type WorkbenchState,
   type WorkbenchUiRequest,
 } from './state.ts'
-import { createQueueState, moveQueuedInput, type QueuedInput, type QueueInputDraft } from './queue.ts'
+import {
+  createQueueState,
+  moveQueuedInput,
+  moveQueuedInputToLaneTail,
+  queueLaneHead,
+  queuedInputControl,
+  type QueuedControl,
+  type QueuedInput,
+  type QueueInputDraft,
+  type QueueLane,
+} from './queue.ts'
 import type { QueueStoreService } from './queue-store.ts'
 import { normalizeThreadLabels, type ThreadMetadataStoreService } from './thread-metadata-store.ts'
 import type { AskUserSubmissionAnswer } from './ask-user.ts'
@@ -78,7 +94,9 @@ export class WorkbenchController {
   #historyPager: PiSessionHistoryPager | undefined
   #nextQueueId = 0
   #nextUiRequestId = 0
+  #nextFabricRequestId = 0
   #queueDispatch: Promise<void> | undefined
+  readonly #fabricPeerRequests = new Map<string, (peers: FabricPeerCard[]) => void>()
   #compactionHold = false
   #pauseAfterTools = false
   #unsubscribeEvent: () => void
@@ -193,6 +211,13 @@ export class WorkbenchController {
       await this.pause()
       return
     }
+    const queuedControl = editorImages.length === 0 ? queuedInputControl({ text: message, images: [] }) : undefined
+    if (!options.queue && (queuedControl?.kind === 'fabric-prewalk' || queuedControl?.kind === 'fabric-await')) {
+      this.#patch({ editorText: '', editorImages: [] })
+      this.queueInput(message, [], { lane: this.#state.session.isStreaming ? 'steer' : 'followUp' })
+      this.#drainAvailableQueueLane()
+      return
+    }
     if (this.#state.session.isStreaming || options.queue) {
       this.#patch({ editorText: '', editorImages: [] })
       this.queueInput(message, editorImages, {
@@ -227,6 +252,7 @@ export class WorkbenchController {
         images: images.map((image) => ({ ...image })),
         createdAt: createdAt + index,
         ...(input.lane ? { lane: input.lane } : {}),
+        ...(input.paused ? { paused: true } : {}),
         ...(input.flow ? { flow: { ...input.flow } } : {}),
       }]
     })
@@ -282,15 +308,73 @@ export class WorkbenchController {
     this.#patch({ queue: { ...this.#state.queue, items: moveQueuedInput(this.#state.queue.items, id, targetIndex) } })
   }
 
-  moveQueuedInputToLane(id: string, lane: 'steer' | 'followUp'): void {
+  moveQueuedInputToLane(id: string, lane: QueueLane): void {
     if (this.#state.queue.dispatchingId === id) return
-    this.#patch({ queue: { ...this.#state.queue, items: this.#state.queue.items.map((item) => item.id === id ? { ...item, lane } : item) } })
+    this.#patch({ queue: { ...this.#state.queue, items: moveQueuedInputToLaneTail(this.#state.queue.items, id, lane) } })
+    this.#drainAvailableQueueLane()
+  }
+
+  toggleQueuedInputPause(id: string): void {
+    if (this.#state.queue.dispatchingId === id) return
+    const item = this.#state.queue.items.find((candidate) => candidate.id === id)
+    if (!item) return
+    this.#patch({
+      queue: {
+        ...this.#state.queue,
+        items: this.#state.queue.items.map((candidate) => candidate.id === id ? { ...candidate, paused: !candidate.paused } : candidate),
+      },
+    })
+    if (item.paused) this.#drainAvailableQueueLane()
+  }
+
+  async queueFabricPeerGate(): Promise<void> {
+    const peers = await this.#requestFabricPeers()
+    if (peers.length === 0) {
+      this.#setState((state) => addNotice(state, 'warning', 'No live Pi Fabric peers are available'))
+      return
+    }
+    const options = [
+      'All active peers',
+      ...peers.map((peer) => `${peer.label} · ${peer.status}${peer.model ? ` · ${peer.model}` : ''}`),
+    ]
+    const peerIds = new Map(options.slice(1).map((option, index) => [option, peers[index]!.id]))
+    this.#dialogs.showLocalSelect('Wait for Fabric peers to settle', options, (response) => {
+      if (!response.value) return
+      const peer = peerIds.get(response.value)
+      this.queueInput(`/fabric await${peer ? ` ${peer}` : ''}`, [], { lane: 'followUp' })
+      this.#drainAvailableQueueLane()
+    })
+  }
+
+  cancelBlockingQueueActivity(): void {
+    const { dispatchingId, blockingActivity } = this.#state.queue
+    if (!dispatchingId || blockingActivity !== 'fabric-await') return
+    this.#transport.send({
+      type: 'prompt',
+      message: encodeFabricBridgeRequest({
+        action: 'cancel',
+        requestId: this.#newFabricRequestId('cancel'),
+        targetId: dispatchingId,
+      }),
+    })
+    const items = this.#state.queue.items.filter((item) => item.id !== dispatchingId)
+    this.#patch({
+      queue: {
+        ...this.#state.queue,
+        items,
+        paused: items.length > 0,
+        pauseReason: items.length > 0 ? 'manual' : undefined,
+        dispatchingId: undefined,
+        blockingActivity: undefined,
+        blockingNote: undefined,
+      },
+    })
   }
 
   async steerQueuedInput(id: string): Promise<void> {
     const item = this.#state.queue.items.find((candidate) => candidate.id === id)
     if (!item || !this.#state.session.isStreaming || this.#state.queue.dispatchingId) return
-    if (item.images.length === 0 && parseBuiltinSlashCommand(item.text)) return
+    if (queuedInputControl(item)) return
     this.#patch({ queue: { ...this.#state.queue, dispatchingId: id } })
     try {
       await this.#transport.request({
@@ -324,7 +408,7 @@ export class WorkbenchController {
       this.#setState((state) => addNotice(state, 'warning', 'The queue can drain after the current control or compaction finishes'))
       return
     }
-    const messages = this.#state.queue.items.filter((item) => !item.flow && (item.images.length > 0 || !parseBuiltinSlashCommand(item.text)))
+    const messages = this.#state.queue.items.filter((item) => !item.flow && !queuedInputControl(item))
     if (messages.length === 0) {
       this.#setState((state) => addNotice(state, 'info', this.#state.queue.items.length === 0 ? 'Queue is empty' : 'No ordinary message rows can be drained; Flow and control rows keep their boundaries'))
       return
@@ -376,6 +460,7 @@ export class WorkbenchController {
 
   async abort(): Promise<void> {
     this.#pauseAfterTools = false
+    this.cancelBlockingQueueActivity()
     if (this.#state.queue.items.length > 0) this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'abort' } })
     try {
       await this.#transport.request({ type: 'abort' })
@@ -710,6 +795,8 @@ export class WorkbenchController {
     this.#clearReconnectTimer()
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
     this.#dialogs.dispose()
+    for (const resolvePeers of this.#fabricPeerRequests.values()) resolvePeers([])
+    this.#fabricPeerRequests.clear()
     this.#unsubscribeEvent()
     this.#unsubscribeStatus()
     if (this.#stopTransportOnDispose) await this.#transport.stop()
@@ -757,6 +844,11 @@ export class WorkbenchController {
     }
   }
 
+  #drainAvailableQueueLane(): void {
+    if (this.#state.session.isStreaming) this.#drainSteering()
+    else this.#drainQueue()
+  }
+
   #drainSteering(): void {
     if (this.#queueDispatch) return
     const task = this.#drainSteeringHead()
@@ -764,16 +856,22 @@ export class WorkbenchController {
     void task.finally(() => {
       if (this.#queueDispatch !== task) return
       this.#queueDispatch = undefined
-      if (!this.#state.session.isStreaming && !this.#state.queue.paused && this.#state.queue.items.length > 0) queueMicrotask(() => this.#drainQueue())
+      if (!this.#state.session.isStreaming && this.#hasDispatchableIdleHead()) queueMicrotask(() => this.#drainQueue())
     })
   }
 
   async #drainSteeringHead(): Promise<void> {
     const { queue, session, connection } = this.#state
     if (queue.paused || queue.dispatchingId || !session.isStreaming || connection !== 'connected' || this.#compactionHold) return
-    const item = queue.items.find((candidate) => candidate.lane === 'steer')
-    if (!item) return
+    const item = queueLaneHead(queue.items, 'steer')
+    if (!item || item.paused) return
+    const control = queuedInputControl(item)
+    if (control && control.kind !== 'fabric-prewalk' && control.kind !== 'fabric-await') return
     this.#patch({ queue: { ...queue, dispatchingId: item.id } })
+    if (control?.kind === 'fabric-prewalk' || control?.kind === 'fabric-await') {
+      await this.#startFabricQueueControl(item, control, true)
+      return
+    }
     const command = item.images.length === 0 ? parseBuiltinSlashCommand(item.text) : undefined
     try {
       const accepted = command
@@ -794,8 +892,7 @@ export class WorkbenchController {
         },
       })
     } catch (error) {
-      this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error', dispatchingId: undefined } })
-      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      this.#failQueueDispatch(error)
     }
   }
 
@@ -806,17 +903,23 @@ export class WorkbenchController {
     void task.finally(() => {
       if (this.#queueDispatch !== task) return
       this.#queueDispatch = undefined
-      if (!this.#state.session.isStreaming && !this.#state.queue.paused && this.#state.queue.items.length > 0) queueMicrotask(() => this.#drainQueue())
+      if (!this.#state.session.isStreaming && this.#hasDispatchableIdleHead()) queueMicrotask(() => this.#drainQueue())
     })
   }
 
   async #drainQueueHead(): Promise<void> {
     const { queue, session, connection } = this.#state
     if (queue.paused || queue.dispatchingId || session.isStreaming || connection !== 'connected' || this.#compactionHold) return
-    const item = queue.items.find((candidate) => candidate.lane === 'steer')
-      ?? queue.items.find((candidate) => candidate.lane !== 'steer')
+    const steerHead = queueLaneHead(queue.items, 'steer')
+    const followUpHead = queueLaneHead(queue.items, 'followUp')
+    const item = steerHead && !steerHead.paused ? steerHead : followUpHead && !followUpHead.paused ? followUpHead : undefined
     if (!item) return
     this.#patch({ queue: { ...queue, dispatchingId: item.id } })
+    const control = queuedInputControl(item)
+    if (control?.kind === 'fabric-prewalk' || control?.kind === 'fabric-await') {
+      await this.#startFabricQueueControl(item, control, false)
+      return
+    }
     const command = item.images.length === 0 ? parseBuiltinSlashCommand(item.text) : undefined
     const accepted = command
       ? await this.#runBuiltinSlashCommand(command, true, item)
@@ -833,6 +936,46 @@ export class WorkbenchController {
       },
     })
     if (!command && item.text.startsWith('/')) this.#scheduleRefresh(true)
+  }
+
+  #hasDispatchableIdleHead(): boolean {
+    const { queue, connection } = this.#state
+    if (queue.paused || queue.dispatchingId || this.#state.session.isStreaming || connection !== 'connected' || this.#compactionHold) return false
+    return [queueLaneHead(queue.items, 'steer'), queueLaneHead(queue.items, 'followUp')]
+      .some((item) => item !== undefined && !item.paused)
+  }
+
+  async #startFabricQueueControl(item: QueuedInput, control: Extract<QueuedControl, { kind: 'fabric-prewalk' | 'fabric-await' }>, steering: boolean): Promise<void> {
+    const activity = control.kind === 'fabric-prewalk' ? 'fabric-prewalk' : 'fabric-await'
+    const note = control.kind === 'fabric-prewalk'
+      ? 'Arming Fabric prewalk…'
+      : control.peer ? `Waiting for ${control.peer} to settle…` : 'Waiting for Fabric peers to settle…'
+    this.#patch({ queue: { ...this.#state.queue, blockingActivity: activity, blockingNote: note } })
+    try {
+      await this.#transport.request({
+        type: 'prompt',
+        message: encodeFabricBridgeRequest(control.kind === 'fabric-prewalk'
+          ? { action: 'prewalk', requestId: item.id }
+          : { action: 'await', requestId: item.id, ...(control.peer ? { peer: control.peer } : {}) }),
+        ...(steering ? { streamingBehavior: 'steer' as const } : {}),
+      })
+    } catch (error) {
+      if (this.#state.queue.dispatchingId === item.id) this.#failQueueDispatch(error)
+    }
+  }
+
+  #failQueueDispatch(error: unknown): void {
+    this.#patch({
+      queue: {
+        ...this.#state.queue,
+        paused: true,
+        pauseReason: 'error',
+        dispatchingId: undefined,
+        blockingActivity: undefined,
+        blockingNote: undefined,
+      },
+    })
+    this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
   }
 
   async #runBuiltinSlashCommand(command: ParsedBuiltinSlashCommand, queued: boolean, queuedItem?: QueuedInput): Promise<boolean> {
@@ -937,8 +1080,10 @@ export class WorkbenchController {
           this.#sessionTransitionDepth += 1
           try {
             this.#dialogs.cancelAll()
-            const parentSession = queuedItem?.flow?.phase === 'new-session' && queuedItem.flow.taskIndex > 0
-              ? this.#state.session.sessionFile
+            const parentSession = queuedItem
+              ? queuedItem.flow?.phase === 'new-session'
+                ? queuedItem.flow.taskIndex > 0 ? this.#state.session.sessionFile : undefined
+                : this.#state.session.sessionFile
               : undefined
             const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session', ...(parentSession ? { parentSession } : {}) })
             if (result.cancelled) return false
@@ -1131,7 +1276,104 @@ export class WorkbenchController {
     }, full ? 80 : 35)
   }
 
+  #newFabricRequestId(prefix: string): string {
+    return `${prefix}-${Date.now()}-${++this.#nextFabricRequestId}`
+  }
+
+  async #requestFabricPeers(): Promise<FabricPeerCard[]> {
+    const requestId = this.#newFabricRequestId('peers')
+    return await new Promise<FabricPeerCard[]>((resolvePeers) => {
+      let settled = false
+      const finish = (peers: FabricPeerCard[]) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        this.#fabricPeerRequests.delete(requestId)
+        resolvePeers(peers)
+      }
+      const timeout = setTimeout(() => finish([]), 3_000)
+      this.#fabricPeerRequests.set(requestId, finish)
+      void this.#transport.request({
+        type: 'prompt',
+        message: encodeFabricBridgeRequest({ action: 'peers', requestId }),
+        ...(this.#state.session.isStreaming ? { streamingBehavior: 'steer' as const } : {}),
+      }).catch((error) => {
+        finish([])
+        this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+      })
+    })
+  }
+
+  #handleFabricBridgeEvent(event: FabricBridgeEvent): void {
+    if (event.event === 'ready') return
+    if (event.event === 'peers') {
+      this.#fabricPeerRequests.get(event.requestId)?.(event.peers)
+      return
+    }
+    if (event.event === 'error' && event.activity === 'peers') {
+      this.#fabricPeerRequests.get(event.requestId)?.([])
+      this.#setState((state) => addNotice(state, 'warning', event.error))
+      return
+    }
+    if (this.#state.queue.dispatchingId !== event.requestId) return
+    if (event.event === 'started' || event.event === 'progress') {
+      this.#patch({
+        queue: {
+          ...this.#state.queue,
+          blockingActivity: event.activity === 'prewalk' ? 'fabric-prewalk' : 'fabric-await',
+          blockingNote: event.note,
+        },
+      })
+      return
+    }
+    if (event.event === 'settled') {
+      this.#patch({
+        queue: {
+          ...this.#state.queue,
+          items: this.#state.queue.items.filter((item) => item.id !== event.requestId),
+          dispatchingId: undefined,
+          blockingActivity: undefined,
+          blockingNote: undefined,
+        },
+      })
+      if (!this.#state.session.isStreaming) this.#drainQueue()
+      return
+    }
+    if (event.event === 'cancelled') {
+      this.#patch({
+        queue: {
+          ...this.#state.queue,
+          items: this.#state.queue.items.filter((item) => item.id !== event.requestId),
+          paused: this.#state.queue.items.length > 1,
+          pauseReason: this.#state.queue.items.length > 1 ? 'manual' : undefined,
+          dispatchingId: undefined,
+          blockingActivity: undefined,
+          blockingNote: undefined,
+        },
+      })
+      return
+    }
+    if (event.event === 'error') {
+      this.#patch({
+        queue: {
+          ...this.#state.queue,
+          paused: true,
+          pauseReason: 'error',
+          dispatchingId: undefined,
+          blockingActivity: undefined,
+          blockingNote: undefined,
+        },
+      })
+      this.#setState((state) => addNotice(state, 'error', event.error))
+    }
+  }
+
   #handleEvent(event: RpcRecord): void {
+    const fabricEvent = parseFabricBridgeEvent(event)
+    if (fabricEvent) {
+      this.#handleFabricBridgeEvent(fabricEvent)
+      return
+    }
     if (isExtensionUiRequest(event)) {
       this.#dialogs.handleExtensionUi(event, this.#sessionTransitionDepth > 0)
       return

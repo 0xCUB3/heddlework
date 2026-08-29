@@ -6,7 +6,6 @@ import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import type { PiSessionSummary } from '../src/pi/session-catalog.ts'
-import { parseFlowSessionName } from '../src/flows/types.ts'
 import { FlowRuntime } from '../src/flows/runtime.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
@@ -36,7 +35,7 @@ describeNative('Flows surface', () => {
     }
   })
 
-  it('opens above Search, launches projected work, renders rails, and creates a schedule', async () => {
+  it('opens above Search, projects a chat-authored queue with barriers, and creates a schedule', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/flows-ui', testControllerDependencies())
     const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
     runtime.start()
@@ -55,29 +54,41 @@ describeNative('Flows surface', () => {
       expect(await automation.getByTestId('flows-view').count()).toBe(1)
       expect(await automation.getByTestId('flows-work').count()).toBe(1)
 
-      await automation.getByTestId('new-flow').click()
-      await automation.getByTestId('flow-title').fill('Native release flow')
-      await automation.getByTestId('flow-prompt-0').fill('Prepare the native release')
-      await automation.getByTestId('flow-add-step').click()
-      await automation.getByTestId('flow-prompt-1').fill('Verify the native release')
-      await automation.getByTestId('flow-create').click()
-      await waitFor(() => Boolean(parseFlowSessionName(controller.getSnapshot().session.sessionName)))
-      root.renderer.flush()
+      expect(await automation.getByTestId('flow-intake').count()).toBe(0)
+      await automation.getByTestId('flows-queue-in-chat').click()
+      await waitFor(() => Boolean(root.renderer.findByTestId('composer')))
 
-      const identity = parseFlowSessionName(controller.getSnapshot().session.sessionName)!
-      expect(await automation.getByTestId(`flow-task-${identity.taskId}`).count()).toBe(1)
-      expect((await automation.getByTestId('flow-rail-node').all()).length).toBeGreaterThanOrEqual(2)
+      for (const text of ['/new', '/fabric await reviewer', 'Prepare the native release']) {
+        await automation.getByTestId('composer').fill(text)
+        await automation.getByTestId('composer').press('alt-enter')
+        await waitFor(() => controller.getSnapshot().queue.items.some((item) => item.text === text))
+      }
+      const queued = [...controller.getSnapshot().queue.items]
+      expect(controller.getSnapshot().session.isStreaming).toBe(false)
+      expect(controller.getSnapshot().queue.paused).toBe(true)
+
+      await automation.getByTestId('sidebar-flows').click()
+      root.renderer.flush()
+      for (const item of queued) expect(await automation.getByTestId(`flow-task-${item.id}`).count()).toBe(1)
+      expect(root.renderer.getAllText()).toContain('New session')
+      expect(root.renderer.getAllText()).toContain('Wait for reviewer')
+      expect((await automation.getByTestId('flow-rail-node').all()).length).toBeGreaterThanOrEqual(3)
       expect((await automation.getByTestId('flow-rail-after').all()).length).toBeGreaterThan(0)
       expect((await automation.getByTestId('flow-rail-before').all()).length).toBeGreaterThan(0)
+      expect((await automation.getByTestId('flow-rail-link').all()).length).toBeGreaterThanOrEqual(2)
       expect(root.renderer.findByTestId('flows-work-list')?.type).toBe('virtual-list')
-      const taskBounds = await automation.getByTestId(`flow-task-${identity.taskId}`).bounds()
+      const projectedPrompt = queued.at(-1)!
+      const taskBounds = await automation.getByTestId(`flow-task-${projectedPrompt.id}`).bounds()
       const firstRailBounds = (await automation.getByTestId('flow-rail-node').all())[0]!.bounds!
       expect(taskBounds.height).toBeCloseTo(42, 0)
       expect(firstRailBounds.x).toBeGreaterThan(taskBounds.x + taskBounds.width * 0.72)
-      await automation.getByTestId(`flow-task-${identity.taskId}`).click()
+      await automation.getByTestId(`flow-task-${projectedPrompt.id}`).click()
       root.renderer.flush()
       expect(await automation.getByTestId('flow-task-page').count()).toBe(1)
       expect((await automation.getByTestId('flow-rail').all()).length).toBeGreaterThan(0)
+      await automation.getByTestId('flow-cancel-queue').click()
+      await waitFor(() => !controller.getSnapshot().queue.items.some((item) => item.id === projectedPrompt.id))
+      expect(await automation.getByTestId(`flow-task-${projectedPrompt.id}`).count()).toBe(0)
 
       await automation.getByTestId('flows-tab-scheduled').click()
       root.renderer.flush()
@@ -97,6 +108,52 @@ describeNative('Flows surface', () => {
     }
   }, 10_000)
 
+
+  it('fans an ordinary active Work row into live Fabric participants and a join', async () => {
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/flows-live-fabric', testControllerDependencies())
+    const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
+    const root = createTestRoot({ width: 1_180, height: 760 })
+    root.render(<WorkbenchApp controller={controller} flows={runtime} presenters={new Map()} ui={createTestUiRegistry(controller)} />)
+    const automation = await connectTest(root.renderer)
+    try {
+      await controller.start()
+      await controller.submit('/name Live branch graph')
+      await controller.submit('Stream the live branch graph')
+      const sessionId = controller.getSnapshot().session.sessionId!
+      const taskId = `PI-${sessionId.slice(0, 8).toUpperCase()}`
+      controller.acceptAgentEvent({ type: 'tool_execution_start', toolCallId: 'live-fabric', toolName: 'fabric_exec', args: { display: { name: 'HW-LIVE-1' }, code: 'workflow.parallel([])' } })
+      controller.acceptAgentEvent({
+        type: 'tool_execution_update',
+        toolCallId: 'live-fabric',
+        toolName: 'fabric_exec',
+        partialResult: {
+          details: {
+            audits: [
+              { ref: 'agents.run', provider: 'agents', tool: 'run', args: { name: 'HW-LIVE-1/B1' }, preview: { kind: 'fabric-agent-tools', id: 'live-agent-a', name: 'HW-LIVE-1/B1', status: 'running', runner: 'pi', currentTool: 'grep branch graph', tools: [] } },
+              { ref: 'agents.run', provider: 'agents', tool: 'run', args: { name: 'HW-LIVE-1/B2' }, preview: { kind: 'fabric-agent-tools', id: 'live-agent-b', name: 'HW-LIVE-1/B2', status: 'running', runner: 'pi', tools: [] } },
+            ],
+          },
+        },
+      })
+      await automation.getByTestId('sidebar-flows').click()
+      await waitFor(() => {
+        root.renderer.flush()
+        return Boolean(root.renderer.findByTestId('flow-fabric-branch-live-agent-a'))
+      })
+      expect(await automation.getByTestId(`flow-task-${taskId}`).count()).toBe(1)
+      expect(await automation.getByTestId('flow-fabric-branch-live-agent-a').count()).toBe(1)
+      expect(await automation.getByTestId('flow-fabric-branch-live-agent-b').count()).toBe(1)
+      expect(await automation.getByTestId('flow-fabric-join').count()).toBe(1)
+      expect(root.renderer.getAllText()).toContain('grep branch graph')
+      expect(root.renderer.getAllText()).toContain('0/2 branches settled')
+    } finally {
+      await automation.close()
+      root.unmount()
+      runtime.dispose()
+      await controller.dispose()
+    }
+  })
+
   it('keeps wide project, triage, and automation layouts centered and contained', async () => {
     const sessions: PiSessionSummary[] = [
       visualSession('alpha001-session', '/tmp/project-alpha', 'Alpha task one', 1),
@@ -104,6 +161,7 @@ describeNative('Flows surface', () => {
       visualSession('beta0001-session', '/tmp/project-beta', 'Beta task one', 3),
       visualSession('beta0002-session', '/tmp/project-beta', 'A long projected title that must wrap inside the details pane without clipping through the task list', 4, '<skill name="localterm" location="/Users/example/a-very-long-path-that-must-remain-inside-the-result-card">'.repeat(12)),
     ]
+    sessions[1] = { ...sessions[1]!, parentSession: sessions[0]!.path }
     const state = { ...createInitialState('/tmp/flows-layout'), connection: 'connected' as const, sessions }
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/flows-layout', testControllerDependencies())
     const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
@@ -132,12 +190,19 @@ describeNative('Flows surface', () => {
       expect(Math.abs((groupIcon.y + groupIcon.height / 2) - (groupTitle.y + groupTitle.height / 2))).toBeLessThanOrEqual(2)
       expect(root.renderer.getAllText().join(' ')).not.toContain('Observed Pi session')
       expect(root.renderer.getAllText().join(' ')).not.toContain('observed Pi sessions')
+      expect(root.renderer.getAllText()).toContain('Parent session')
+      expect(root.renderer.getAllText()).toContain('Child session')
 
       await automation.getByTestId('flow-task-PI-BETA0002').click()
       root.renderer.flush()
       const back = root.renderer.findByTestId('flow-task-back')!
       const backIcon = root.renderer.getElement(back.children[0]!)!
       expect(decodeURIComponent(String(backIcon.customProps?.src ?? ''))).toContain('m15 18-6-6 6-6')
+      await automation.getByTestId('flow-task-back').click()
+      await automation.getByTestId('flow-task-PI-ALPHA002').click()
+      root.renderer.flush()
+      expect(root.renderer.getAllText()).toContain('Blocked by')
+      expect(root.renderer.getAllText().join(' ')).toContain('Alpha task one')
       await automation.getByTestId('flow-task-back').click()
 
       await automation.getByTestId('flows-tab-triage').click()
@@ -620,6 +685,79 @@ describeNative('Flows surface', () => {
       await controller.dispose()
     }
   }, 10_000)
+
+
+  it('replays nested Fabric branches and their join on a parallel task page', async () => {
+    const now = Date.now()
+    const sessionPath = `/tmp/heddlework-flow-fabric-${process.pid}.jsonl`
+    const records = [
+      { type: 'message', id: 'fabric-user', parentId: null, message: { role: 'user', content: '[Flow HW-GRAPH]\n[Flow Task HW-GRAPH-1]\n\nTask:\nBuild the projected branch graph', timestamp: now - 4_000 } },
+      { type: 'message', id: 'fabric-call', parentId: 'fabric-user', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'fabric-exec', name: 'fabric_exec', arguments: { display: { name: 'HW-GRAPH-1' }, code: 'return await workflow.parallel([])' } }], timestamp: now - 3_000 } },
+      {
+        type: 'message',
+        id: 'fabric-result',
+        parentId: 'fabric-call',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'fabric-exec',
+          toolName: 'fabric_exec',
+          content: 'complete',
+          timestamp: now - 2_000,
+          details: {
+            audits: [
+              {
+                ref: 'agents.run', provider: 'agents', tool: 'run', success: true,
+                preview: {
+                  kind: 'fabric-agent-tools', id: 'ui-agent-parent', name: 'HW-GRAPH-1/B1', status: 'completed', runner: 'pi', tools: [],
+                  agents: [{ id: 'ui-agent-child', name: 'HW-GRAPH-1/B1.1', status: 'completed', runner: 'pi', currentTool: 'read src/graph.ts', tools: [] }],
+                },
+              },
+              { ref: 'agents.run', provider: 'agents', tool: 'run', success: true, preview: { kind: 'fabric-agent-tools', id: 'ui-agent-sibling', name: 'HW-GRAPH-1/B2', status: 'completed', runner: 'pi', tools: [] } },
+            ],
+          },
+        },
+      },
+      { type: 'message', id: 'fabric-answer', parentId: 'fabric-result', message: { role: 'assistant', content: 'Joined result', timestamp: now - 1_000 } },
+    ]
+    writeFileSync(sessionPath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    const session: PiSessionSummary = {
+      id: 'fabric-graph-session', path: sessionPath, cwd: '/tmp', name: 'Flow HW-GRAPH/1:1 · Parallel graph', title: 'Parallel graph',
+      firstMessage: '[Flow HW-GRAPH]\n[Flow Task HW-GRAPH-1]\n\nTask:\nBuild the projected branch graph', messageCount: records.length,
+      createdAt: now - 4_000, modifiedAt: now - 1_000, lastAssistantText: 'Joined result', lastAssistantStopReason: 'stop',
+    }
+    const state = { ...createInitialState('/tmp'), connection: 'connected' as const, sessions: [session] }
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp', testControllerDependencies())
+    const runtime = new FlowRuntime(controller, { path: false, tickIntervalMs: 60_000 })
+    const root = createTestRoot({ width: 1_352, height: 760 })
+    root.render(
+      <ResponsiveLayoutProvider layout={resolveResponsiveLayout(1_352)}>
+        <div style={{ width: 1_352, height: 760, display: 'flex', flexDirection: 'row' }}>
+          <FlowsView state={state} controller={controller} runtime={runtime} presenters={new Map()} onClose={() => undefined} onOpenSession={() => undefined} />
+        </div>
+      </ResponsiveLayoutProvider>,
+    )
+    const automation = await connectTest(root.renderer)
+    try {
+      await automation.getByTestId('flow-task-HW-GRAPH-1').click()
+      await waitFor(() => {
+        root.renderer.flush()
+        return Boolean(root.renderer.findByTestId('flow-fabric-join'))
+      })
+      expect(await automation.getByTestId('flow-fabric-graph').count()).toBe(1)
+      expect(await automation.getByTestId('flow-fabric-branch-ui-agent-parent').count()).toBe(1)
+      expect(await automation.getByTestId('flow-fabric-branch-ui-agent-child').count()).toBe(1)
+      expect(await automation.getByTestId('flow-fabric-branch-ui-agent-sibling').count()).toBe(1)
+      expect(root.renderer.getAllText()).toContain('read src/graph.ts')
+      expect(root.renderer.getAllText()).toContain('3 branches joined')
+      expect((await automation.getByTestId('flow-rail-link').all()).length).toBeGreaterThan(0)
+    } finally {
+      await automation.close()
+      root.unmount()
+      runtime.dispose()
+      await controller.dispose()
+      rmSync(sessionPath, { force: true })
+    }
+  })
 
   it('batches persisted session activity into the task timeline', async () => {
     const now = Date.now()

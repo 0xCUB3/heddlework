@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { attachJsonlReader, serializeJsonLine } from './jsonl.ts'
+import { heddleworkFabricBridgePath } from './fabric-bridge.ts'
 import type { AgentTransport, TransportStatus } from './transport.ts'
 import type { RpcCommand, RpcRecord } from './types.ts'
 
@@ -13,6 +14,7 @@ export interface PiRpcTransportOptions {
   piArgs?: string[]
   env?: NodeJS.ProcessEnv
   requestTimeoutMs?: number
+  fabricBridge?: boolean | undefined
 }
 
 interface PendingRequest {
@@ -43,7 +45,8 @@ export class PiRpcTransport implements AgentTransport {
     this.#stderr = ''
 
     const command = this.#options.command ?? resolvePiExecutable()
-    const args = [...(this.#options.commandArgs ?? []), '--mode', 'rpc', ...(this.#options.piArgs ?? [])]
+    const bridgeArgs = this.#options.fabricBridge === false ? [] : ['--extension', heddleworkFabricBridgePath()]
+    const args = [...(this.#options.commandArgs ?? []), '--mode', 'rpc', ...bridgeArgs, ...(this.#options.piArgs ?? [])]
     const child = spawn(command, args, {
       cwd: this.#options.cwd,
       env: { ...process.env, ...this.#options.env },

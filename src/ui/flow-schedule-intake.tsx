@@ -5,10 +5,9 @@ import type { WorkbenchState } from '../workbench/state.ts'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 
-export function FlowIntake({ state, runtime, purpose, onCreated, onCancel }: {
+export function FlowScheduleIntake({ state, runtime, onCreated, onCancel }: {
   state: WorkbenchState
   runtime: FlowRuntime
-  purpose: 'run' | 'schedule'
   onCreated(id: string): void
   onCancel(): void
 }) {
@@ -29,14 +28,15 @@ export function FlowIntake({ state, runtime, purpose, onCreated, onCancel }: {
   const valid = prompts.some((prompt) => prompt.trim())
   const submit = () => {
     try {
-      const template = { title, prompts, mode, ...(model ? { model } : {}), workspacePath: state.workspacePath }
-      if (purpose === 'run') {
-        const launch = runtime.launch(template)
-        onCreated(launch.id)
-      } else {
-        const schedule = runtime.createSchedule({ ...template, timing: parseTiming(timingKind, timingValue) })
-        onCreated(schedule.id)
-      }
+      const schedule = runtime.createSchedule({
+        title,
+        prompts,
+        mode,
+        ...(model ? { model } : {}),
+        workspacePath: state.workspacePath,
+        timing: parseTiming(timingKind, timingValue),
+      })
+      onCreated(schedule.id)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -47,11 +47,11 @@ export function FlowIntake({ state, runtime, purpose, onCreated, onCancel }: {
     if (next === 'parallel' && prompts.length > 1) setPrompts([prompts.filter(Boolean).join('\n\n')])
   }
   return (
-    <div testId={purpose === 'run' ? 'flow-intake' : 'schedule-intake'} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 13, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}>
+    <div testId="schedule-intake" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 13, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flexGrow: 1 }}>
-          <text style={{ color: colors.text, fontSize: 15, fontWeight: 650 }}>{purpose === 'run' ? 'New flow' : 'Schedule a flow'}</text>
-          <text style={{ color: colors.textFaint, fontSize: 10 }}>{purpose === 'run' ? 'Compile work into Pi queue primitives.' : 'The runtime will enqueue a fresh Pi session when this job is due.'}</text>
+          <text style={{ color: colors.text, fontSize: 15, fontWeight: 650 }}>Schedule a flow</text>
+          <text style={{ color: colors.textFaint, fontSize: 10 }}>Each due occurrence enters the same queue projected in Work.</text>
         </div>
         <Button label="Cancel" tone="quiet" compact onClick={onCancel} />
       </div>
@@ -85,27 +85,25 @@ export function FlowIntake({ state, runtime, purpose, onCreated, onCancel }: {
         ))}
         {mode === 'sequential' && <div style={{ alignSelf: 'flex-start' }}><Button testId="flow-add-step" label="Add step" icon="plus" compact onClick={() => setPrompts((current) => [...current, ''])} /></div>}
       </div>
-      {purpose === 'schedule' && (
-        <div testId="schedule-controls" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10 }}>
-          <Field label="Cadence">
-            <ChipSelect backdropColor={colors.card} testId="schedule-kind" value={timingKind} options={[
-              { value: 'once', label: 'Once' },
-              { value: 'interval', label: 'Interval' },
-              { value: 'daily', label: 'Daily' },
-            ]} width={180} triggerMaxWidth={150} onChange={(value) => {
-              const kind = value as typeof timingKind
-              setTimingKind(kind)
-              setTimingValue(kind === 'once' ? defaultOnceValue() : kind === 'interval' ? '60' : defaultDailyValue())
-            }} />
-          </Field>
-          <Field label={timingKind === 'once' ? 'Local date and time' : timingKind === 'interval' ? 'Minutes' : 'Local time'}>
-            <FramedInput testId="schedule-value" value={timingValue} width={220} placeholder={timingKind === 'once' ? '2026-08-29 09:30' : timingKind === 'interval' ? '60' : '09:30'} onChange={setTimingValue} />
-          </Field>
-        </div>
-      )}
-      {error && <text testId="flow-intake-error" style={{ color: colors.error, fontSize: 10 }}>{error}</text>}
+      <div testId="schedule-controls" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10 }}>
+        <Field label="Cadence">
+          <ChipSelect backdropColor={colors.card} testId="schedule-kind" value={timingKind} options={[
+            { value: 'once', label: 'Once' },
+            { value: 'interval', label: 'Interval' },
+            { value: 'daily', label: 'Daily' },
+          ]} width={180} triggerMaxWidth={150} onChange={(value) => {
+            const kind = value as typeof timingKind
+            setTimingKind(kind)
+            setTimingValue(kind === 'once' ? defaultOnceValue() : kind === 'interval' ? '60' : defaultDailyValue())
+          }} />
+        </Field>
+        <Field label={timingKind === 'once' ? 'Local date and time' : timingKind === 'interval' ? 'Minutes' : 'Local time'}>
+          <FramedInput testId="schedule-value" value={timingValue} width={220} placeholder={timingKind === 'once' ? '2026-08-29 09:30' : timingKind === 'interval' ? '60' : '09:30'} onChange={setTimingValue} />
+        </Field>
+      </div>
+      {error && <text testId="schedule-intake-error" style={{ color: colors.error, fontSize: 10 }}>{error}</text>}
       <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'flex-end' }}>
-        <Button testId={purpose === 'run' ? 'flow-create' : 'schedule-create'} label={purpose === 'run' ? 'Queue flow' : 'Create schedule'} tone="primary" icon={purpose === 'run' ? 'arrowUp' : 'clock'} disabled={!valid} onClick={submit} />
+        <Button testId="schedule-create" label="Create schedule" tone="primary" icon="clock" disabled={!valid} onClick={submit} />
       </div>
     </div>
   )

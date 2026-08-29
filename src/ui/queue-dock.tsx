@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { parseBuiltinSlashCommand } from '../pi/slash-commands.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
-import { queueSize, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
+import { queueItemsInDeliveryOrder, queueSize, queuedInputControl, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { MotionDiv, useSpringProgress } from './motion.ts'
@@ -36,12 +35,13 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
   const [editing, setEditing] = useState<{ id: string; text: string } | undefined>(undefined)
   const [draggingId, setDraggingId] = useState<string | undefined>(undefined)
   const [hoveredId, setHoveredId] = useState<string | undefined>(undefined)
+  const ownedItems = useMemo(() => queueItemsInDeliveryOrder(state.queue.items), [state.queue.items])
   const rows = useMemo<QueueRowView[]>(() => [
     ...state.queue.steering.map((text, index) => ({ id: `native-steering-${index}-${text}`, text, placement: 'steering' as const })),
-    ...state.queue.items.map((item) => ({ id: item.id, text: item.text, placement: 'queued' as const, item })),
+    ...ownedItems.map((item) => ({ id: item.id, text: item.text, placement: 'queued' as const, item })),
     ...state.queue.followUp.map((text, index) => ({ id: `native-follow-up-${index}-${text}`, text, placement: 'follow-up' as const })),
-  ], [state.queue.followUp, state.queue.items, state.queue.steering])
-  const drainable = state.queue.items.some((item) => !item.flow && (item.images.length > 0 || !parseBuiltinSlashCommand(item.text)))
+  ], [ownedItems, state.queue.followUp, state.queue.steering])
+  const drainable = state.queue.items.some((item) => !item.flow && !queuedInputControl(item))
   const openProgress = Math.min(1, useSpringProgress(expanded && rows.length > 0))
   const listTargetHeight = Math.min(MAX_LIST_HEIGHT, rows.length * ROW_HEIGHT + 8)
   const listHeight = listTargetHeight * openProgress
@@ -89,10 +89,11 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         }}
       >
         {rows.map((row) => {
-          const ownedIndex = row.item ? state.queue.items.findIndex((item) => item.id === row.id) : -1
+          const ownedIndex = row.item ? ownedItems.findIndex((item) => item.id === row.id) : -1
           const dispatching = state.queue.dispatchingId === row.id
-          const control = row.item && row.item.images.length === 0 ? parseBuiltinSlashCommand(row.text) : undefined
+          const control = row.item ? queuedInputControl(row.item) : undefined
           const actionsVisible = compact || hoveredId === row.id
+          const pauseActionVisible = actionsVisible || Boolean(row.item?.paused)
           return (
             <div
               key={row.id}
@@ -136,10 +137,15 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
               ) : (
                 <div {...(row.item ? { testId: `queue-edit:${row.id}` } : {})} style={{ minWidth: 0, flexGrow: 1, height: 30, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, cursor: row.item ? 'text' : 'default' }} {...(row.item && !dispatching ? { onClick: () => setEditing({ id: row.id, text: row.text }) } : {})}>
                   <text style={{ color: colors.text, fontSize: 11, lineHeight: 14, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.text || `${row.item?.images.length ?? 0} attached image${row.item?.images.length === 1 ? '' : 's'}`}</text>
-                  <text style={{ color: control ? colors.warning : row.item?.lane === 'steer' || row.placement === 'steering' ? '#7EA2FF' : row.placement === 'follow-up' ? colors.warning : colors.textFaint, fontSize: 8, fontWeight: 650 }}>{row.placement === 'queued' ? `${control ? 'CONTROL' : row.item?.lane === 'steer' ? 'STEER · NEXT TURN' : 'FOLLOW-UP · AFTER RUN'}${row.item?.images.length ? ` · ${row.item.images.length} IMAGE${row.item.images.length === 1 ? '' : 'S'}` : ''}` : row.placement === 'steering' ? 'STEERED · NEXT' : row.placement.toUpperCase()}</text>
+                  <text style={{ color: control ? colors.warning : row.item?.lane === 'steer' || row.placement === 'steering' ? '#7EA2FF' : row.placement === 'follow-up' ? colors.warning : colors.textFaint, fontSize: 8, fontWeight: 650 }}>{row.placement === 'queued' ? `${control ? `CONTROL · ${control.kind === 'builtin' ? control.name.toUpperCase() : control.kind.toUpperCase().replaceAll('-', ' ')}` : row.item?.lane === 'steer' ? 'STEER · NEXT TURN' : 'FOLLOW-UP · AFTER RUN'}${row.item?.paused ? ' · HELD' : ''}${row.item?.images.length ? ` · ${row.item.images.length} IMAGE${row.item.images.length === 1 ? '' : 'S'}` : ''}` : row.placement === 'steering' ? 'STEERED · NEXT' : row.placement.toUpperCase()}</text>
                 </div>
               )}
 
+              {row.item && (
+                <MotionDiv testId={`queue-row-pause:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: pauseActionVisible ? 1 : 0, left: pauseActionVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, backgroundColor: row.item.paused ? '#382D18' : colors.transparent, cursor: pauseActionVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(pauseActionVisible && !dispatching ? { onClick: () => controller.toggleQueuedInputPause(row.id) } : {})}>
+                  <Icon name={row.item.paused ? 'lock' : 'clock'} size={11} color={row.item.paused ? colors.warning : colors.textFaint} />
+                </MotionDiv>
+              )}
               {row.item && !row.item.flow && (
                 <MotionDiv testId={`queue-lane:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: actionsVisible ? 1 : 0, left: actionsVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: actionsVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(actionsVisible && !dispatching ? { onClick: () => controller.moveQueuedInputToLane(row.id, row.item?.lane === 'steer' ? 'followUp' : 'steer') } : {})}>
                   <Icon name={row.item.lane === 'steer' ? 'clock' : 'arrowUp'} size={11} color={row.item.lane === 'steer' ? colors.warning : '#7EA2FF'} />
@@ -163,7 +169,17 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
       <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
-        <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{first.text || 'Image attachment'}</text>
+        <text {...(state.queue.blockingActivity ? { testId: 'queue-blocking-note' } : {})} style={{ minWidth: 0, flexGrow: 1, color: state.queue.blockingActivity ? colors.warning : colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{state.queue.blockingNote ?? first.text ?? 'Image attachment'}</text>
+        <div testId="queue-peer-gate" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, paddingLeft: compact ? 6 : 8, paddingRight: compact ? 6 : 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer', flexShrink: 0 }} onClick={() => void controller.queueFabricPeerGate()} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') void controller.queueFabricPeerGate() }}>
+          <Icon name="gitBranch" size={11} color={colors.textMuted} />
+          {!compact && <text style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700 }}>Wait peer</text>}
+        </div>
+        {state.queue.blockingActivity === 'fabric-await' && (
+          <div testId="queue-stop-gate" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', gap: 5, paddingLeft: 7, paddingRight: 7, borderRadius: 6, backgroundColor: '#382D18', cursor: 'pointer' }} onClick={() => controller.cancelBlockingQueueActivity()}>
+            <Icon name="stop" size={9} color={colors.warning} />
+            {!compact && <text style={{ color: colors.warning, fontSize: 9, fontWeight: 700 }}>Stop wait</text>}
+          </div>
+        )}
         {drainable && (
           <div testId="queue-drain" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer' }} onClick={() => void controller.drainQueueMessages()}>
             <text style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700 }}>Drain</text>

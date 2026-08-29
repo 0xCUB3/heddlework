@@ -1,4 +1,5 @@
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import { queueLaneItems, queuedInputControl, type QueueLane, type QueuedControl, type QueuedInput } from '../workbench/queue.ts'
 import type { ThreadPriority, WorkbenchState } from '../workbench/state.ts'
 import { contentText } from '../workbench/state.ts'
 import { sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
@@ -12,7 +13,7 @@ export interface FlowTaskProjection {
   runId: string
   title: string
   prompt: string
-  mode: FlowMode | 'observed'
+  mode: FlowMode | 'observed' | 'queue'
   source: FlowSource
   status: FlowTaskStatus
   workspacePath: string
@@ -32,6 +33,7 @@ export interface FlowTaskProjection {
   unread: boolean
   settled: boolean
   queueItemIds: string[]
+  queueLane?: QueueLane | undefined
 }
 
 export interface FlowRunProjection {
@@ -44,6 +46,34 @@ export interface FlowRunProjection {
 
 export function projectFlowRuns(state: WorkbenchState, now = Date.now()): FlowRunProjection[] {
   const tasks = new Map<string, FlowTaskProjection>()
+  const uncorrelated = state.queue.items.filter((item) => !item.flow)
+  for (const lane of ['steer', 'followUp'] as const) {
+    const laneItems = queueLaneItems(uncorrelated, lane)
+    const runId = `queue:${lane}`
+    laneItems.forEach((item, taskIndex) => {
+      const control = queuedInputControl(item)
+      const dispatching = state.queue.dispatchingId === item.id
+      const createdAt = item.createdAt
+      tasks.set(`queue:${item.id}`, {
+        id: item.id,
+        runId,
+        title: queuedTaskTitle(item, control),
+        prompt: item.text,
+        mode: 'queue',
+        source: 'queue',
+        status: state.queue.paused || item.paused ? 'paused' : dispatching ? state.queue.blockingActivity ? 'running' : 'starting' : 'queued',
+        workspacePath: state.workspacePath,
+        createdAt,
+        updatedAt: createdAt,
+        taskIndex,
+        taskCount: laneItems.length,
+        ...(control?.kind === 'model' && control.target ? { model: control.target } : {}),
+        ...taskProjectionMetadata(`queue:${item.id}`, createdAt, createdAt, undefined, state, now, false),
+        queueItemIds: [item.id],
+        queueLane: lane,
+      })
+    })
+  }
   for (const item of state.queue.items) {
     const flow = item.flow
     if (!flow) continue
@@ -77,6 +107,7 @@ export function projectFlowRuns(state: WorkbenchState, now = Date.now()): FlowRu
     if (currentIndex >= 0) sessions[currentIndex] = { ...sessions[currentIndex]!, ...current, createdAt: sessions[currentIndex]!.createdAt }
     else sessions.unshift(current)
   }
+  const observedPositions = observedSessionPositions(sessions)
   for (const session of sessions) {
     const parsed = parseFlowSessionName(session.name)
     if (parsed) {
@@ -110,9 +141,10 @@ export function projectFlowRuns(state: WorkbenchState, now = Date.now()): FlowRu
     const active = session.id === state.session.sessionId || session.path === state.session.sessionFile
     const status = active && state.session.isStreaming ? 'running' : sessionStatus(session)
     const id = `PI-${session.id.slice(0, 8).toUpperCase()}`
+    const position = observedPositions.get(session.path)
     tasks.set(`observed:${session.id}`, {
       id,
-      runId: `observed:${session.id}`,
+      runId: position?.runId ?? `observed:${session.id}`,
       title: session.title,
       prompt: session.firstMessage,
       mode: 'observed',
@@ -121,8 +153,8 @@ export function projectFlowRuns(state: WorkbenchState, now = Date.now()): FlowRu
       workspacePath: session.cwd,
       createdAt: session.createdAt,
       updatedAt: session.modifiedAt,
-      taskIndex: 0,
-      taskCount: 1,
+      taskIndex: position?.taskIndex ?? 0,
+      taskCount: position?.taskCount ?? 1,
       session,
       ...(session.lastAssistantText ? { result: session.lastAssistantText } : {}),
       ...(session.lastAssistantStopReason ? { stopReason: session.lastAssistantStopReason } : {}),
@@ -135,14 +167,20 @@ export function projectFlowRuns(state: WorkbenchState, now = Date.now()): FlowRu
   for (const task of tasks.values()) {
     const currentRun = runs.get(task.runId)
     if (!currentRun) {
-      runs.set(task.runId, { id: task.runId, source: task.source, title: task.taskCount > 1 ? task.title.replace(/ · Step \d+$/, '') : task.title, tasks: [task], updatedAt: task.updatedAt })
+      const title = task.source === 'queue'
+        ? task.queueLane === 'steer' ? 'Steering queue' : 'Follow-up queue'
+        : task.taskCount > 1 ? task.title.replace(/ · Step \d+$/, '') : task.title
+      runs.set(task.runId, { id: task.runId, source: task.source, title, tasks: [task], updatedAt: task.updatedAt })
     } else {
       currentRun.tasks.push(task)
       currentRun.updatedAt = Math.max(currentRun.updatedAt, task.updatedAt)
     }
   }
   return [...runs.values()]
-    .map((run) => ({ ...run, tasks: run.tasks.toSorted((left, right) => left.taskIndex - right.taskIndex || left.createdAt - right.createdAt) }))
+    .map((run) => {
+      const sortedTasks = run.tasks.toSorted((left, right) => left.taskIndex - right.taskIndex || left.createdAt - right.createdAt)
+      return { ...run, ...(run.source === 'observed' && sortedTasks.length > 1 ? { title: sortedTasks[0]!.title } : {}), tasks: sortedTasks }
+    })
     .toSorted((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
 }
 
@@ -176,6 +214,101 @@ function taskProjectionMetadata(
     unread: terminal && (metadata?.readAt ?? 0) < updatedAt,
     settled: session ? sessionLifecycleBucket(session, metadata, now) === 'settled' : false,
   }
+}
+
+interface ObservedSessionPosition {
+  runId: string
+  taskIndex: number
+  taskCount: number
+}
+
+function observedSessionPositions(sessions: readonly PiSessionSummary[]): Map<string, ObservedSessionPosition> {
+  const candidates = sessions.filter((session) => session.messageCount > 0 && !parseFlowSessionName(session.name))
+  const byPath = new Map(candidates.map((session) => [session.path, session]))
+  const parentOf = (session: PiSessionSummary): PiSessionSummary | undefined => {
+    const parent = session.parentSession ? byPath.get(session.parentSession) : undefined
+    return parent?.cwd === session.cwd ? parent : undefined
+  }
+  const rootCache = new Map<string, string>()
+  const rootPath = (session: PiSessionSummary): string => {
+    const trail: PiSessionSummary[] = []
+    const seen = new Set<string>()
+    let current = session
+    let root: string
+    while (true) {
+      const cached = rootCache.get(current.path)
+      if (cached) {
+        root = cached
+        break
+      }
+      if (seen.has(current.path)) {
+        root = trail.map(({ path }) => path).toSorted()[0] ?? session.path
+        break
+      }
+      seen.add(current.path)
+      trail.push(current)
+      const parent = parentOf(current)
+      if (!parent) {
+        root = current.path
+        break
+      }
+      current = parent
+    }
+    for (const entry of trail) rootCache.set(entry.path, root)
+    return root
+  }
+  const depthCache = new Map<string, number>()
+  const depth = (session: PiSessionSummary): number => {
+    const trail: PiSessionSummary[] = []
+    const seen = new Set<string>()
+    let current = session
+    let value = -1
+    while (true) {
+      const cached = depthCache.get(current.path)
+      if (cached !== undefined) {
+        value = cached
+        break
+      }
+      if (seen.has(current.path)) break
+      seen.add(current.path)
+      trail.push(current)
+      const parent = parentOf(current)
+      if (!parent) break
+      current = parent
+    }
+    for (let index = trail.length - 1; index >= 0; index -= 1) {
+      value += 1
+      depthCache.set(trail[index]!.path, value)
+    }
+    return depthCache.get(session.path) ?? 0
+  }
+  const groups = new Map<string, PiSessionSummary[]>()
+  for (const session of candidates) {
+    const root = rootPath(session)
+    const group = groups.get(root)
+    if (group) group.push(session)
+    else groups.set(root, [session])
+  }
+  const positions = new Map<string, ObservedSessionPosition>()
+  for (const group of groups.values()) {
+    const ordered = group.toSorted((left, right) => depth(left) - depth(right) || left.createdAt - right.createdAt || left.path.localeCompare(right.path))
+    const root = ordered[0]!
+    const runId = ordered.length > 1 ? `observed-chain:${root.id}` : `observed:${root.id}`
+    ordered.forEach((session, taskIndex) => positions.set(session.path, { runId, taskIndex, taskCount: ordered.length }))
+  }
+  return positions
+}
+
+function queuedTaskTitle(item: QueuedInput, control: QueuedControl | undefined): string {
+  if (!control) return compactObservedTitle(item.text || 'Image attachment')
+  if (control.kind === 'new') return 'New session'
+  if (control.kind === 'model') return control.target ? `Use ${control.target}` : 'Choose model'
+  if (control.kind === 'thinking') return control.level ? `Thinking · ${control.level}` : 'Choose thinking level'
+  if (control.kind === 'compact') return 'Compact context'
+  if (control.kind === 'reload') return 'Reload resources'
+  if (control.kind === 'fabric-prewalk') return 'Fabric prewalk'
+  if (control.kind === 'fabric-await') return control.peer ? `Wait for ${control.peer}` : 'Wait for Fabric peers'
+  return `/${control.name}${control.argument ? ` ${control.argument}` : ''}`
 }
 
 function sessionStatus(session: PiSessionSummary): FlowTaskStatus {

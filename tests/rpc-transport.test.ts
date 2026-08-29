@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { delimiter, join, resolve } from 'node:path'
 import { PiRpcTransport, resolvePiExecutable } from '../src/pi/rpc-transport.ts'
+import { heddleworkFabricBridgePath } from '../src/pi/fabric-bridge.ts'
 import type { RpcRecord } from '../src/pi/types.ts'
 
 describe('PiRpcTransport', () => {
@@ -27,6 +28,11 @@ describe('PiRpcTransport', () => {
       expect(events).toHaveLength(1)
       expect(events[0]?.type).toBe('queue_update')
       expect((events[0]?.steering as string[])[0]).toBe('hello\u2028world')
+      const argv = await transport.request<{ argv: string[] }>({ type: 'argv' })
+      expect(argv.argv).toContain('--mode')
+      expect(argv.argv).toContain('rpc')
+      expect(argv.argv).toContain('--extension')
+      expect(argv.argv).toContain(heddleworkFabricBridgePath())
       await expect(transport.request({ type: 'fail' })).rejects.toThrow('expected failure')
     } finally {
       unsubscribe()

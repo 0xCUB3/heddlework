@@ -13,6 +13,14 @@ const subject: FlowActivitySubject = {
 }
 
 describe('Flow activity projection', () => {
+  it('keeps queue-only activity distinct from delivered Pi prompts', () => {
+    expect(projectFlowActivity({ id: 'queue-1', prompt: 'Implement after review', source: 'queue', status: 'queued', createdAt: 10, updatedAt: 10 }, []).map(({ title }) => title)).toEqual([
+      'Queued',
+      'Queued input',
+      'Waiting in queue',
+    ])
+  })
+
   it('batches each session turn into prompt, context, tool, and response activity', () => {
     const messages: PiMessage[] = [
       { role: 'user', content: 'Inspect the repository', timestamp: 1_100 },

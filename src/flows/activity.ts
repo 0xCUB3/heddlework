@@ -7,7 +7,7 @@ export type FlowActivityTone = 'normal' | 'success' | 'error'
 export interface FlowActivitySubject {
   id: string
   prompt: string
-  source: 'manual' | 'scheduled' | 'observed'
+  source: 'manual' | 'scheduled' | 'observed' | 'queue'
   status: FlowTaskStatus
   createdAt: number
   updatedAt: number
@@ -37,8 +37,8 @@ export function projectFlowActivity(subject: FlowActivitySubject, timeline: read
   const entries: FlowActivityEntry[] = [{
     id: `${subject.id}:created`,
     kind: 'session',
-    title: 'Session started',
-    detail: subject.source === 'scheduled' ? 'Scheduled Flow' : subject.source === 'manual' ? 'Manual Flow' : 'Observed Pi session',
+    title: subject.source === 'queue' ? 'Queued' : 'Session started',
+    detail: subject.source === 'scheduled' ? 'Scheduled Flow' : subject.source === 'manual' ? 'Manual Flow' : subject.source === 'queue' ? 'Derived from the live queue' : 'Observed Pi session',
     timestamp: subject.createdAt,
     tone: 'normal',
   }]
@@ -47,7 +47,7 @@ export function projectFlowActivity(subject: FlowActivitySubject, timeline: read
     entries.push({
       id: `${subject.id}:prompt`,
       kind: 'prompt',
-      title: 'Prompted Pi',
+      title: subject.source === 'queue' ? 'Queued input' : 'Prompted Pi',
       detail: compactActivityText(subject.prompt),
       timestamp: subject.createdAt,
       tone: 'normal',
@@ -169,6 +169,7 @@ function statusEntry(subject: FlowActivitySubject): FlowActivityEntry {
   if (subject.status === 'failed') return { id: `${subject.id}:status`, kind: 'status', title: 'Session failed', ...(subject.stopReason ? { detail: compactActivityText(subject.stopReason) } : {}), timestamp: subject.updatedAt, tone: 'error' }
   if (subject.status === 'paused') return { id: `${subject.id}:status`, kind: 'status', title: 'Queue paused', timestamp: subject.updatedAt, tone: 'normal' }
   if (subject.status === 'queued') return { id: `${subject.id}:status`, kind: 'status', title: 'Waiting in queue', timestamp: subject.updatedAt, tone: 'normal' }
+  if (subject.source === 'queue') return { id: `${subject.id}:status`, kind: 'status', title: subject.status === 'starting' ? 'Dispatching queue row' : 'Queue control active', timestamp: subject.updatedAt, tone: 'normal' }
   return { id: `${subject.id}:status`, kind: 'status', title: subject.status === 'starting' ? 'Session is starting' : 'Session is running', timestamp: subject.updatedAt, tone: 'normal' }
 }
 

@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 
 export type FlowMode = 'sequential' | 'parallel'
-export type FlowSource = 'manual' | 'scheduled' | 'observed'
+export type FlowLaunchSource = 'manual' | 'scheduled'
+export type FlowSource = FlowLaunchSource | 'observed' | 'queue'
 
 export interface FlowTemplate {
   title: string
@@ -14,7 +15,7 @@ export interface FlowTemplate {
 
 export interface FlowLaunch extends FlowTemplate {
   id: string
-  source: Exclude<FlowSource, 'observed'>
+  source: FlowLaunchSource
   scheduleId?: string | undefined
   createdAt: number
 }
@@ -26,7 +27,7 @@ export interface FlowQueueMetadata {
   taskId: string
   title: string
   mode: FlowMode
-  source: Exclude<FlowSource, 'observed'>
+  source: FlowLaunchSource
   scheduleId?: string | undefined
   taskIndex: number
   taskCount: number
@@ -63,7 +64,7 @@ export interface ParsedFlowSessionName {
   runId: string
   taskId: string
   title: string
-  source: Exclude<FlowSource, 'observed'>
+  source: FlowLaunchSource
   scheduleId?: string | undefined
   taskIndex: number
   taskCount: number

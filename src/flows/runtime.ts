@@ -13,7 +13,6 @@ import {
   type FlowRuntimeSnapshot,
   type FlowSchedule,
   type FlowScheduleInput,
-  type FlowTemplate,
 } from './types.ts'
 
 export interface FlowRuntimeHost {
@@ -81,14 +80,6 @@ export class FlowRuntime {
     this.#unsubscribeHost?.()
     this.#unsubscribeHost = undefined
     this.#listeners.clear()
-  }
-
-  launch(templateInput: FlowTemplate): FlowLaunch {
-    const now = this.#now()
-    const template = normalizeFlowTemplate(templateInput)
-    const launch: FlowLaunch = { ...template, id: this.#createId('HW', now), source: 'manual', createdAt: now }
-    this.#enqueue(launch)
-    return launch
   }
 
   createSchedule(input: FlowScheduleInput): FlowSchedule {
@@ -180,10 +171,6 @@ export class FlowRuntime {
     } finally {
       this.#flushing = false
     }
-  }
-
-  #enqueue(launch: FlowLaunch): void {
-    if (!this.#host.hasQueuedFlow(launch.id)) this.#host.enqueueQueueInputs(compileFlowQueue(launch), { start: true })
   }
 
   #launchFromSchedule(schedule: FlowSchedule, now: number): FlowLaunch {

@@ -39,6 +39,11 @@ describe('Flow queue compilation', () => {
     expect(prompt).toContain('[Flow HW-PAR1]')
     expect(prompt).toContain('fabric_exec')
     expect(prompt).toContain('workflow.parallel')
+    expect(prompt).toContain('[Flow Task HW-PAR1-1]')
+    expect(prompt).toContain('display.name exactly to "HW-PAR1-1"')
+    expect(prompt).toContain('HW-PAR1-1/B1')
+    expect(prompt).toContain('() => workflow.agent')
+    expect(prompt).toContain('Wait for every branch to settle, join their results')
     expect(prompt).toContain('Task:\nInspect API and UI')
     expect(compileFlowQueue(parallel).at(-1)?.text).toBe(prompt)
   })
@@ -98,6 +103,28 @@ describe('Flow projection', () => {
     expect(terminalFlowTasks(runs).map((task) => task.id)).toEqual(['HW-DONE-1', 'PI-ORDINARY'])
   })
 
+  it('projects ordinary queue lanes and control barriers without authored Flow metadata', () => {
+    const state = createInitialState('/tmp/project')
+    state.queue = {
+      ...state.queue,
+      items: [
+        { id: 'follow-new', text: '/new', images: [], createdAt: 10, lane: 'followUp' },
+        { id: 'steer-one', text: 'Clarify the active run', images: [], createdAt: 11, lane: 'steer', paused: true },
+        { id: 'follow-await', text: '/fabric await reviewer', images: [], createdAt: 12, lane: 'followUp' },
+        { id: 'follow-prompt', text: 'Implement after review', images: [], createdAt: 13, lane: 'followUp' },
+      ],
+    }
+
+    const runs = projectFlowRuns(state, 20)
+    expect(runs.find((run) => run.id === 'queue:steer')).toMatchObject({ source: 'queue', title: 'Steering queue' })
+    expect(runs.find((run) => run.id === 'queue:steer')?.tasks).toEqual([expect.objectContaining({ id: 'steer-one', mode: 'queue', queueLane: 'steer', status: 'paused' })])
+    expect(runs.find((run) => run.id === 'queue:followUp')?.tasks.map((task) => ({ id: task.id, title: task.title, status: task.status, index: task.taskIndex }))).toEqual([
+      { id: 'follow-new', title: 'New session', status: 'queued', index: 0 },
+      { id: 'follow-await', title: 'Wait for reviewer', status: 'queued', index: 1 },
+      { id: 'follow-prompt', title: 'Implement after review', status: 'queued', index: 2 },
+    ])
+  })
+
   it('derives settled, unread, labels, and priority while honoring presentation overrides', () => {
     const now = 2_000_000_000_000
     const modifiedAt = now - 8 * 24 * 60 * 60 * 1_000
@@ -116,6 +143,28 @@ describe('Flow projection', () => {
     expect(priorityForSessionDuration(0, 10 * 60 * 1_000)).toBe(3)
     expect(priorityForSessionDuration(0, 60 * 60 * 1_000)).toBe(2)
     expect(priorityForSessionDuration(0, 3 * 60 * 60 * 1_000)).toBe(1)
+  })
+
+  it('keeps parent-linked Pi sessions in one causal rail after queued handoffs finish', () => {
+    const state = createInitialState('/tmp/project')
+    state.sessions = [
+      { id: 'child-two', path: '/tmp/child-two.jsonl', cwd: '/tmp/project', title: 'Verify the result', firstMessage: 'Verify', messageCount: 2, createdAt: 30, modifiedAt: 40, parentSession: '/tmp/child-one.jsonl', lastAssistantText: 'Verified', lastAssistantStopReason: 'stop' },
+      { id: 'unrelated', path: '/tmp/unrelated.jsonl', cwd: '/tmp/project', title: 'Independent work', firstMessage: 'Independent', messageCount: 2, createdAt: 15, modifiedAt: 25, lastAssistantText: 'Done', lastAssistantStopReason: 'stop' },
+      { id: 'child-one', path: '/tmp/child-one.jsonl', cwd: '/tmp/project', title: 'Implement the change', firstMessage: 'Implement', messageCount: 2, createdAt: 20, modifiedAt: 30, parentSession: '/tmp/root.jsonl', lastAssistantText: 'Implemented', lastAssistantStopReason: 'stop' },
+      { id: 'root', path: '/tmp/root.jsonl', cwd: '/tmp/project', title: 'Plan the change', firstMessage: 'Plan', messageCount: 2, createdAt: 10, modifiedAt: 20, lastAssistantText: 'Planned', lastAssistantStopReason: 'stop' },
+    ]
+
+    const runs = projectFlowRuns(state, 50)
+    expect(runs.find((run) => run.id === 'observed-chain:root')).toMatchObject({
+      source: 'observed',
+      title: 'Plan the change',
+      tasks: [
+        { id: 'PI-ROOT', taskIndex: 0, taskCount: 3 },
+        { id: 'PI-CHILD-ON', taskIndex: 1, taskCount: 3 },
+        { id: 'PI-CHILD-TW', taskIndex: 2, taskCount: 3 },
+      ],
+    })
+    expect(runs.find((run) => run.id === 'observed:unrelated')?.tasks[0]).toMatchObject({ taskIndex: 0, taskCount: 1 })
   })
 
   it('projects an unsaved active Pi session as observed work', () => {

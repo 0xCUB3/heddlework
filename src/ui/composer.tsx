@@ -10,16 +10,22 @@ import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { QueueDock } from './queue-dock.tsx'
+import { useSpringProgress } from './motion.ts'
 import { CommandPalette, ExtensionSurfaceRail, QuestionnaireWaitingDock } from './composer-surfaces.tsx'
 
 export { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
+
+export const QUEUE_HINT_DURATION_MS = 1_700
+const PRIMARY_ACTION_SIZE = 34
 
 export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchController; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
   const layout = useResponsiveLayout()
   const [pastingImage, setPastingImage] = useState(false)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
   const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
+  const [queueHintVisible, setQueueHintVisible] = useState(false)
   const contextPopoverExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const queueHintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queuedByKeyDown = useRef(false)
   const commandPickedByKeyDown = useRef(false)
   const commandQuery = composerCommandQuery(state.editorText)
@@ -37,6 +43,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   }, [controller, state.uiRequest])
   useEffect(() => () => {
     if (contextPopoverExitTimer.current) clearTimeout(contextPopoverExitTimer.current)
+    if (queueHintTimer.current) clearTimeout(queueHintTimer.current)
   }, [])
   const showContextPopover = () => {
     if (contextPopoverExitTimer.current) clearTimeout(contextPopoverExitTimer.current)
@@ -67,8 +74,20 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const above = Object.values(state.widgets).filter((widget) => widget.placement === 'aboveEditor')
   const below = Object.values(state.widgets).filter((widget) => widget.placement === 'belowEditor')
   const contextPercent = state.stats?.contextUsage?.percent
+  const hasComposerInput = Boolean(state.editorText.trim() || state.editorImages.length > 0)
+  const canResumeQueue = !state.session.isStreaming && state.queue.paused && state.queue.items.length > 0 && !hasComposerInput
+  const queueHintOpen = queueHintVisible && connected && !state.session.isStreaming
+  const queueHintProgress = useSpringProgress(queueHintOpen)
+  const primaryActionWidth = PRIMARY_ACTION_SIZE + (queueHintExpandedWidth() - PRIMARY_ACTION_SIZE) * queueHintProgress
+
+  const clearQueueHint = () => {
+    if (queueHintTimer.current) clearTimeout(queueHintTimer.current)
+    queueHintTimer.current = undefined
+    setQueueHintVisible(false)
+  }
 
   const send = (value: string, queue = false) => {
+    clearQueueHint()
     if (!value.trim() && state.editorImages.length === 0) {
       if (!queue && state.queue.paused && state.queue.items.length > 0) controller.resumeQueue()
       return
@@ -89,6 +108,16 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     } finally {
       setPastingImage(false)
     }
+  }
+
+  const showQueueHint = () => {
+    if (!connected || state.session.isStreaming) return
+    if (queueHintTimer.current) clearTimeout(queueHintTimer.current)
+    setQueueHintVisible(true)
+    queueHintTimer.current = setTimeout(() => {
+      queueHintTimer.current = undefined
+      setQueueHintVisible(false)
+    }, QUEUE_HINT_DURATION_MS)
   }
 
   const chooseCommand = (command: SlashCommand) => controller.setEditorText(`/${command.name} `)
@@ -182,6 +211,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             backgroundColor: colors.transparent,
           }}
           onChange={(event) => controller.setEditorText(String(event.value ?? ''))}
+          onClick={showQueueHint}
           onKeyDown={handleComposerKeyDown}
           onSubmit={(event) => {
             if (commandPickedByKeyDown.current) {
@@ -230,7 +260,10 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} compact={layout.mobile} popoverOpen={contextPopoverOpen} onToggle={toggleContextPopover} onMouseEnter={showContextPopover} onMouseLeave={hideContextPopover} />}
             <PrimaryAction
               running={state.session.isStreaming}
-              disabled={!connected || (!state.session.isStreaming && !state.editorText.trim() && state.editorImages.length === 0)}
+              disabled={!connected || (!state.session.isStreaming && !hasComposerInput && !canResumeQueue)}
+              queueHintVisible={queueHintOpen}
+              queueHintProgress={queueHintProgress}
+              width={primaryActionWidth}
               onSend={() => send(state.editorText)}
               onStop={() => void controller.abort()}
             />
@@ -239,7 +272,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         <div testId="composer-seam-mask" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 2, backgroundColor: colors.composer, pointerEvents: 'none' }} />
       </div>
       {contextPopoverMounted && state.stats && (
-        <div testId="context-popover-positioner" style={{ position: 'absolute', right: layout.mobile ? 0 : 46, bottom: 84, width: layout.mobile ? layout.popoverWidth : 256, display: 'flex', backgroundColor: colors.transparent }}>
+        <div testId="context-popover-positioner" style={{ position: 'absolute', right: layout.mobile ? 0 : 46 + primaryActionWidth - PRIMARY_ACTION_SIZE, bottom: 84, width: layout.mobile ? layout.popoverWidth : 256, display: 'flex', backgroundColor: colors.transparent }}>
           <ContextPopover stats={state.stats} open={contextPopoverOpen} width={layout.mobile ? layout.popoverWidth : 256} />
         </div>
       )}
@@ -255,12 +288,10 @@ function ToolbarSeparator() {
 
 function ContextMeter({ stats, compact, popoverOpen, onToggle, onMouseEnter, onMouseLeave }: { stats: PiSessionStats; compact: boolean; popoverOpen: boolean; onToggle(): void; onMouseEnter(): void; onMouseLeave(): void }) {
   const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
-  const rounded = Math.round(percent * 10) / 10
   const tone = percent > 80 ? colors.warning : percent > 60 ? '#D8A95B' : colors.textMuted
   return (
-    <div testId="context-meter" tabIndex={0} style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', ...(compact ? { width: 30, justifyContent: 'center' } : {}), gap: compact ? 0 : 7, paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 8, borderRadius: 9, marginRight: compact ? 0 : 9, backgroundColor: popoverOpen ? colors.hover : colors.transparent, cursor: 'pointer' }} onClick={onToggle} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
-      {!compact && <text style={{ color: popoverOpen ? colors.text : colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{`${rounded}%`}</text>}
-      <div style={{ width: compact ? 16 : 18, height: compact ? 16 : 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
+    <div testId="context-meter" tabIndex={0} style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', ...(compact ? { width: 30, justifyContent: 'center' } : {}), paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 2, borderRadius: 9, backgroundColor: popoverOpen ? colors.hover : colors.transparent, cursor: 'pointer' }} onClick={onToggle} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <div testId="context-ring" style={{ width: compact ? 16 : 18, height: compact ? 16 : 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
     </div>
   )
 }
@@ -357,7 +388,7 @@ function ComposerImages({ images, onRemove }: { images: ComposerImage[]; onRemov
   )
 }
 
-function PrimaryAction({ running, disabled, onSend, onStop }: { running: boolean; disabled: boolean; onSend(): void; onStop(): void }) {
+function PrimaryAction({ running, disabled, queueHintVisible, queueHintProgress, width, onSend, onStop }: { running: boolean; disabled: boolean; queueHintVisible: boolean; queueHintProgress: number; width: number; onSend(): void; onStop(): void }) {
   const action = running ? onStop : onSend
   const background = running ? '#D72C58' : colors.primary
   return (
@@ -365,21 +396,34 @@ function PrimaryAction({ running, disabled, onSend, onStop }: { running: boolean
       testId={running ? 'abort' : 'send'}
       tabIndex={disabled ? -1 : 0}
       style={{
-        width: 34,
-        height: 34,
-        borderRadius: 17,
+        width,
+        minWidth: width,
+        height: PRIMARY_ACTION_SIZE,
+        borderRadius: PRIMARY_ACTION_SIZE / 2,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: background,
         opacity: disabled ? 0.32 : 1,
+        overflow: 'hidden',
+        flexShrink: 0,
         ...(disabled ? {} : { cursor: 'pointer', hover: { backgroundColor: running ? '#EB3567' : colors.primaryHover } }),
       }}
       {...(disabled ? {} : { onClick: action, onKeyDown: (event: { key?: string }) => { if (event.key === 'enter') action() } })}
     >
-      <Icon name={running ? 'stop' : 'arrowUp'} size={17} color="#FFFFFF" />
+      {queueHintVisible
+        ? <text testId="composer-queue-hint" style={{ color: '#FFFFFF', fontSize: 11, fontWeight: 700, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap', opacity: Math.min(1, queueHintProgress * 2) }}>{queueHintLabel()}</text>
+        : <Icon name={running ? 'stop' : 'arrowUp'} size={17} color="#FFFFFF" />}
     </div>
   )
+}
+
+function queueHintLabel(): string {
+  return process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue'
+}
+
+function queueHintExpandedWidth(): number {
+  return process.platform === 'darwin' ? 92 : 126
 }
 
 function composerCommandQuery(value: string): string | undefined {

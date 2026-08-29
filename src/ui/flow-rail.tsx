@@ -18,7 +18,7 @@ export function FlowRail({
   status: FlowTaskStatus
   before: boolean
   after: boolean
-  lane?: number
+  lane?: number | undefined
   branchFrom?: number | undefined
   label?: string | undefined
   detail?: string | undefined

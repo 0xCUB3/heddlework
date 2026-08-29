@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
+import { isGpuixWindowCloseRace } from './ui/native-window-lifecycle.ts'
 import { ThemeManager } from './ui/theme-manager.ts'
 import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
 import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
@@ -60,6 +61,12 @@ const controller = kernel.get(workbenchControllerToken)
 const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
 let disposed = false
+const handleUncaughtException = (error: unknown): void => {
+  if (isGpuixWindowCloseRace(error)) process.exit(0)
+
+  process.off('uncaughtException', handleUncaughtException)
+  throw error
+}
 const runtime: RuntimeHandle = {
   kernel,
   dispose: async () => {
@@ -67,6 +74,7 @@ const runtime: RuntimeHandle = {
     disposed = true
     process.off('SIGINT', shutdown)
     process.off('SIGTERM', shutdown)
+    process.off('uncaughtException', handleUncaughtException)
     themeManager.dispose()
     await kernel.dispose()
   },
@@ -85,6 +93,7 @@ render(
 themeManager.start()
 void controller.start()
 
+process.prependListener('uncaughtException', handleUncaughtException)
 process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
