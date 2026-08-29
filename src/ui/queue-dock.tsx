@@ -41,6 +41,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
     ...state.queue.items.map((item) => ({ id: item.id, text: item.text, placement: 'queued' as const, item })),
     ...state.queue.followUp.map((text, index) => ({ id: `native-follow-up-${index}-${text}`, text, placement: 'follow-up' as const })),
   ], [state.queue.followUp, state.queue.items, state.queue.steering])
+  const drainable = state.queue.items.some((item) => !item.flow && (item.images.length > 0 || !parseBuiltinSlashCommand(item.text)))
   const openProgress = Math.min(1, useSpringProgress(expanded && rows.length > 0))
   const listTargetHeight = Math.min(MAX_LIST_HEIGHT, rows.length * ROW_HEIGHT + 8)
   const listHeight = listTargetHeight * openProgress
@@ -135,10 +136,15 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
               ) : (
                 <div {...(row.item ? { testId: `queue-edit:${row.id}` } : {})} style={{ minWidth: 0, flexGrow: 1, height: 30, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, cursor: row.item ? 'text' : 'default' }} {...(row.item && !dispatching ? { onClick: () => setEditing({ id: row.id, text: row.text }) } : {})}>
                   <text style={{ color: colors.text, fontSize: 11, lineHeight: 14, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.text || `${row.item?.images.length ?? 0} attached image${row.item?.images.length === 1 ? '' : 's'}`}</text>
-                  <text style={{ color: control ? colors.warning : row.placement === 'steering' ? '#7EA2FF' : row.placement === 'follow-up' ? colors.warning : colors.textFaint, fontSize: 8, fontWeight: 650 }}>{row.placement === 'queued' ? `${control ? 'CONTROL' : 'NEXT'}${row.item?.images.length ? ` · ${row.item.images.length} IMAGE${row.item.images.length === 1 ? '' : 'S'}` : ''}` : row.placement === 'steering' ? 'STEERED · NEXT' : row.placement.toUpperCase()}</text>
+                  <text style={{ color: control ? colors.warning : row.item?.lane === 'steer' || row.placement === 'steering' ? '#7EA2FF' : row.placement === 'follow-up' ? colors.warning : colors.textFaint, fontSize: 8, fontWeight: 650 }}>{row.placement === 'queued' ? `${control ? 'CONTROL' : row.item?.lane === 'steer' ? 'STEER · NEXT TURN' : 'FOLLOW-UP · AFTER RUN'}${row.item?.images.length ? ` · ${row.item.images.length} IMAGE${row.item.images.length === 1 ? '' : 'S'}` : ''}` : row.placement === 'steering' ? 'STEERED · NEXT' : row.placement.toUpperCase()}</text>
                 </div>
               )}
 
+              {row.item && !row.item.flow && (
+                <MotionDiv testId={`queue-lane:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: actionsVisible ? 1 : 0, left: actionsVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: actionsVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(actionsVisible && !dispatching ? { onClick: () => controller.moveQueuedInputToLane(row.id, row.item?.lane === 'steer' ? 'followUp' : 'steer') } : {})}>
+                  <Icon name={row.item.lane === 'steer' ? 'clock' : 'arrowUp'} size={11} color={row.item.lane === 'steer' ? colors.warning : '#7EA2FF'} />
+                </MotionDiv>
+              )}
               {row.item && state.session.isStreaming && !control && (
                 <MotionDiv testId={`queue-steer:${row.id}`} initial={{ opacity: 0, left: 4 }} animate={{ opacity: actionsVisible ? 1 : 0, left: actionsVisible ? 0 : 4 }} transition={{ duration: 0.14, ease: 'easeOut' }} style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: actionsVisible && !dispatching ? 'pointer' : 'default', flexShrink: 0 }} {...(actionsVisible && !dispatching ? { onClick: () => void controller.steerQueuedInput(row.id) } : {})}>
                   <Icon name="arrowUp" size={12} color="#7EA2FF" />
@@ -158,6 +164,16 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
         <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{first.text || 'Image attachment'}</text>
+        {drainable && (
+          <div testId="queue-drain" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer' }} onClick={() => void controller.drainQueueMessages()}>
+            <text style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700 }}>Drain</text>
+          </div>
+        )}
+        {state.session.isStreaming && (
+          <div testId="queue-pause" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: colors.hover, cursor: 'pointer' }} onClick={() => void controller.pause()}>
+            <text style={{ color: colors.textMuted, fontSize: 9, fontWeight: 700 }}>Pause</text>
+          </div>
+        )}
         {state.queue.paused && state.queue.items.length > 0 && (
           <div testId="queue-resume" tabIndex={0} style={{ height: 24, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: '#382D18', cursor: 'pointer' }} onClick={() => controller.resumeQueue()}>
             <text style={{ color: colors.warning, fontSize: 9, fontWeight: 700 }}>Resume</text>

@@ -7,6 +7,8 @@ import { loadWorkspaceDiff } from '../workspace/git-diff.ts'
 import { WorkbenchController } from './controller.ts'
 import './events.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
+import type { QueueStoreService } from './queue-store.ts'
+import type { ThreadMetadataStoreService } from './thread-metadata-store.ts'
 
 export const agentTransportToken = serviceToken<AgentTransport>('agent-transport')
 export const sessionCatalogToken = serviceToken<SessionCatalogService>('session-catalog')
@@ -42,7 +44,7 @@ export const localWorkspaceDiffPlugin: WorkbenchPlugin = {
   },
 }
 
-export function createWorkbenchControllerPlugin(workspacePath: string): WorkbenchPlugin {
+export function createWorkbenchControllerPlugin(workspacePath: string, options: { queueStore?: QueueStoreService | undefined; threadMetadataStore?: ThreadMetadataStoreService | undefined } = {}): WorkbenchPlugin {
   return {
     id: 'workbench-controller',
     requires: [agentTransportToken, sessionCatalogToken, workspaceDiffToken],
@@ -52,6 +54,8 @@ export function createWorkbenchControllerPlugin(workspacePath: string): Workbenc
         workspaceDiff: ctx.get(workspaceDiffToken),
         transportEvents: 'external',
         transportOwnership: 'provider',
+        ...(options.queueStore ? { queueStore: options.queueStore } : {}),
+        ...(options.threadMetadataStore ? { threadMetadataStore: options.threadMetadataStore } : {}),
       })
       ctx.provide(workbenchControllerToken, controller)
       ctx.effect(() => async () => controller.dispose())

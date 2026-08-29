@@ -43,9 +43,9 @@ describe('PiSessionCatalog', () => {
       JSON.stringify({ type: 'message', timestamp: '2026-01-01T00:02:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Okay' }], timestamp: Date.parse('2026-01-01T00:02:00.000Z') } }),
     ].join('\n'))
     await writeFile(join(directory, '2026-02-01_new.jsonl'), [
-      JSON.stringify({ type: 'session', id: 'new', cwd, timestamp: '2026-02-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'session', id: 'new', cwd, parentSession: '/tmp/parent-session.jsonl', timestamp: '2026-02-01T00:00:00.000Z' }),
       JSON.stringify({ type: 'message', timestamp: '2026-02-01T00:01:00.000Z', message: { role: 'user', content: 'Initial title' } }),
-      JSON.stringify({ type: 'message', timestamp: '2026-02-01T00:02:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Newest response' }] } }),
+      JSON.stringify({ type: 'message', timestamp: '2026-02-01T00:02:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Newest response' }], stopReason: 'stop' } }),
       JSON.stringify({ type: 'session_info', name: 'Named thread' }),
     ].join('\n'))
     await writeFile(join(directory, 'broken.jsonl'), '{not json}\n')
@@ -54,7 +54,7 @@ describe('PiSessionCatalog', () => {
 
     const sessions = await listPiSessions(cwd, { agentDir })
     expect(sessions.map((session) => session.id)).toEqual(['new', 'old'])
-    expect(sessions[0]).toMatchObject({ title: 'Named thread', name: 'Named thread', messageCount: 2, modifiedAt: Date.parse('2026-02-01T00:02:00.000Z') })
+    expect(sessions[0]).toMatchObject({ title: 'Named thread', name: 'Named thread', messageCount: 2, modifiedAt: Date.parse('2026-02-01T00:02:00.000Z'), parentSession: '/tmp/parent-session.jsonl', lastAssistantText: 'Newest response', lastAssistantStopReason: 'stop' })
     expect(sessions[1]).toMatchObject({ title: 'Explain this repository', firstMessage: 'Explain this repository', messageCount: 2, modifiedAt: Date.parse('2026-01-01T00:02:00.000Z') })
   })
 

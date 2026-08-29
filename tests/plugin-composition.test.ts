@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
+import { createFlowRuntimePlugin, flowRuntimeToken } from '../src/flows/plugin.ts'
 import {
   agentTransportToken,
   createAgentTransportPlugin,
@@ -13,7 +14,9 @@ describe('workbench plugin composition', () => {
   it('activates an early consumer only after every capability arrives and streams over kernel events', async () => {
     const kernel = new WorkbenchKernel()
     kernel.mount(createWorkbenchControllerPlugin('/tmp/heddlework-plugin-composition'))
+    kernel.mount(createFlowRuntimePlugin({ path: false, tickIntervalMs: 60_000 }))
     expect(() => kernel.get(workbenchControllerToken)).toThrow('Missing service: workbench-controller')
+    expect(() => kernel.get(flowRuntimeToken)).toThrow('Missing service: flow-runtime')
 
     kernel.mount(createSessionCatalogPlugin({ scope: 'cwd' }))
     kernel.mount(localWorkspaceDiffPlugin)
@@ -21,6 +24,7 @@ describe('workbench plugin composition', () => {
 
     kernel.mount(createAgentTransportPlugin({ cwd: '/tmp/heddlework-plugin-composition', demo: true, piArgs: [] }))
     const controller = kernel.get(workbenchControllerToken)
+    expect(kernel.get(flowRuntimeToken).getSnapshot().schedules).toEqual([])
     await controller.start()
     expect(controller.getSnapshot().connection).toBe('connected')
 
@@ -32,6 +36,7 @@ describe('workbench plugin composition', () => {
     await kernel.dispose()
     expect(() => kernel.get(workbenchControllerToken)).toThrow('Missing service: workbench-controller')
     expect(() => kernel.get(agentTransportToken)).toThrow('Missing service: agent-transport')
+    expect(() => kernel.get(flowRuntimeToken)).toThrow('Missing service: flow-runtime')
   }, 5_000)
 })
 

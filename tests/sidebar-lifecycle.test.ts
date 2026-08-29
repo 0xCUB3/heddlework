@@ -23,10 +23,11 @@ describe('sidebar session lifecycle', () => {
     expect(sessionLifecycleBucket(session(now - SESSION_SETTLED_AFTER_MS), undefined, now)).toBe('active')
   })
 
-  it('gives explicit snooze, settle, and restore state precedence', () => {
+  it('gives explicit snooze and restore state precedence until a later run reopens the session', () => {
     const old = session(now - SESSION_SETTLED_AFTER_MS * 2)
     expect(sessionLifecycleBucket(old, { snoozedUntil: now + 1_000 }, now)).toBe('snoozed')
-    expect(sessionLifecycleBucket(session(now), { settledAt: now - 1_000 }, now)).toBe('settled')
+    expect(sessionLifecycleBucket(session(now - 2_000), { settledAt: now - 1_000 }, now)).toBe('settled')
     expect(sessionLifecycleBucket(old, { unsettledAt: now - 1_000 }, now)).toBe('active')
+    expect(sessionLifecycleBucket(session(now), { settledAt: now - 1_000 }, now)).toBe('active')
   })
 })

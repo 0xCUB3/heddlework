@@ -9,6 +9,10 @@ import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
 import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from './ui/tool-presenters.ts'
 import { sessionSidebarCachePath } from './pi/session-catalog.ts'
+import { createFlowRuntimePlugin, flowRuntimeToken } from './flows/plugin.ts'
+import { flowRuntimePath } from './flows/runtime.ts'
+import { FileQueueStore, queueStorePath } from './workbench/queue-store.ts'
+import { FileThreadMetadataStore, threadMetadataStorePath } from './workbench/thread-metadata-store.ts'
 import {
   createAgentTransportPlugin,
   createSessionCatalogPlugin,
@@ -28,6 +32,7 @@ declare global {
 }
 
 const workspacePath = resolveWorkspacePath()
+const demoMode = process.env.HEDDLEWORK_DEMO === '1'
 const previous = globalThis.__heddleworkRuntime
 if (previous) await previous.dispose()
 
@@ -35,19 +40,24 @@ const themeManager = new ThemeManager()
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
-kernel.mount(createWorkbenchControllerPlugin(workspacePath))
+kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
+  queueStore: new FileQueueStore(demoMode ? false : queueStorePath()),
+  threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
+}))
+kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath() }))
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
 kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
 kernel.mount(localWorkspaceDiffPlugin)
 kernel.mount(createAgentTransportPlugin({
   cwd: workspacePath,
-  demo: process.env.HEDDLEWORK_DEMO === '1',
+  demo: demoMode,
   ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
   piArgs: piArgumentsFromEnvironment(),
 }))
 
 const controller = kernel.get(workbenchControllerToken)
+const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
 let disposed = false
 const runtime: RuntimeHandle = {
@@ -68,7 +78,7 @@ const shutdown = () => {
 }
 
 render(
-  <WorkbenchApp controller={controller} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
+  <WorkbenchApp controller={controller} flows={flows} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   createWindowOptions(process.platform, debugOverlay()),
 )
 

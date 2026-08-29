@@ -34,6 +34,7 @@ describeNative('queue dock', () => {
       expect(controller.getSnapshot().session.isStreaming).toBe(false)
       expect(controller.getSnapshot().queue.pauseReason).toBe('manual')
       expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/fabric prewalk'])
+      expect(controller.getSnapshot().queue.items[0]?.lane).toBe('followUp')
       expect(await automation.getByTestId('queue-resume').count()).toBe(1)
       expect(root.renderer.getPaintedText()).not.toContain(process.platform === 'darwin' ? '⌥↵ queue' : 'Alt+Enter queue')
 
@@ -103,6 +104,8 @@ describeNative('queue dock', () => {
       expect(root.renderer.getScrollOffset(scroll.id)?.[1] ?? 0).toBeLessThan(-250)
       root.renderer.scrollTo(scroll.id, 0, 0)
       expect(root.renderer.getPaintedText()).toContain('CONTROL')
+      expect(await automation.getByTestId('queue-drain').count()).toBe(1)
+      expect(await automation.getByTestId('queue-pause').count()).toBe(1)
 
       const first = controller.getSnapshot().queue.items[0]!
       expect(await automation.getByTestId(`queue-steer:${first.id}`).count()).toBe(0)
@@ -112,6 +115,12 @@ describeNative('queue dock', () => {
       root.renderer.nativeSimulateKeystrokes(editor.id, 'enter')
       expect(controller.getSnapshot().queue.items[0]?.text).toBe('/skill:review edited in queue')
       expect(await automation.getByTestId(`queue-steer:${first.id}`).count()).toBe(1)
+      const firstRowBounds = await automation.getByTestId(`queue-row:${first.id}`).bounds()
+      await automation.call('mouseMove', { x: firstRowBounds.x + firstRowBounds.width / 2, y: firstRowBounds.y + firstRowBounds.height / 2 })
+      await Bun.sleep(160)
+      root.renderer.flush()
+      await automation.getByTestId(`queue-lane:${first.id}`).click()
+      expect(controller.getSnapshot().queue.items[0]?.lane).toBe('steer')
 
       const dragged = controller.getSnapshot().queue.items[0]!
       const target = controller.getSnapshot().queue.items[5]!

@@ -15,10 +15,15 @@ export interface Notice {
   transcriptPosition?: number
 }
 
+export type ThreadPriority = 0 | 1 | 2 | 3 | 4
+
 export interface ThreadLifecycle {
   settledAt?: number
   snoozedUntil?: number
   unsettledAt?: number
+  readAt?: number
+  priority?: ThreadPriority
+  labels?: string[]
 }
 
 export interface WorkspaceDiffFile {

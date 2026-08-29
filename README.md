@@ -35,7 +35,9 @@ Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/e
 | Pi adapter | **Available** — Pi RPC, persisted sessions, editable queued work, models, thinking, compaction, and extension UI |
 | Diff and review surfaces | **Available** — native virtualized diffs, wrapping, file filtering, and changed-file entry points |
 | Fabric presentation | **Available** — rich nested `fabric_exec` activity and audit disclosures |
-| Durable work graph | **In design** — dependencies, schedules, checkout lanes, retries, triage, and artifacts |
+| Flows projection | **Preview** — queue/session rails, per-task pages, Triage, sequential and Fabric-parallel intake |
+| Scheduled runtime | **Preview** — durable one-time, interval, and daily jobs that enqueue fresh Pi sessions |
+| Durable dependency graph | **In design** — checkout lanes, retries, mutation receipts, and artifacts |
 | Codex adapter | **Planned** |
 | Claude adapter | **Planned** |
 | Signed desktop distribution | **Planned** |
@@ -110,9 +112,17 @@ The installer uses the standalone executable, a square scalable icon, and an abs
 
 ### Queue behavior
 
-Submitting while an agent run is active stages the input in Heddlework's editable queue instead of immediately surrendering it to Pi's immutable RPC queue. While idle, ordinary **Enter** still starts immediately, **Option/Alt+Enter** parks work in a paused queue, and **Enter** on an empty composer resumes its oldest row. The collapsed strip is inset like an upside-down checkout bar and tucks behind the composer; expanding it springs upward into a single bounded scroll surface where rows can be edited, removed, steered into the current run, or reordered from their left drag handles.
+Submitting while an agent run is active stages the input in Heddlework's editable queue instead of immediately surrendering it to Pi's immutable RPC queue. **Enter** creates a steering row for the next healthy turn boundary; **Option/Alt+Enter** creates a follow-up for `agent_settled`. While idle, ordinary **Enter** still starts immediately, **Option/Alt+Enter** parks work in a paused queue, and **Enter** on an empty composer resumes its oldest row. The collapsed strip is inset like an upside-down checkout bar and tucks behind the composer; expanding it springs upward into a single bounded scroll surface where rows can be edited, removed, moved between lanes, explicitly steered, or reordered from their left drag handles.
 
-Rows drain one at a time after healthy `agent_settled` boundaries. Abort pauses the remaining tail until **Resume** is selected. A terminal error also holds the tail, but a healthy retry or overflow-compaction recovery releases it automatically; otherwise it remains available for manual resume. Skills, prompt templates, and extension commands remain raw until Pi accepts them. Built-in slash commands are intercepted by Heddlework whether submitted idle or queued, so commands such as `/compact` are never mistaken for model prompts. Image-bearing slash text remains a normal message so attachments are never discarded. The owned queue is currently transient and session-scoped; Pi-native steering and follow-up entries are mirrored as locked rows because RPC does not expose mutation operations for them.
+Steering drains one row at a healthy `turn_end`; follow-ups drain one row after `agent_settled`, and lane-local FIFO order is preserved. Delivery holds during compaction. Abort pauses the remaining tail until **Resume** is selected, while the controller's graceful pause waits for in-flight tools before stopping Pi. A terminal error also holds the tail, but a healthy retry or overflow-compaction recovery releases it automatically; otherwise it remains available for manual resume. Skills, prompt templates, and extension commands remain raw until Pi accepts them. Built-in slash commands are intercepted by Heddlework whether submitted idle or queued, so commands such as `/compact` are never mistaken for model prompts. Image-bearing slash text remains a normal message so attachments are never discarded. The owned queue is persisted per workspace. Stable rows, Flow correlation, lane identity, pause state, and images survive restart; if the process stopped during an uncertain dispatch, restoration pauses with a recovery hold instead of risking a duplicate `/new` or prompt. Pi-native steering and follow-up entries are still mirrored as locked rows because RPC does not expose mutation operations for them.
+
+### Flows
+
+**Flows** is a full-page projection opened from the button above Search. **Work** merges Heddlework-owned queue plans with ordinary and Flow-named Pi sessions; the rail-and-dot graph is derived from queue order and live Fabric branches. A task page shows the prompt, remaining queue primitives, current Fabric workers, and Pi result. Sessions older than seven days collapse into **Settled** until they run again or the user restores them. **Triage** derives successful and failed entries from terminal assistant stop reasons and tracks local read receipts. Pi remains authoritative for status and output; Heddlework stores only presentation annotations—settle/unsettle receipts, optional priority overrides, and user labels. Automatic priority rises with session duration.
+
+Creating a sequential Flow compiles every step into `/new`, `/model`, session identity, and prompt rows. Later steps use Pi's `parentSession` metadata to preserve their causal chain. A parallel Flow creates one fresh session and sends an explicit orchestration prompt that asks the model to use `fabric_exec`, `workflow.parallel`, and Flow-prefixed worker labels; Fabric remains the execution authority.
+
+**Scheduled** stores one-time, interval, and daily job definitions in the Heddlework runtime. Each due occurrence becomes the same queue primitives and a fresh Pi session, so schedules own intent while Pi sessions remain run history. The desktop runtime must be running; an occurrence for a different active workspace remains durably pending until that workspace runtime is available.
 
 ### Pi slash commands
 
@@ -171,7 +181,9 @@ Heddlework follows a small supervised component model inspired by Cordis:
 - `src/core/kernel.ts` owns deferred service injection, typed events, keyed contributions, dependent lifetimes, and reverse-order cleanup.
 - `src/workbench/plugins.ts` composes transport, session discovery, workspace diff, and controller capabilities without giving the controller concrete providers to construct.
 - `src/pi/transport.ts` defines the application-facing harness transport seam; Pi RPC is its first provider.
-- `src/workbench/controller.ts` projects harness events into UI state and rehydrates from authoritative transcripts.
+- `src/workbench/controller.ts` projects harness events into UI state, owns the durable delivery queue, and rehydrates from authoritative transcripts.
+- `src/flows/runtime.ts` persists schedule intent and compiles due occurrences into the same queue primitives used by manual Flows.
+- `src/flows/projection.ts` derives Work and Triage from queue rows and Pi session summaries without a task lifecycle database; `src/workbench/thread-metadata-store.ts` persists only local disposition, read, priority, and label annotations.
 - `src/plugin-api.ts` is the narrow source-level facade for feature authors.
 - `src/ui/extensions.ts` hosts observable, reversible feature manifests; one plugin can contribute several native workbench surfaces.
 - `src/ui/core-extension.tsx` registers the shipped surfaces through the same contract available to future user plugins.
@@ -202,9 +214,10 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [ ] External plugin discovery and compatibility metadata
 - [ ] Stable harness adapter protocol
 - [ ] Codex and Claude adapters
-- [ ] Durable task and dependency graphs
-- [ ] Scheduled and recurring work with safe checkout lanes
-- [ ] Triage, mutation receipts, and artifact review
+- [x] Projection-first Flows with sequential queues, Fabric-parallel prompts, task pages, and Triage
+- [x] Durable one-time, interval, and daily scheduled Flow runtime
+- [ ] Durable dependency graphs and safe checkout lanes
+- [ ] Mutation receipts and artifact review
 - [ ] Signed desktop installers and automatic updates
 - [ ] Web workspace client
 - [ ] Mobile companion clients

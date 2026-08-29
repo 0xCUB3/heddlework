@@ -16,6 +16,9 @@ export interface PiSessionSummary {
   messageCount: number
   createdAt: number
   modifiedAt: number
+  parentSession?: string | undefined
+  lastAssistantText?: string | undefined
+  lastAssistantStopReason?: string | undefined
 }
 
 export interface SessionCatalogOptions {
@@ -48,6 +51,9 @@ interface HeaderAccumulator {
   messageCount: number
   createdAt: number
   lastResponseAt: number
+  parentSession?: string | undefined
+  lastAssistantText?: string | undefined
+  lastAssistantStopReason?: string | undefined
 }
 
 const READ_CHUNK_BYTES = 16 * 1024
@@ -251,6 +257,8 @@ async function readPiSessionSummary(
     const tail = await latestSessionTail(meta)
     if (tail.nameFound) accumulator.name = tail.name
     accumulator.lastResponseAt = Math.max(accumulator.lastResponseAt, tail.lastResponseAt)
+    if (tail.lastAssistantText !== undefined) accumulator.lastAssistantText = tail.lastAssistantText
+    if (tail.lastAssistantStopReason !== undefined) accumulator.lastAssistantStopReason = tail.lastAssistantStopReason
   }
   const fallback = accumulator.firstMessage || (accumulator.messageCount === 0 ? 'New thread' : '(image or attachment)')
   const summary: PiSessionSummary = {
@@ -263,6 +271,9 @@ async function readPiSessionSummary(
     messageCount: accumulator.messageCount,
     createdAt: accumulator.createdAt,
     modifiedAt: accumulator.lastResponseAt || accumulator.createdAt,
+    ...(accumulator.parentSession ? { parentSession: accumulator.parentSession } : {}),
+    ...(accumulator.lastAssistantText ? { lastAssistantText: accumulator.lastAssistantText } : {}),
+    ...(accumulator.lastAssistantStopReason ? { lastAssistantStopReason: accumulator.lastAssistantStopReason } : {}),
   }
   cache.set(meta.path, { mtimeMs: meta.mtimeMs, size: meta.size, summary })
   return summary
@@ -280,6 +291,7 @@ function consumeSessionLine(line: string, accumulator: HeaderAccumulator): boole
     if (entry.type !== 'session' || typeof entry.id !== 'string') return false
     accumulator.id = entry.id
     accumulator.cwd = typeof entry.cwd === 'string' ? entry.cwd : ''
+    accumulator.parentSession = typeof entry.parentSession === 'string' ? entry.parentSession : undefined
     accumulator.createdAt = timestampMs(entry.timestamp) ?? accumulator.createdAt
     return false
   }
@@ -293,6 +305,8 @@ function consumeSessionLine(line: string, accumulator: HeaderAccumulator): boole
   if (message.role === 'assistant') {
     const responseAt = timestampMs(message.timestamp) ?? timestampMs(entry.timestamp)
     if (responseAt) accumulator.lastResponseAt = Math.max(accumulator.lastResponseAt, responseAt)
+    accumulator.lastAssistantText = contentText(message.content).trim().slice(0, 4_000)
+    accumulator.lastAssistantStopReason = typeof message.stopReason === 'string' ? message.stopReason : undefined
   }
   if (message.role !== 'user' || accumulator.foundFirstUser) return false
   accumulator.foundFirstUser = true
@@ -300,7 +314,7 @@ function consumeSessionLine(line: string, accumulator: HeaderAccumulator): boole
   return true
 }
 
-async function latestSessionTail(meta: SessionFileMeta): Promise<{ nameFound: boolean; name?: string; lastResponseAt: number }> {
+async function latestSessionTail(meta: SessionFileMeta): Promise<{ nameFound: boolean; name?: string; lastResponseAt: number; lastAssistantText?: string; lastAssistantStopReason?: string }> {
   if (meta.size <= 0) return { nameFound: false, lastResponseAt: 0 }
   let handle
   try {
@@ -317,6 +331,8 @@ async function latestSessionTail(meta: SessionFileMeta): Promise<{ nameFound: bo
     let nameFound = false
     let name: string | undefined
     let lastResponseAt = 0
+    let lastAssistantText: string | undefined
+    let lastAssistantStopReason: string | undefined
     for (const line of text.split('\n')) {
       try {
         const entry = JSON.parse(line) as Record<string, unknown>
@@ -330,11 +346,13 @@ async function latestSessionTail(meta: SessionFileMeta): Promise<{ nameFound: bo
         if (message.role !== 'assistant') continue
         const responseAt = timestampMs(message.timestamp) ?? timestampMs(entry.timestamp)
         if (responseAt) lastResponseAt = Math.max(lastResponseAt, responseAt)
+        lastAssistantText = contentText(message.content).trim().slice(0, 4_000)
+        lastAssistantStopReason = typeof message.stopReason === 'string' ? message.stopReason : undefined
       } catch {
         continue
       }
     }
-    return { nameFound, ...(name ? { name } : {}), lastResponseAt }
+    return { nameFound, ...(name ? { name } : {}), lastResponseAt, ...(lastAssistantText ? { lastAssistantText } : {}), ...(lastAssistantStopReason ? { lastAssistantStopReason } : {}) }
   } catch {
     return { nameFound: false, lastResponseAt: 0 }
   } finally {

@@ -7,6 +7,7 @@ export type IconName =
   | 'folderPlus'
   | 'chevronDown'
   | 'chevronUp'
+  | 'chevronLeft'
   | 'chevronRight'
   | 'settings'
   | 'plus'
@@ -49,6 +50,7 @@ const ICONS: Record<IconName, string> = {
   folderPlus: svg('<path d="M12 10v6m-3-3h6"/><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>'),
   chevronDown: svg('<path d="m6 9 6 6 6-6"/>'),
   chevronUp: svg('<path d="m6 15 6-6 6 6"/>'),
+  chevronLeft: svg('<path d="m15 18-6-6 6-6"/>'),
   chevronRight: svg('<path d="m9 18 6-6-6-6"/>'),
   settings: svg('<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),

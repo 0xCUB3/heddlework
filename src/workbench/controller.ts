@@ -27,10 +27,13 @@ import {
   applyRpcEvent,
   createInitialState,
   type NoticeKind,
+  type ThreadPriority,
   type WorkbenchState,
   type WorkbenchUiRequest,
 } from './state.ts'
-import { createQueueState, moveQueuedInput, type QueuedInput } from './queue.ts'
+import { createQueueState, moveQueuedInput, type QueuedInput, type QueueInputDraft } from './queue.ts'
+import type { QueueStoreService } from './queue-store.ts'
+import { normalizeThreadLabels, type ThreadMetadataStoreService } from './thread-metadata-store.ts'
 import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
@@ -49,12 +52,16 @@ export interface WorkbenchControllerDependencies {
   workspaceDiff: WorkspaceDiffService
   transportEvents?: 'direct' | 'external'
   transportOwnership?: 'controller' | 'provider'
+  queueStore?: QueueStoreService | undefined
+  threadMetadataStore?: ThreadMetadataStoreService | undefined
 }
 
 export class WorkbenchController {
   readonly #transport: AgentTransport
   readonly #sessionCatalog: SessionCatalogService
   readonly #workspaceDiff: WorkspaceDiffService
+  readonly #queueStore: QueueStoreService | undefined
+  readonly #threadMetadataStore: ThreadMetadataStoreService | undefined
   readonly #dialogs: WorkbenchDialogCoordinator
   readonly #stopTransportOnDispose: boolean
   readonly #listeners = new Set<() => void>()
@@ -72,6 +79,8 @@ export class WorkbenchController {
   #nextQueueId = 0
   #nextUiRequestId = 0
   #queueDispatch: Promise<void> | undefined
+  #compactionHold = false
+  #pauseAfterTools = false
   #unsubscribeEvent: () => void
   #unsubscribeStatus: () => void
 
@@ -79,8 +88,14 @@ export class WorkbenchController {
     this.#transport = transport
     this.#sessionCatalog = dependencies.sessionCatalog
     this.#workspaceDiff = dependencies.workspaceDiff
+    this.#queueStore = dependencies.queueStore
+    this.#threadMetadataStore = dependencies.threadMetadataStore
     this.#stopTransportOnDispose = dependencies.transportOwnership !== 'provider'
-    this.#state = createInitialState(workspacePath)
+    this.#state = {
+      ...createInitialState(workspacePath),
+      queue: dependencies.queueStore?.load(workspacePath) ?? createQueueState(),
+      threadLifecycle: dependencies.threadMetadataStore?.load() ?? {},
+    }
     this.#dialogs = new WorkbenchDialogCoordinator({
       getState: () => this.#state,
       patch: (patch) => this.#patch(patch),
@@ -168,9 +183,22 @@ export class WorkbenchController {
     const message = text.trim()
     const editorImages = this.#state.editorImages
     if ((!message && editorImages.length === 0) || this.#state.connection !== 'connected') return
+    if (editorImages.length === 0 && message === '/queue-drain') {
+      this.#patch({ editorText: '', editorImages: [] })
+      await this.drainQueueMessages()
+      return
+    }
+    if (editorImages.length === 0 && message === '/pause') {
+      this.#patch({ editorText: '', editorImages: [] })
+      await this.pause()
+      return
+    }
     if (this.#state.session.isStreaming || options.queue) {
       this.#patch({ editorText: '', editorImages: [] })
-      this.queueInput(message, editorImages, { paused: Boolean(options.queue && !this.#state.session.isStreaming) })
+      this.queueInput(message, editorImages, {
+        paused: Boolean(options.queue && !this.#state.session.isStreaming),
+        lane: this.#state.session.isStreaming && !options.queue ? 'steer' : 'followUp',
+      })
       return
     }
     this.#patch({ editorText: '', editorImages: [] })
@@ -182,25 +210,49 @@ export class WorkbenchController {
     await this.#sendPrompt(message, editorImages, true)
   }
 
-  queueInput(text: string, images: readonly ComposerImage[] = [], options: { paused?: boolean } = {}): QueuedInput | undefined {
-    const message = text.trim()
-    if (!message && images.length === 0) return undefined
-    const item: QueuedInput = {
-      id: `queue-${Date.now()}-${++this.#nextQueueId}`,
-      text: message,
-      images: images.map((image) => ({ ...image })),
-      createdAt: Date.now(),
-    }
-    const resetPause = this.#state.queue.items.length === 0 && !options.paused
+  queueInput(text: string, images: readonly ComposerImage[] = [], options: { paused?: boolean; lane?: 'steer' | 'followUp' } = {}): QueuedInput | undefined {
+    const [item] = this.enqueueQueueInputs([{ text, images, ...(options.lane ? { lane: options.lane } : {}) }], { start: false, ...(options.paused === undefined ? {} : { paused: options.paused }) })
+    return item
+  }
+
+  enqueueQueueInputs(inputs: readonly QueueInputDraft[], options: { start?: boolean; paused?: boolean } = {}): QueuedInput[] {
+    const createdAt = Date.now()
+    const items = inputs.flatMap((input, index): QueuedInput[] => {
+      const text = input.text.trim()
+      const images = input.images ?? []
+      if (!text && images.length === 0) return []
+      return [{
+        id: `queue-${createdAt}-${++this.#nextQueueId}`,
+        text,
+        images: images.map((image) => ({ ...image })),
+        createdAt: createdAt + index,
+        ...(input.lane ? { lane: input.lane } : {}),
+        ...(input.flow ? { flow: { ...input.flow } } : {}),
+      }]
+    })
+    if (items.length === 0) return []
+    const wasEmpty = this.#state.queue.items.length === 0
+    const resetPause = wasEmpty && !options.paused
     this.#patch({
       queue: {
         ...this.#state.queue,
-        items: [...this.#state.queue.items, item],
+        items: [...this.#state.queue.items, ...items],
         ...(options.paused ? { paused: true, pauseReason: 'manual' as const } : {}),
         ...(resetPause ? { paused: false, pauseReason: undefined } : {}),
       },
     })
-    return item
+    if (options.start) this.#drainQueue()
+    return items
+  }
+
+  hasQueuedFlow(runId: string): boolean {
+    return this.#state.queue.items.some((item) => item.flow?.runId === runId)
+  }
+
+  removeQueuedFlow(runId: string): void {
+    const dispatchingId = this.#state.queue.dispatchingId
+    const items = this.#state.queue.items.filter((item) => item.flow?.runId !== runId || item.id === dispatchingId)
+    this.#patch({ queue: { ...this.#state.queue, items, ...(items.length === 0 ? { paused: false, pauseReason: undefined } : {}) } })
   }
 
   updateQueuedInput(id: string, text: string): void {
@@ -230,6 +282,11 @@ export class WorkbenchController {
     this.#patch({ queue: { ...this.#state.queue, items: moveQueuedInput(this.#state.queue.items, id, targetIndex) } })
   }
 
+  moveQueuedInputToLane(id: string, lane: 'steer' | 'followUp'): void {
+    if (this.#state.queue.dispatchingId === id) return
+    this.#patch({ queue: { ...this.#state.queue, items: this.#state.queue.items.map((item) => item.id === id ? { ...item, lane } : item) } })
+  }
+
   async steerQueuedInput(id: string): Promise<void> {
     const item = this.#state.queue.items.find((candidate) => candidate.id === id)
     if (!item || !this.#state.session.isStreaming || this.#state.queue.dispatchingId) return
@@ -257,11 +314,68 @@ export class WorkbenchController {
   }
 
   resumeQueue(): void {
+    this.#pauseAfterTools = false
     this.#patch({ queue: { ...this.#state.queue, paused: false, pauseReason: undefined } })
     this.#drainQueue()
   }
 
+  async drainQueueMessages(): Promise<void> {
+    if (this.#state.queue.dispatchingId || this.#compactionHold) {
+      this.#setState((state) => addNotice(state, 'warning', 'The queue can drain after the current control or compaction finishes'))
+      return
+    }
+    const messages = this.#state.queue.items.filter((item) => !item.flow && (item.images.length > 0 || !parseBuiltinSlashCommand(item.text)))
+    if (messages.length === 0) {
+      this.#setState((state) => addNotice(state, 'info', this.#state.queue.items.length === 0 ? 'Queue is empty' : 'No ordinary message rows can be drained; Flow and control rows keep their boundaries'))
+      return
+    }
+    const ids = new Set(messages.map((item) => item.id))
+    const wasStreaming = this.#state.session.isStreaming
+    const text = messages.map((item) => item.text).filter(Boolean).join('\n\n')
+    const images = messages.flatMap((item) => item.images)
+    this.#patch({ queue: { ...this.#state.queue, paused: false, pauseReason: undefined, dispatchingId: messages[0]!.id } })
+    try {
+      const accepted = wasStreaming
+        ? await this.#transport.request({
+            type: 'prompt',
+            message: text,
+            ...(images.length > 0 ? { images: images.map(({ data, mimeType }) => ({ type: 'image' as const, data, mimeType })) } : {}),
+            streamingBehavior: 'steer',
+          }).then(() => true)
+        : await this.#sendPrompt(text, images, false)
+      if (!accepted) throw new Error('Pi did not accept the drained queue')
+      this.#patch({
+        queue: {
+          ...this.#state.queue,
+          items: this.#state.queue.items.filter((item) => !ids.has(item.id)),
+          ...(wasStreaming ? { steering: [...this.#state.queue.steering, text || `${images.length} image attachments`] } : {}),
+          dispatchingId: undefined,
+        },
+      })
+    } catch (error) {
+      this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error', dispatchingId: undefined } })
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
+  async pause(): Promise<void> {
+    this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'manual' } })
+    if (!this.#state.session.isStreaming) return
+    if (this.#state.liveTools.some((tool) => tool.status !== 'complete')) {
+      this.#pauseAfterTools = true
+      this.#setState((state) => addNotice(state, 'info', 'Pause armed; in-flight tools will finish before Pi stops'))
+      return
+    }
+    try {
+      await this.#transport.request({ type: 'abort' })
+      this.#patch({ activity: 'Pausing' })
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
   async abort(): Promise<void> {
+    this.#pauseAfterTools = false
     if (this.#state.queue.items.length > 0) this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'abort' } })
     try {
       await this.#transport.request({ type: 'abort' })
@@ -355,7 +469,7 @@ export class WorkbenchController {
         dialogQueue: [],
         questionnaireSubmitting: undefined,
         questionnaireCollapsed: undefined,
-        queue: createQueueState(),
+        queue: resolve(workspacePath) === resolve(this.#state.workspacePath) ? this.#state.queue : this.#queueStore?.load(workspacePath) ?? createQueueState(),
         workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
       })
       await this.#bootstrap(false)
@@ -496,28 +610,68 @@ export class WorkbenchController {
   }
 
   settleThread(path: string): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const { snoozedUntil: _snoozedUntil, unsettledAt: _unsettledAt, ...retained } = current
     const threadLifecycle = {
       ...this.#state.threadLifecycle,
-      [path]: { settledAt: Date.now() },
+      [path]: { ...retained, settledAt: Date.now() },
     }
     this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread moved to Settled'))
   }
 
   snoozeThread(path: string, snoozedUntil: number): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const { settledAt: _settledAt, unsettledAt: _unsettledAt, ...retained } = current
     const threadLifecycle = {
       ...this.#state.threadLifecycle,
-      [path]: { snoozedUntil },
+      [path]: { ...retained, snoozedUntil },
     }
     const time = new Date(snoozedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', `Snoozed until ${time}`))
   }
 
   wakeThread(path: string): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const { settledAt: _settledAt, snoozedUntil: _snoozedUntil, ...retained } = current
     const threadLifecycle = {
       ...this.#state.threadLifecycle,
-      [path]: { unsettledAt: Date.now() },
+      [path]: { ...retained, unsettledAt: Date.now() },
     }
     this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread returned to Active'))
+  }
+
+  setThreadPriority(path: string, priority: ThreadPriority | undefined): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const { priority: _priority, ...retained } = current
+    this.#patch({ threadLifecycle: {
+      ...this.#state.threadLifecycle,
+      [path]: priority === undefined ? retained : { ...retained, priority },
+    } })
+  }
+
+  setThreadLabels(path: string, labels: readonly string[]): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const { labels: _labels, ...retained } = current
+    const normalized = normalizeThreadLabels(labels)
+    this.#patch({ threadLifecycle: {
+      ...this.#state.threadLifecycle,
+      [path]: normalized.length === 0 ? retained : { ...retained, labels: normalized },
+    } })
+  }
+
+  markThreadRead(path: string, updatedAt: number): void {
+    this.markThreadsRead([{ path, updatedAt }])
+  }
+
+  markThreadsRead(threads: readonly { path: string; updatedAt: number }[]): void {
+    let threadLifecycle = this.#state.threadLifecycle
+    for (const { path, updatedAt } of threads) {
+      const current = threadLifecycle[path] ?? {}
+      if ((current.readAt ?? 0) >= updatedAt) continue
+      if (threadLifecycle === this.#state.threadLifecycle) threadLifecycle = { ...threadLifecycle }
+      threadLifecycle[path] = { ...current, readAt: updatedAt }
+    }
+    if (threadLifecycle !== this.#state.threadLifecycle) this.#patch({ threadLifecycle })
   }
 
   async refreshWorkspaceDiff(): Promise<void> {
@@ -603,6 +757,48 @@ export class WorkbenchController {
     }
   }
 
+  #drainSteering(): void {
+    if (this.#queueDispatch) return
+    const task = this.#drainSteeringHead()
+    this.#queueDispatch = task
+    void task.finally(() => {
+      if (this.#queueDispatch !== task) return
+      this.#queueDispatch = undefined
+      if (!this.#state.session.isStreaming && !this.#state.queue.paused && this.#state.queue.items.length > 0) queueMicrotask(() => this.#drainQueue())
+    })
+  }
+
+  async #drainSteeringHead(): Promise<void> {
+    const { queue, session, connection } = this.#state
+    if (queue.paused || queue.dispatchingId || !session.isStreaming || connection !== 'connected' || this.#compactionHold) return
+    const item = queue.items.find((candidate) => candidate.lane === 'steer')
+    if (!item) return
+    this.#patch({ queue: { ...queue, dispatchingId: item.id } })
+    const command = item.images.length === 0 ? parseBuiltinSlashCommand(item.text) : undefined
+    try {
+      const accepted = command
+        ? await this.#runBuiltinSlashCommand(command, true, item)
+        : await this.#transport.request({
+            type: 'prompt',
+            message: item.text,
+            ...(item.images.length > 0 ? { images: item.images.map(({ data, mimeType }) => ({ type: 'image' as const, data, mimeType })) } : {}),
+            streamingBehavior: 'steer',
+          }).then(() => true)
+      if (!accepted) throw new Error('Pi did not accept the queued steering row')
+      this.#patch({
+        queue: {
+          ...this.#state.queue,
+          items: this.#state.queue.items.filter((candidate) => candidate.id !== item.id),
+          steering: command ? this.#state.queue.steering : [...this.#state.queue.steering, item.text || 'Image attachment'],
+          dispatchingId: undefined,
+        },
+      })
+    } catch (error) {
+      this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error', dispatchingId: undefined } })
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
   #drainQueue(): void {
     if (this.#queueDispatch) return
     const task = this.#drainQueueHead()
@@ -616,13 +812,14 @@ export class WorkbenchController {
 
   async #drainQueueHead(): Promise<void> {
     const { queue, session, connection } = this.#state
-    if (queue.paused || queue.dispatchingId || session.isStreaming || connection !== 'connected') return
-    const item = queue.items[0]
+    if (queue.paused || queue.dispatchingId || session.isStreaming || connection !== 'connected' || this.#compactionHold) return
+    const item = queue.items.find((candidate) => candidate.lane === 'steer')
+      ?? queue.items.find((candidate) => candidate.lane !== 'steer')
     if (!item) return
     this.#patch({ queue: { ...queue, dispatchingId: item.id } })
     const command = item.images.length === 0 ? parseBuiltinSlashCommand(item.text) : undefined
     const accepted = command
-      ? await this.#runBuiltinSlashCommand(command, true)
+      ? await this.#runBuiltinSlashCommand(command, true, item)
       : await this.#sendPrompt(item.text, item.images, false)
     if (!accepted) {
       this.#patch({ queue: { ...this.#state.queue, paused: true, pauseReason: 'error', dispatchingId: undefined } })
@@ -638,7 +835,7 @@ export class WorkbenchController {
     if (!command && item.text.startsWith('/')) this.#scheduleRefresh(true)
   }
 
-  async #runBuiltinSlashCommand(command: ParsedBuiltinSlashCommand, queued: boolean): Promise<boolean> {
+  async #runBuiltinSlashCommand(command: ParsedBuiltinSlashCommand, queued: boolean, queuedItem?: QueuedInput): Promise<boolean> {
     try {
       switch (command.name) {
         case 'settings':
@@ -740,7 +937,10 @@ export class WorkbenchController {
           this.#sessionTransitionDepth += 1
           try {
             this.#dialogs.cancelAll()
-            const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
+            const parentSession = queuedItem?.flow?.phase === 'new-session' && queuedItem.flow.taskIndex > 0
+              ? this.#state.session.sessionFile
+              : undefined
+            const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session', ...(parentSession ? { parentSession } : {}) })
             if (result.cancelled) return false
             this.#historyPager = undefined
             this.#patch({
@@ -937,9 +1137,20 @@ export class WorkbenchController {
       return
     }
     this.#setState((state) => applyRpcEvent(state, event))
+    if (event.type === 'compaction_start') this.#compactionHold = true
+    if (event.type === 'compaction_end') {
+      this.#compactionHold = false
+      if (this.#state.queue.pauseReason === 'error') this.#patch({ queue: { ...this.#state.queue, paused: false, pauseReason: undefined } })
+      if (!this.#state.session.isStreaming) this.#drainQueue()
+    }
+    if (event.type === 'turn_end' && healthyTurnBoundary(event)) this.#drainSteering()
     if (event.type === 'tool_execution_end') {
       const toolCallId = String(event.toolCallId ?? '')
       this.#dialogs.handleToolExecutionEnd(toolCallId)
+      if (this.#pauseAfterTools && !this.#state.liveTools.some((tool) => tool.status !== 'complete')) {
+        this.#pauseAfterTools = false
+        void this.#transport.request({ type: 'abort' }).catch((error) => this.#setState((state) => addNotice(state, 'error', errorMessage(error))))
+      }
     }
     const runOutcome = event.type === 'agent_end' && !event.willRetry ? agentEndOutcome(event) : 'unknown'
     if (runOutcome === 'failed') {
@@ -1001,9 +1212,12 @@ export class WorkbenchController {
   }
 
   #setState(update: (state: WorkbenchState) => WorkbenchState): void {
-    const next = update(this.#state)
-    if (next === this.#state) return
+    const previous = this.#state
+    const next = update(previous)
+    if (next === previous) return
     this.#state = next
+    if (next.queue !== previous.queue || next.workspacePath !== previous.workspacePath) this.#queueStore?.save(next.workspacePath, next.queue)
+    if (next.threadLifecycle !== previous.threadLifecycle) this.#threadMetadataStore?.save(next.threadLifecycle)
     for (const listener of this.#listeners) listener()
   }
 }
@@ -1076,13 +1290,19 @@ function mergeTranscriptTail(current: PiMessage[], latest: PiMessage[]): PiMessa
   })
 }
 
+function healthyTurnBoundary(event: RpcRecord): boolean {
+  if (event.type !== 'turn_end' || !event.message || typeof event.message !== 'object') return false
+  const stopReason = (event.message as { stopReason?: unknown }).stopReason
+  return stopReason !== 'error' && stopReason !== 'aborted'
+}
+
 function agentEndOutcome(event: RpcRecord): 'healthy' | 'failed' | 'unknown' {
   if (!Array.isArray(event.messages)) return 'unknown'
   for (let index = event.messages.length - 1; index >= 0; index -= 1) {
     const message = event.messages[index]
     if (!message || typeof message !== 'object' || (message as { role?: unknown }).role !== 'assistant') continue
     const stopReason = (message as { stopReason?: unknown }).stopReason
-    return stopReason === 'error' || stopReason === 'aborted' ? 'failed' : 'healthy'
+    return stopReason === 'error' || stopReason === 'aborted' || stopReason === 'length' ? 'failed' : 'healthy'
   }
   return 'unknown'
 }

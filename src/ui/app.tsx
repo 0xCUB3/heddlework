@@ -1,11 +1,13 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
+import type { FlowRuntime } from '../flows/runtime.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
 import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { DraftWorkspaceChooser } from './workspace-chooser.tsx'
+import { FlowsView } from './flows-view.tsx'
 import { NotificationLedgerView } from './notifications.tsx'
 import { SettingsView } from './settings-view.tsx'
 import { WorkbenchSidebar } from './sidebar.tsx'
@@ -19,7 +21,7 @@ import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
 import { MotionDiv, SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
 
-type Surface = 'chat' | 'settings'
+type Surface = 'chat' | 'flows' | 'settings'
 type RightPanel = 'notifications' | 'surfaces' | `surface:${string}`
 
 function surfacePanelId(surfaceId: string): `surface:${string}` {
@@ -34,12 +36,14 @@ export function WorkbenchApp({
   controller,
   presenters,
   ui,
+  flows,
   themeManager = defaultThemeManager,
   onQuit,
 }: {
   controller: WorkbenchController
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
+  flows?: FlowRuntime | undefined
   themeManager?: ThemeManager
   onQuit?(): void
 }) {
@@ -67,6 +71,13 @@ export function WorkbenchApp({
   const latestNoticeId = state.notices.at(-1)?.id ?? 0
   const unreadCount = state.notices.filter((notice) => notice.id > lastSeenNoticeId).length
   const draft = state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
+  const closeFlows = useCallback(() => setSurface('chat'), [])
+  const openFlowSession = useCallback(() => {
+    setSurface('chat')
+    setRightPanel(undefined)
+    setPanelFullscreen(false)
+    if (layout.navigationOverlay) setLeftSidebarOpen(false)
+  }, [layout.navigationOverlay])
 
   useEffect(() => {
     renderer.setWindowTitle?.(state.windowTitle)
@@ -191,6 +202,9 @@ export function WorkbenchApp({
   const fullscreenVisible = forcedPanelFullscreen || panelFullscreen || fullscreenProgress > 0.001
   const panelFullscreenProgress = forcedPanelFullscreen ? boundedRightPanelProgress : fullscreenProgress
   const sidebarToggleLeft = process.platform === 'darwin' ? 90 : layout.navigationOverlay ? 10 : 10 + 54 * animatedSidebarProgress
+  const collapsedChromeInset = process.platform === 'darwin' ? 132 : 54
+  const contentSidebarProgress = layout.navigationOverlay ? 0 : animatedSidebarProgress
+  const flowsTitlebarInset = 24 + (collapsedChromeInset - 24) * (1 - contentSidebarProgress)
   const displayedSurfaceId = workbenchSurfaceId(displayedRightPanel)
   const displayedSurface = uiSnapshot.surfaces.find((candidate) => candidate.id === displayedSurfaceId)
   const SurfaceComponent = displayedSurface?.component
@@ -214,11 +228,19 @@ export function WorkbenchApp({
           width={layout.sidebarWidth}
           state={state}
           controller={controller}
+          flowsAvailable={Boolean(flows)}
+          flowsActive={surface === 'flows'}
           settingsActive={surface === 'settings'}
           notificationsActive={notificationsOpen}
           unreadCount={unreadCount}
           appearance={theme.resolved}
           onSelectSession={returnToConversation}
+          onFlows={() => {
+            if (!flows) return
+            closeRightPanel()
+            closeOverlayNavigation()
+            setSurface((current) => current === 'flows' ? 'chat' : 'flows')
+          }}
           onSettings={() => {
             closeRightPanel()
             closeOverlayNavigation()
@@ -238,7 +260,9 @@ export function WorkbenchApp({
           style={{ position: 'absolute', top: windowInsets.effective.top, right: windowInsets.effective.right, bottom: windowInsets.effective.bottom, left: windowInsets.effective.left, display: 'flex', flexDirection: 'row', backgroundColor: colors.background, overflow: 'hidden' }}
         >
           {!layout.navigationOverlay && sidebarHost}
-          {surface === 'settings' ? (
+          {surface === 'flows' && flows ? (
+            <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
+          ) : surface === 'settings' ? (
             <SettingsView state={state} controller={controller} theme={theme} onThemeModeChange={(mode) => themeManager.setMode(mode)} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>

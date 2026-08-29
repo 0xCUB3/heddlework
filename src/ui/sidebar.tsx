@@ -19,22 +19,28 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   width = SIDEBAR_WIDTH,
   state,
   controller,
+  flowsAvailable = false,
+  flowsActive = false,
   settingsActive,
   notificationsActive,
   unreadCount,
   appearance,
   onSelectSession,
+  onFlows = () => undefined,
   onSettings,
   onNotifications,
 }: {
   width?: number
   state: WorkbenchState
   controller: WorkbenchController
+  flowsAvailable?: boolean
+  flowsActive?: boolean
   settingsActive: boolean
   notificationsActive: boolean
   unreadCount: number
   appearance?: 'light' | 'dark'
   onSelectSession(): void
+  onFlows?(): void
   onSettings(): void
   onNotifications(): void
 }) {
@@ -158,6 +164,12 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       <BrandHeader />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, paddingTop: 6 }}>
+        {flowsAvailable && (
+          <div testId="sidebar-flows" tabIndex={0} style={{ height: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 8, backgroundColor: flowsActive ? colors.sidebarActive : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onFlows}>
+            <Icon name="gitBranch" size={15} color={flowsActive ? colors.text : colors.textMuted} />
+            <text style={{ color: flowsActive ? colors.text : colors.textMuted, fontSize: 12, fontWeight: flowsActive ? 650 : 550 }}>Flows</text>
+          </div>
+        )}
         <div style={{ alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 6 }}>
           <div style={{ height: 32, minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 7, borderRadius: 8, hover: { backgroundColor: colors.sidebarHover } }}>
             <Icon name="search" size={15} color={colors.textFaint} />
@@ -224,6 +236,8 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   )
 }, (previous, next) => previous.controller === next.controller
   && previous.width === next.width
+  && previous.flowsAvailable === next.flowsAvailable
+  && previous.flowsActive === next.flowsActive
   && previous.settingsActive === next.settingsActive
   && previous.notificationsActive === next.notificationsActive
   && previous.unreadCount === next.unreadCount

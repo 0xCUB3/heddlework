@@ -4,6 +4,8 @@ import type { PiSessionState, RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { parseBuiltinSlashCommand } from '../src/pi/slash-commands.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { moveQueuedInput } from '../src/workbench/queue.ts'
+import { compileFlowQueue } from '../src/flows/compiler.ts'
+import type { FlowLaunch } from '../src/flows/types.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
 
 class QueueTransport implements AgentTransport {
@@ -48,7 +50,11 @@ class QueueTransport implements AgentTransport {
     return undefined as T
   }
 
-  settle(stopReason: 'stop' | 'error' = 'stop'): void {
+  turnEnd(stopReason: 'toolUse' | 'stop' | 'error' | 'aborted' = 'toolUse'): void {
+    this.emit({ type: 'turn_end', message: { role: 'assistant', content: [], stopReason }, toolResults: [] })
+  }
+
+  settle(stopReason: 'stop' | 'error' | 'length' = 'stop'): void {
     this.streaming = false
     this.emit({ type: 'agent_end', messages: [{ role: 'assistant', content: [], stopReason }], willRetry: false })
     this.emit({ type: 'agent_settled' })
@@ -201,6 +207,65 @@ describe('owned workbench queue', () => {
     }
   })
 
+  it('delivers steering at turn boundaries and follow-ups only after settlement', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-lanes', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('Start')
+      await controller.submit('Steer at the next turn')
+      await controller.submit('Follow after the run', { queue: true })
+      expect(controller.getSnapshot().queue.items.map((item) => item.lane)).toEqual(['steer', 'followUp'])
+
+      transport.turnEnd()
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Steer at the next turn' && command.streamingBehavior === 'steer') && !controller.getSnapshot().queue.items.some((item) => item.text === 'Steer at the next turn'), 'the turn-boundary steering row')
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['Follow after the run'])
+
+      transport.settle()
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Follow after the run' && !command.streamingBehavior) && !controller.getSnapshot().queue.items.some((item) => item.text === 'Follow after the run'), 'the settled follow-up row')
+      expect(controller.getSnapshot().queue.items).toEqual([])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('drains ordinary messages in timeline order without collapsing control rows', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-drain-all', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('Start')
+      await controller.submit('First queued message')
+      await controller.submit('Second queued message', { queue: true })
+      controller.queueInput('/compact keep decisions', [], { lane: 'followUp' })
+      await controller.drainQueueMessages()
+      const drained = transport.commands.filter((command) => command.type === 'prompt').at(-1)
+      expect(drained).toMatchObject({ message: 'First queued message\n\nSecond queued message', streamingBehavior: 'steer' })
+      expect(controller.getSnapshot().queue.items.map((item) => item.text)).toEqual(['/compact keep decisions'])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('arms a graceful pause until every in-flight tool finishes', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-pause', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('Start')
+      controller.acceptAgentEvent({ type: 'tool_execution_start', toolCallId: 'tool-1', toolName: 'bash', args: { command: 'sleep 1' } })
+      await controller.pause()
+      expect(transport.commands.filter((command) => command.type === 'abort')).toEqual([])
+      expect(controller.getSnapshot().queue).toMatchObject({ paused: true, pauseReason: 'manual' })
+
+      controller.acceptAgentEvent({ type: 'tool_execution_end', toolCallId: 'tool-1', toolName: 'bash', result: { content: [] }, isError: false })
+      await waitFor(() => transport.commands.some((command) => command.type === 'abort'), 'graceful pause after tool completion')
+      expect(controller.getSnapshot().session.isStreaming).toBe(false)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('dispatches exactly one queued row at each healthy settled boundary', async () => {
     const transport = new QueueTransport()
     const controller = new WorkbenchController(transport, '/tmp/queue-drain', testControllerDependencies())
@@ -314,6 +379,62 @@ describe('owned workbench queue', () => {
         && controller.getSnapshot().queue.items.length === 0, 'the recovered queue prompt')
       expect(controller.getSnapshot().queue.paused).toBe(false)
       expect(transport.commands.filter((command) => command.type === 'prompt').at(-1)).toMatchObject({ message: 'Do not run after an error' })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('releases a length-error queue hold after successful compaction', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/queue-overflow', testControllerDependencies())
+    try {
+      await controller.start()
+      await controller.submit('Start')
+      await controller.submit('Continue after compaction', { queue: true })
+      transport.settle('length')
+      await waitFor(() => controller.getSnapshot().queue.pauseReason === 'error', 'the overflow error hold')
+      controller.acceptAgentEvent({ type: 'compaction_start', reason: 'overflow' })
+      controller.acceptAgentEvent({ type: 'compaction_end', reason: 'overflow' })
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Continue after compaction') && controller.getSnapshot().queue.items.length === 0, 'the compacted queue tail')
+      expect(controller.getSnapshot().queue.paused).toBe(false)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('dispatches a sequential Flow as linked fresh Pi sessions', async () => {
+    const transport = new QueueTransport()
+    const controller = new WorkbenchController(transport, '/tmp/flow-queue-controller', testControllerDependencies())
+    const flow: FlowLaunch = {
+      id: 'HW-CONTROL',
+      title: 'Controller flow',
+      prompts: ['First fresh task', 'Second fresh task'],
+      mode: 'sequential',
+      model: 'provider/model',
+      workspacePath: '/tmp/flow-queue-controller',
+      source: 'manual',
+      createdAt: 1,
+    }
+    try {
+      await controller.start()
+      controller.enqueueQueueInputs(compileFlowQueue(flow), { start: true })
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'First fresh task'), 'the first Flow task')
+      expect(controller.getSnapshot().queue.items.some((item) => item.flow?.taskId === 'HW-CONTROL-2')).toBe(true)
+
+      transport.settle()
+      await waitFor(() => transport.commands.some((command) => command.type === 'prompt' && command.message === 'Second fresh task'), 'the second Flow task')
+      const sessions = transport.commands.filter((command) => command.type === 'new_session')
+      expect(sessions).toHaveLength(2)
+      expect(sessions[0]).toEqual({ type: 'new_session' })
+      expect(sessions[1]).toEqual({ type: 'new_session', parentSession: '/tmp/queue-session.jsonl' })
+      expect(transport.commands.filter((command) => command.type === 'set_model')).toEqual([
+        { type: 'set_model', provider: 'provider', modelId: 'model' },
+        { type: 'set_model', provider: 'provider', modelId: 'model' },
+      ])
+      expect(transport.commands.filter((command) => command.type === 'set_session_name')).toEqual([
+        { type: 'set_session_name', name: 'Flow HW-CONTROL/1:2 · Controller flow · Step 1' },
+        { type: 'set_session_name', name: 'Flow HW-CONTROL/2:2 · Controller flow · Step 2' },
+      ])
     } finally {
       await controller.dispose()
     }

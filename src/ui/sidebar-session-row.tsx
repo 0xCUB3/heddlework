@@ -1,21 +1,15 @@
 import React, { useState } from 'react'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { ThreadLifecycle } from '../workbench/state.ts'
+import { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
 import { Icon } from './icons.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { colors } from './theme.ts'
 
 const SIDEBAR_BORDER_WIDTH = 1
 const SESSION_ROW_INSET = 8
-export const SESSION_SETTLED_AFTER_MS = 7 * 24 * 60 * 60 * 1_000
 
-export function sessionLifecycleBucket(session: PiSessionSummary, lifecycle: ThreadLifecycle | undefined, now: number): 'active' | 'snoozed' | 'settled' {
-  if ((lifecycle?.snoozedUntil ?? 0) > now) return 'snoozed'
-  if (lifecycle?.settledAt) return 'settled'
-  if ((lifecycle?.unsettledAt ?? 0) > session.modifiedAt) return 'active'
-  if (now - session.modifiedAt > SESSION_SETTLED_AFTER_MS) return 'settled'
-  return 'active'
-}
+export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket }
 
 function SessionRowInset({ sidebarWidth, height, children }: { sidebarWidth: number; height: number; children: React.ReactNode }) {
   const width = sidebarWidth - 2 * SIDEBAR_BORDER_WIDTH

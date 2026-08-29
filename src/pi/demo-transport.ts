@@ -16,6 +16,7 @@ export class DemoTransport implements AgentTransport {
   #thinking: ThinkingLevel = 'medium'
   #running = false
   #sessionId = crypto.randomUUID()
+  #sessionName: string | undefined = 'Demo session'
 
   async start(): Promise<void> {
     this.#emitStatus({ state: 'starting' })
@@ -78,6 +79,7 @@ export class DemoTransport implements AgentTransport {
         this.#messages = []
         this.#forkMessages = []
         this.#sessionId = crypto.randomUUID()
+        this.#sessionName = undefined
         return { cancelled: false } as T
       case 'clone':
         this.#sessionId = crypto.randomUUID()
@@ -95,6 +97,9 @@ export class DemoTransport implements AgentTransport {
         this.#model = models.find((model) => model.provider === command.provider && model.id === command.modelId) ?? this.#model
         if (!this.#model.reasoning) this.#thinking = 'off'
         return this.#model as T
+      case 'set_session_name':
+        this.#sessionName = String(command.name ?? '').trim() || undefined
+        return undefined as T
       case 'set_thinking_level':
         this.#thinking = String(command.level ?? 'off') as ThinkingLevel
         return undefined as T
@@ -113,7 +118,7 @@ export class DemoTransport implements AgentTransport {
       thinkingLevel: this.#thinking,
       isStreaming: this.#running,
       sessionId: this.#sessionId,
-      sessionName: 'Demo session',
+      ...(this.#sessionName ? { sessionName: this.#sessionName } : {}),
     }
   }
 
