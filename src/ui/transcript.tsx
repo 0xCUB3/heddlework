@@ -635,7 +635,7 @@ function ExecutionTraceHeader({
 }
 
 function estimateTraceBodyHeight(items: readonly TraceTimelineItem[], presenters: ReadonlyMap<string, ToolPresenter>): number {
-  let height = 10
+  let height = 5
   for (const item of items) {
     height += 10
     if (item.kind === 'tool') {
@@ -643,7 +643,8 @@ function estimateTraceBodyHeight(items: readonly TraceTimelineItem[], presenters
       const fabric = resolveToolPresentation(item.tool, presenters).fabric
       if (!fabric || fabric.audits.length === 0) continue
       const visible = Math.min(fabric.audits.length, COLLAPSED_TRACE_TOOL_LIMIT)
-      height += 7 + visible * 22 + (fabric.audits.length > visible ? 16 : 0)
+      height += 7 + 19 * visible + 3 * Math.max(0, visible - 1)
+      if (fabric.audits.length > visible) height += 14
       continue
     }
     if (item.kind === 'compaction') {
@@ -663,7 +664,8 @@ function TraceExpandBody({ open, extent, children }: { open: boolean; extent: nu
     <div
       testId="execution-trace-body"
       style={{
-        overflow: clip ? 'hidden' : 'visible',
+        overflow: 'hidden',
+        flexShrink: 0,
         opacity: progress,
         ...(clip ? { height: Math.max(0, progress * extent) } : {}),
       }}
@@ -693,7 +695,7 @@ function TraceEntries({
   onDismissNotice(id: number): void
 }) {
   return (
-    <div testId="execution-timeline" style={{ display: 'flex', flexDirection: 'column', marginLeft: 8, paddingLeft: 18, paddingTop: 5, paddingBottom: 5, borderLeftWidth: 1, borderColor: colors.borderStrong }}>
+    <div testId="execution-timeline" style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, marginLeft: 8, paddingLeft: 18, paddingTop: 5, paddingBottom: 5, borderLeftWidth: 1, borderColor: colors.borderStrong }}>
       {items.map((item) => {
         const rowId = `${traceId}:entry:${item.id}`
         const expanded = item.kind === 'compaction' ? true : expandedEntryIds.has(rowId)
