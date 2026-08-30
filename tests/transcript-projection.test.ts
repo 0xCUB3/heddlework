@@ -72,6 +72,31 @@ describe('transcript projection', () => {
     expect(rows.filter((row) => row.kind === 'trace-entry')).toHaveLength(3)
     expect(rows.some((row) => row.kind === 'trace-continuation')).toBe(false)
   })
+  it('does not treat a compaction CoT as the live Working header', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'compact', kind: 'compaction', text: 'Summarized earlier work.', tokensBefore: 150000 },
+    ], true)
+    expect(liveWorkTraceId(grouped, true)).toBeUndefined()
+    expect(pendingWorkTraceId(grouped, true)).toBeUndefined()
+  })
+
+  it('keeps compaction as a standalone work-trace instead of merging it into adjacent work', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'thinking', kind: 'thinking', text: 'Plan' },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'compact', kind: 'compaction', text: 'Summarized earlier work.', tokensBefore: 150000 },
+      { id: 'grep', kind: 'tool', tool: { id: 'grep', name: 'grep', status: 'complete', isError: false } },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+    ])
+    expect(grouped.map((item) => item.kind)).toEqual(['user', 'work-trace', 'work-trace', 'work-trace', 'assistant'])
+    expect(grouped[1]).toMatchObject({ kind: 'work-trace', items: [{ id: 'thinking' }, { id: 'read' }] })
+    expect(grouped[2]).toMatchObject({ kind: 'work-trace', id: 'work-trace-compact', items: [{ kind: 'compaction', tokensBefore: 150000 }] })
+    expect(grouped[3]).toMatchObject({ kind: 'work-trace', items: [{ id: 'grep' }] })
+  })
+
   it('groups only adjacent notifications emitted close together', () => {
     const notices: TimelineItem[] = [
       { id: 'notice-1', kind: 'notice', notice: { id: 1, kind: 'info', message: 'One', createdAt: 1_000 } },

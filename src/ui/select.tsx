@@ -32,6 +32,7 @@ export function ChipSelect({
   onOpenChange,
   openRequest,
   backdropColor = colors.background,
+  tabIndex = 0,
 }: {
   value: string
   label?: string
@@ -46,8 +47,9 @@ export function ChipSelect({
   openRequest?: number
   // Native anchored layers clear dark outside rounded children; match the host surface there.
   backdropColor?: string
+  tabIndex?: number
 }) {
-  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} {...(openRequest === undefined ? {} : { openRequest })} testId={testId} width={width} triggerMaxWidth={triggerMaxWidth} icon={icon} backdropColor={backdropColor} />
+  if (searchable) return <SearchableChipSelect value={value} label={label} options={options} onChange={onChange} {...(onOpenChange ? { onOpenChange } : {})} {...(openRequest === undefined ? {} : { openRequest })} testId={testId} width={width} triggerMaxWidth={triggerMaxWidth} icon={icon} backdropColor={backdropColor} tabIndex={tabIndex} />
   const dropdown = useDropdownState(onOpenChange)
   const selected = options.find((option) => option.value === value)
   const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
@@ -69,7 +71,7 @@ export function ChipSelect({
         if (typeof nextValue === 'string') onChange(nextValue)
       }}
     >
-      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(dropdown.open, triggerMaxWidth)}>
+      <ComboboxTrigger {...(testId ? { testId } : {})} tabIndex={tabIndex} style={chipTriggerStyle(dropdown.open, triggerMaxWidth)}>
         <ChipSelectValue selected={selected} label={label} icon={icon} />
       </ComboboxTrigger>
       <ComboboxContent
@@ -91,7 +93,7 @@ export function ChipSelect({
   )
 }
 
-function SearchableChipSelect({ value, label, options, onChange, onOpenChange, openRequest, testId, width, triggerMaxWidth, icon, backdropColor }: {
+function SearchableChipSelect({ value, label, options, onChange, onOpenChange, openRequest, testId, width, triggerMaxWidth, icon, backdropColor, tabIndex = 0 }: {
   value: string
   label?: string | undefined
   options: SelectOption[]
@@ -103,6 +105,7 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, o
   triggerMaxWidth: number
   icon?: IconName | undefined
   backdropColor: string
+  tabIndex?: number | undefined
 }) {
   const dropdown = useDropdownState(onOpenChange)
   const [query, setQuery] = React.useState('')
@@ -134,7 +137,7 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, o
         if (typeof nextValue === 'string') onChange(nextValue)
       }}
     >
-      <ComboboxTrigger {...(testId ? { testId } : {})} style={chipTriggerStyle(dropdown.open, triggerMaxWidth)}>
+      <ComboboxTrigger {...(testId ? { testId } : {})} tabIndex={tabIndex} style={chipTriggerStyle(dropdown.open, triggerMaxWidth)}>
         <ChipSelectValue selected={selected} label={label} icon={icon} />
       </ComboboxTrigger>
       <ComboboxContent

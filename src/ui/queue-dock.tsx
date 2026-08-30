@@ -69,7 +69,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
   }
 
   return (
-    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 8, overflow: 'hidden', userSelect: 'none' }}>
+    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 8, overflow: 'hidden', userSelect: 'none', pointerEvents: 'auto' }}>
       <div testId="queue-panel" style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, top: 0, bottom: 0, borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised }} />
 
       <div

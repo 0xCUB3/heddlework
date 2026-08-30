@@ -51,8 +51,49 @@ export function useSpringValue(target: number, options: SpringValueOptions = {})
   return progress
 }
 
-export function useSpringProgress(open: boolean): number {
-  return Math.max(0, useSpringValue(open ? 1 : 0))
+export function useSpringProgress(open: boolean, options: SpringValueOptions = {}): number {
+  return Math.max(0, Math.min(1, useSpringValue(open ? 1 : 0, options)))
+}
+
+export function useMountProgress(options: SpringValueOptions = {}): number {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    setOpen(true)
+  }, [])
+  return useSpringProgress(open, options)
+}
+
+export function useEaseProgress(open: boolean, duration = 0.22): number {
+  const [progress, setProgress] = useState(open ? 1 : 0)
+  const progressRef = useRef(progress)
+  useEffect(() => {
+    const from = progressRef.current
+    const to = open ? 1 : 0
+    if (from === to) return
+    const started = performance.now()
+    const timer = setInterval(() => {
+      const t = Math.min(1, (performance.now() - started) / (duration * 1000))
+      const eased = 1 - (1 - t) ** 3
+      const next = from + (to - from) * eased
+      progressRef.current = next
+      setProgress(next)
+      if (t >= 1) {
+        progressRef.current = to
+        setProgress(to)
+        clearInterval(timer)
+      }
+    }, 16)
+    return () => clearInterval(timer)
+  }, [duration, open])
+  return progress
+}
+
+export function useMountEase(duration = 0.22): number {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    setOpen(true)
+  }, [])
+  return useEaseProgress(open, duration)
 }
 
 export function TextShimmer({

@@ -15,6 +15,8 @@ interface PersistedSessionEntry {
   customType?: string
   content?: PiMessage['content']
   display?: boolean
+  summary?: string
+  tokensBefore?: number
 }
 
 export interface SessionHistoryPage {
@@ -113,6 +115,18 @@ function parseEntry(line: Buffer): PersistedSessionEntry | undefined {
 function persistedMessage(entry: PersistedSessionEntry): PiMessage | undefined {
   if (entry.type === 'message' && entry.message && typeof entry.message.role === 'string') {
     return { ...entry.message, workbenchEntryId: entry.id }
+  }
+  if (entry.type === 'compaction') {
+    if (typeof entry.summary !== 'string' || !entry.summary) return undefined
+    const timestamp = persistedTimestamp(entry.timestamp)
+    return {
+      role: 'compaction',
+      content: entry.summary,
+      display: true,
+      workbenchEntryId: entry.id,
+      ...(typeof entry.tokensBefore === 'number' ? { tokensBefore: entry.tokensBefore } : {}),
+      ...(timestamp === undefined ? {} : { timestamp }),
+    }
   }
   if (entry.type !== 'custom_message' || entry.display !== true) return undefined
   const timestamp = persistedTimestamp(entry.timestamp)

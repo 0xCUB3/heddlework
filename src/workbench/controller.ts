@@ -31,6 +31,7 @@ import {
 import {
   addNotice,
   applyRpcEvent,
+  contentText,
   createInitialState,
   type NoticeKind,
   type ThreadPriority,
@@ -1126,12 +1127,15 @@ export class WorkbenchController {
             this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
           }
         }
-        case 'compact':
+        case 'compact': {
           this.#patch({ activity: 'Compacting context' })
-          await this.#transport.request({ type: 'compact', ...(command.argument ? { customInstructions: command.argument } : {}) })
+          const result = await this.#transport.request({ type: 'compact', ...(command.argument ? { customInstructions: command.argument } : {}) })
           await this.#refreshStats()
+          await this.#refreshMessages()
+          this.#appendCompactionMessage(result)
           this.#setState((state) => addNotice({ ...state, activity: 'Ready' }, 'info', 'Context compacted'))
           return true
+        }
         case 'resume':
           await this.refreshSessions()
           this.#requestUi({ kind: 'sessions' })
@@ -1281,6 +1285,13 @@ export class WorkbenchController {
     }
   }
 
+  #appendCompactionMessage(result: unknown): void {
+    const message = compactionMessageFrom(result)
+    if (!message) return
+    if (this.#state.messages.some((candidate) => sameCompactionMessage(candidate, message))) return
+    this.#patch({ messages: [...this.#state.messages, message] })
+  }
+
   #scheduleRefresh(full: boolean): void {
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
     this.#refreshTimer = setTimeout(() => {
@@ -1395,8 +1406,10 @@ export class WorkbenchController {
     if (event.type === 'compaction_start') this.#compactionHold = true
     if (event.type === 'compaction_end') {
       this.#compactionHold = false
+      this.#appendCompactionMessage(event.result)
       if (this.#state.queue.pauseReason === 'error') this.#patch({ queue: { ...this.#state.queue, paused: false, pauseReason: undefined } })
       if (!this.#state.session.isStreaming) this.#drainQueue()
+      this.#scheduleRefresh(false)
     }
     if (event.type === 'turn_end' && healthyTurnBoundary(event)) this.#drainSteering()
     if (event.type === 'tool_execution_end') {
@@ -1528,6 +1541,27 @@ function interactiveOnlyCommandMessage(command: ParsedBuiltinSlashCommand['name'
 
 function messageEntryId(message: PiMessage): string | undefined {
   return typeof message.workbenchEntryId === 'string' ? message.workbenchEntryId : undefined
+}
+
+function compactionMessageFrom(value: unknown): PiMessage | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  const summary = typeof record.summary === 'string' ? record.summary : undefined
+  if (!summary) return undefined
+  const tokensBefore = typeof record.tokensBefore === 'number' ? record.tokensBefore : undefined
+  return {
+    role: 'compaction',
+    content: summary,
+    display: true,
+    ...(tokensBefore === undefined ? {} : { tokensBefore }),
+    timestamp: Date.now(),
+  }
+}
+
+function sameCompactionMessage(candidate: PiMessage, message: PiMessage): boolean {
+  return candidate.role === 'compaction'
+    && contentText(candidate.content) === contentText(message.content)
+    && candidate.tokensBefore === message.tokensBefore
 }
 
 function mergeTranscriptTail(current: PiMessage[], latest: PiMessage[]): PiMessage[] {

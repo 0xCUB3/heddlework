@@ -1,8 +1,8 @@
 import type { TimelineItem } from '../workbench/timeline.ts'
 
-export type TraceTimelineItem = Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'notice' | 'assistant' }>
+export type TraceTimelineItem = Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'notice' | 'assistant' | 'compaction' }>
 
-export type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'notice' }> | {
+export type DisplayTimelineItem = Exclude<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'notice' | 'compaction' }> | {
   id: string
   kind: 'work-trace'
   items: TraceTimelineItem[]
@@ -24,18 +24,35 @@ export function isActiveTraceEntry(item: TraceTimelineItem): boolean {
   return item.kind === 'thinking' ? Boolean(item.streaming) : item.kind === 'tool' ? item.tool.status !== 'complete' : false
 }
 
+export function isCompactionWorkTrace(item: DisplayTimelineItem): boolean {
+  return item.kind === 'work-trace'
+    && item.items.some((entry) => entry.kind === 'compaction')
+    && item.items.every((entry) => entry.kind === 'compaction' || entry.kind === 'notice')
+}
+
 export function groupWorkItems(items: TimelineItem[], isStreaming = false): DisplayTimelineItem[] {
   const absorbedAssistants = intermediateAssistantIds(items)
   const grouped: DisplayTimelineItem[] = []
   let boundaryId: string | undefined
   for (const item of items) {
+    if (item.kind === 'compaction') {
+      grouped.push({
+        id: `work-trace-${item.id}`,
+        kind: 'work-trace',
+        items: [item],
+        changedPaths: [],
+        identity: 'terminal',
+        ...(item.revertEntryId ? { revertEntryId: item.revertEntryId } : {}),
+      })
+      continue
+    }
     if (!isTraceItem(item, absorbedAssistants)) {
       grouped.push(item)
       boundaryId = item.id
       continue
     }
     const previous = grouped.at(-1)
-    if (previous?.kind === 'work-trace') {
+    if (previous?.kind === 'work-trace' && previous.items.every((entry) => entry.kind !== 'compaction')) {
       previous.items.push(item)
       if (item.kind !== 'notice') previous.id = `work-trace-${item.id}`
       if (item.revertEntryId) previous.revertEntryId = item.revertEntryId
@@ -60,7 +77,7 @@ export function groupWorkItems(items: TimelineItem[], isStreaming = false): Disp
   }
   for (let index = 0; index < grouped.length; index += 1) {
     const item = grouped[index]!
-    if (item.kind !== 'work-trace' || !item.boundaryId) continue
+    if (item.kind !== 'work-trace' || !item.boundaryId || item.items.some((entry) => entry.kind === 'compaction')) continue
     const currentTurn = index > lastUser && grouped.slice(index + 1).every((next) => next.kind !== 'user' && !(next.kind === 'assistant' && !next.streaming))
     if (!item.items.some(isActiveTraceEntry) && !(isStreaming && currentTurn)) continue
     item.id = `work-trace-after-${item.boundaryId}`
@@ -97,7 +114,8 @@ export function liveWorkTraceId(items: readonly DisplayTimelineItem[], isStreami
     const item = items[index]!
     if (item.kind === 'assistant') return undefined
     if (item.kind !== 'work-trace') continue
-    if (isStreaming || item.items.some(isActiveTraceEntry)) return item.id
+    if (isCompactionWorkTrace(item)) return undefined
+    if (isStreaming) return item.id
     return undefined
   }
   return undefined
@@ -153,7 +171,7 @@ export function projectTranscriptRows(items: DisplayTimelineItem[], expandedTrac
 }
 
 function isTraceItem(item: TimelineItem, absorbedAssistants: ReadonlySet<string>): item is TraceTimelineItem {
-  if (item.kind === 'thinking' || item.kind === 'context-injection' || item.kind === 'tool' || item.kind === 'notice') return true
+  if (item.kind === 'thinking' || item.kind === 'context-injection' || item.kind === 'tool' || item.kind === 'notice' || item.kind === 'compaction') return true
   return item.kind === 'assistant' && absorbedAssistants.has(item.id)
 }
 

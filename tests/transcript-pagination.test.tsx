@@ -9,6 +9,7 @@ import { createInitialState } from '../src/workbench/state.ts'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from '../src/ui/tool-presenters.ts'
 import { colors } from '../src/ui/theme.ts'
+import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 
 const messages: PiMessage[] = Array.from({ length: 120 }, (_, index): PiMessage[] => [
   { role: 'user', content: `Prompt ${index}`, timestamp: index * 2 },
@@ -604,6 +605,36 @@ describeNative('reverse-infinite transcript', () => {
     root.unmount()
   })
 
+  it('does not keep a cancelled Working header after a later user turn', async () => {
+    const root = createTestRoot({ width: 900, height: 640 })
+    const automation = await connectTest(root.renderer)
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript
+          state={{
+            ...createInitialState('/tmp/cancelled-work-project'),
+            connection: 'connected',
+            session: { model: null, thinkingLevel: 'off', isStreaming: false, sessionFile: '/tmp/cancelled-work.jsonl', sessionId: 'cancelled-work' },
+            messages: [
+              { role: 'user', content: 'Start the long task', timestamp: 1 },
+              { role: 'assistant', content: [{ type: 'toolCall', id: 'stale-fabric', name: 'pi.fabric', arguments: {} }], timestamp: 2 },
+              { role: 'user', content: 'Continue without that work', timestamp: 3 },
+              { role: 'assistant', content: 'Done — shipped.', timestamp: 4 },
+            ],
+          }}
+          presenters={new Map()}
+          onOpenDiff={() => {}}
+          onRevert={() => {}}
+        />
+      </div>,
+    )
+    expect(root.renderer.getAllText()).not.toContain('Working')
+    expect(await automation.getByTestId('execution-trace-label').count()).toBeGreaterThan(0)
+    expect(await automation.getByTestId('working-row').count()).toBe(0)
+    await automation.close()
+    root.unmount()
+  })
+
   it('does not remount Working when the assistant response starts streaming', () => {
     const base = {
       ...createInitialState('/tmp/stream-header-project'),
@@ -1012,6 +1043,8 @@ describeNative('reverse-infinite transcript', () => {
       expect(await automation.getByTestId('trace-reasoning').count()).toBe(0)
       await automation.getByTestId('tool-row').click()
       root.renderer.flush()
+      await Bun.sleep(SPRING_SETTLE_MS)
+      root.renderer.flush()
 
       expect(await automation.getByTestId('trace-reasoning').count()).toBe(1)
       expect(await automation.getByTestId('trace-context-injection').count()).toBe(1)
@@ -1051,18 +1084,65 @@ describeNative('reverse-infinite transcript', () => {
       const customMetrics = (customMarkdown?.customProps?.theme as { metrics?: { mdHeadingSizes?: number[] } } | undefined)?.metrics
       expect(customMetrics?.mdHeadingSizes).toEqual([12, 12, 12, 12])
 
-      await automation.getByTestId('tool-row').click()
-      expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(0)
-      await automation.getByTestId('tool-row').click()
-      expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(1)
-      await Bun.sleep(0)
+      await automation.getByTestId('tool-row').press('enter')
       root.renderer.flush()
+      await Bun.sleep(SPRING_SETTLE_MS)
+      root.renderer.flush()
+      expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(0)
+      await automation.getByTestId('tool-row').press('enter')
+      root.renderer.flush()
+      await Bun.sleep(SPRING_SETTLE_MS)
+      root.renderer.flush()
+      expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(1)
       expect(scrollToItem).not.toHaveBeenCalled()
     } finally {
       scrollToItem.mockRestore()
       await automation.close()
       root.unmount()
       await kernel.dispose()
+    }
+  })
+
+  it('renders a standalone compaction CoT with flattened Markdown', async () => {
+    const traceMessages: PiMessage[] = [
+      { role: 'user', content: 'Summarize the session', timestamp: 1 },
+      { role: 'assistant', content: 'Here is the settled answer.', timestamp: 2 },
+      { role: 'compaction', content: '# Summary\nRetained **decisions** from earlier work.', tokensBefore: 150000, timestamp: 3 },
+    ]
+    const state = {
+      ...createInitialState('/tmp/compaction-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: false, sessionFile: '/tmp/compaction.jsonl', sessionId: 'compaction' },
+      messages: traceMessages,
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    const automation = await connectTest(root.renderer)
+    try {
+      expect(await automation.getByTestId('execution-trace').count()).toBe(1)
+      expect(await automation.getByTestId('execution-trace-label').textContent()).toBe(`Compacted from ${(150000).toLocaleString()} tokens`)
+      expect(await automation.getByTestId('assistant-message').count()).toBe(1)
+      expect(await automation.getByTestId('trace-compaction').count()).toBe(0)
+      expect(await automation.getByTestId('trace-compaction-markdown').count()).toBe(0)
+
+      await automation.getByTestId('execution-trace-hit').click()
+      root.renderer.flush()
+      expect(await automation.getByTestId('trace-compaction').count()).toBe(1)
+      expect(root.renderer.getAllText()).toContain('COMPACTION')
+      const markdown = root.renderer.findByTestId('trace-compaction-markdown')
+      expect(markdown?.customProps?.source).toContain('# Summary')
+      expect(markdown?.customProps?.source).toContain('# Summary  \n')
+      const metrics = (markdown?.customProps?.theme as { metrics?: { mdHeadingSizes?: number[]; mdHeadingLineHeights?: number[]; mdTextSize?: number } } | undefined)?.metrics
+      expect(metrics?.mdTextSize).toBe(12)
+      expect(metrics?.mdHeadingSizes).toEqual([12, 12, 12, 12])
+      expect(metrics?.mdHeadingLineHeights).toEqual([19, 19, 19, 19])
+    } finally {
+      await automation.close()
+      root.unmount()
     }
   })
 

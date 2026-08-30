@@ -129,4 +129,34 @@ describe('buildTimeline', () => {
     expect(items.map((item) => item.kind)).toEqual(['user', 'thinking', 'notice', 'tool', 'thinking', 'notice', 'notice', 'tool'])
     expect(items.filter((item) => item.kind === 'notice').map((item) => item.notice.message)).toEqual(['First', 'Second', 'Third'])
   })
+
+  it('renders compaction summaries as their own timeline items', () => {
+    const items = buildTimeline([
+      { role: 'user', content: 'Inspect the repo', timestamp: 1 },
+      { role: 'assistant', content: 'Done.', timestamp: 2 },
+      { role: 'compaction', content: 'User inspected the repo.', tokensBefore: 150000, timestamp: 3 },
+    ], undefined, [])
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'compaction'])
+    expect(items[2]).toMatchObject({ kind: 'compaction', text: 'User inspected the repo.', tokensBefore: 150000 })
+  })
+
+  it('completes abandoned tools from earlier turns after a later user message', () => {
+    const items = buildTimeline([
+      { role: 'user', content: 'First', timestamp: 1 },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'stale', name: 'bash', arguments: { command: 'sleep 30' } }], timestamp: 2 },
+      { role: 'user', content: 'Continue', timestamp: 3 },
+      { role: 'assistant', content: 'Done.', timestamp: 4 },
+    ], undefined, [])
+    const tool = items.find((item) => item.kind === 'tool')
+    expect(tool?.kind).toBe('tool')
+    if (tool?.kind === 'tool') expect(tool.tool.status).toBe('complete')
+  })
+
+  it('reads Pi compactionSummary messages from the summary field', () => {
+    const items = buildTimeline([
+      { role: 'compactionSummary', summary: '[Session Goal]\nShip the compaction CoT.', tokensBefore: 228942, timestamp: 4 },
+    ], undefined, [])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: 'compaction', text: '[Session Goal]\nShip the compaction CoT.', tokensBefore: 228942 })
+  })
 })

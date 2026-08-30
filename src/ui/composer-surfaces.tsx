@@ -33,7 +33,7 @@ export function extensionSurfaceRailReserveHeight(
 export function QuestionnaireWaitingDock({ questionnaire, controller }: { questionnaire: AskUserQuestionnaire; controller: WorkbenchController }) {
   const { mobile } = useResponsiveLayout()
   return (
-    <div testId="ask-user-collapsed" style={{ width: '100%', maxWidth: 768, minHeight: QUESTIONNAIRE_WAITING_DOCK_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: QUESTIONNAIRE_WAITING_DOCK_MARGIN, paddingLeft: 11, paddingRight: 8, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}>
+    <div testId="ask-user-collapsed" style={{ width: '100%', maxWidth: 768, minHeight: QUESTIONNAIRE_WAITING_DOCK_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: QUESTIONNAIRE_WAITING_DOCK_MARGIN, paddingLeft: 11, paddingRight: 8, borderRadius: 9, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, pointerEvents: 'auto' }}>
       <div style={{ width: 6, height: 6, flexShrink: 0, borderRadius: 3, backgroundColor: colors.warning }} />
       <text style={{ minWidth: 0, color: colors.text, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>Agent waiting for your answers</text>
       {!mobile && <text style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{`${questionnaire.questions.length} question${questionnaire.questions.length === 1 ? '' : 's'}`}</text>}
@@ -54,9 +54,9 @@ function DockAction({ label, testId, tone = 'muted', onClick }: { label: string;
 
 export function CommandPalette({ commands, activeIndex, onChoose }: { commands: SlashCommand[]; activeIndex: number; onChoose(command: SlashCommand): void }) {
   return (
-    <div testId="command-palette" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, maxHeight: 300, gap: 3, marginBottom: EXTENSION_SURFACE_GAP, padding: 6, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll' }}>
+    <div testId="command-palette" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, maxHeight: 300, gap: 3, marginBottom: EXTENSION_SURFACE_GAP, padding: 6, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll', pointerEvents: 'auto' }}>
       {commands.map((command, index) => (
-        <div key={`${command.source}-${command.name}`} testId={`command-option-${command.name}`} tabIndex={0} style={{ minHeight: 38, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: index === activeIndex ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => onChoose(command)} onKeyDown={(event) => { if (event.key === 'enter') onChoose(command) }}>
+        <div key={`${command.source}-${command.name}`} testId={`command-option-${command.name}`} style={{ minHeight: 38, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: index === activeIndex ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onMouseDown={() => onChoose(command)} onClick={() => onChoose(command)}>
           <text style={{ color: index === activeIndex ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650, fontFamily: nativeTheme.fontMono }}>{`/${command.name}`}</text>
           {command.argumentHint && <text style={{ color: colors.textMuted, fontSize: 9, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap' }}>{command.argumentHint}</text>}
           {command.description && <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{command.description}</text>}
@@ -74,7 +74,7 @@ export function ExtensionSurfaceRail({ above, below, statuses }: { above: Extens
   if (above.length + below.length + statusEntries.length === 0) return null
 
   return (
-    <div testId="extension-surface-rail" style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', width: '100%', maxWidth: 768, gap: 5, paddingBottom: EXTENSION_SURFACE_GAP, overflowX: 'scroll', overflowY: 'hidden' }}>
+    <div testId="extension-surface-rail" style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', width: '100%', maxWidth: 768, gap: 5, paddingBottom: EXTENSION_SURFACE_GAP, overflowX: 'scroll', overflowY: 'hidden', pointerEvents: 'auto' }}>
       {above.map((widget, index) => <ExtensionWidgetItem key={`above-${widget.key}`} widget={widget} placement="above" order={index} />)}
       {below.map((widget, index) => <ExtensionWidgetItem key={`below-${widget.key}`} widget={widget} placement="below" order={above.length + index} />)}
       {statusEntries.map(([key, value], index) => (

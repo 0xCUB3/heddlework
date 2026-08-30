@@ -84,6 +84,7 @@ export interface PiMessage {
   command?: string
   output?: string
   exitCode?: number | null
+  tokensBefore?: number
   [key: string]: unknown
 }
 

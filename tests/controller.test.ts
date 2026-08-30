@@ -46,4 +46,17 @@ describe('WorkbenchController', () => {
       await controller.dispose()
     }
   }, 4_000)
+
+  it('appends a compaction summary after /compact', async () => {
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/example-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      await controller.compact()
+      expect(controller.getSnapshot().messages).toEqual([
+        expect.objectContaining({ role: 'compaction', content: 'Demo context compacted', tokensBefore: 128_000 }),
+      ])
+    } finally {
+      await controller.dispose()
+    }
+  })
 })

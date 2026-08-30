@@ -135,7 +135,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         projectName={sessionProjectName(session)}
         active={active}
         running={active && state.session.isStreaming}
-        disabled={state.connection !== 'connected'}
+        disabled={false}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}

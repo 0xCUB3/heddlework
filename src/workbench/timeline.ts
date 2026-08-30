@@ -12,6 +12,7 @@ export type TimelineItem =
   | ({ id: string; kind: 'context-injection'; text: string; images: PiImageContent[]; source?: string | undefined; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'tool'; tool: ToolRun; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'notice'; notice: Notice; timestamp?: number | undefined } & RevertibleItem)
+  | ({ id: string; kind: 'compaction'; text: string; tokensBefore?: number | undefined; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'status'; text: string; tone?: 'normal' | 'error'; timestamp?: number | undefined } & RevertibleItem)
 
 export function buildTimeline(
@@ -99,6 +100,18 @@ export function buildTimeline(
       }
       return
     }
+    const compaction = readCompaction(message)
+    if (compaction) {
+      items.push({
+        id: `${base}-compaction`,
+        kind: 'compaction',
+        text: compaction.text,
+        timestamp: message.timestamp,
+        ...(compaction.tokensBefore === undefined ? {} : { tokensBefore: compaction.tokensBefore }),
+        ...(revertEntryId ? { revertEntryId } : {}),
+      })
+      return
+    }
     if (message.role === 'bashExecution') {
       const id = `${base}-bash`
       items.push({
@@ -144,13 +157,25 @@ export function buildTimeline(
     if (existing?.kind === 'tool') items[index] = { ...existing, tool: { ...existing.tool, ...liveTool } }
   }
 
-  return interleaveTraceNotices(items, notices)
+  return interleaveTraceNotices(settleAbandonedTools(items), notices)
 }
 
 export function currentTurnTracePosition(messages: PiMessage[], liveAssistant: LiveAssistant | undefined, liveTools: ToolRun[], forkMessages: PiForkMessage[] = []): number {
   const items = buildTimeline(messages, liveAssistant, liveTools, forkMessages)
   const turnStart = items.findLastIndex((item) => item.kind === 'user')
   return items.slice(turnStart + 1).filter(isTraceItem).length
+}
+
+function settleAbandonedTools(items: TimelineItem[]): TimelineItem[] {
+  let lastUser = -1
+  for (let index = 0; index < items.length; index += 1) {
+    if (items[index]?.kind === 'user') lastUser = index
+  }
+  if (lastUser <= 0) return items
+  return items.map((item, index) => {
+    if (index >= lastUser || item.kind !== 'tool' || item.tool.status === 'complete') return item
+    return { ...item, tool: { ...item.tool, status: 'complete' } }
+  })
 }
 
 function interleaveTraceNotices(items: TimelineItem[], notices: Notice[]): TimelineItem[] {
@@ -201,12 +226,24 @@ function interleaveTraceNotices(items: TimelineItem[], notices: Notice[]): Timel
   return merged
 }
 
-function isTraceItem(item: TimelineItem): item is Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' }> {
-  return item.kind === 'thinking' || item.kind === 'context-injection' || item.kind === 'tool'
+function isTraceItem(item: TimelineItem): item is Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'compaction' }> {
+  return item.kind === 'thinking' || item.kind === 'context-injection' || item.kind === 'tool' || item.kind === 'compaction'
 }
 
 export function messageText(message: PiMessage): string {
   return contentText(message.content)
+}
+
+export function readCompaction(message: PiMessage): { text: string; tokensBefore?: number } | undefined {
+  if (message.role !== 'compaction' && message.role !== 'compactionSummary') return undefined
+  const summary = typeof message.summary === 'string' ? message.summary : ''
+  const text = summary.trim() ? summary : messageText(message)
+  const tokensBefore = typeof message.tokensBefore === 'number' ? message.tokensBefore : undefined
+  if (!text && tokensBefore === undefined) return undefined
+  return {
+    text,
+    ...(tokensBefore === undefined ? {} : { tokensBefore }),
+  }
 }
 
 function messageImages(message: PiMessage): PiImageContent[] {

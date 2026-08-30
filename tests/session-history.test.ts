@@ -17,7 +17,7 @@ describe('PiSessionHistoryPager', () => {
       { type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: 'First prompt', timestamp: 1 } },
       { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', content: [{ type: 'text', text: 'First answer' }], timestamp: 2 } },
       { type: 'message', id: 'abandoned', parentId: 'a1', message: { role: 'user', content: 'Abandoned branch', timestamp: 3 } },
-      { type: 'compaction', id: 'compact', parentId: 'a1', summary: 'summary' },
+      { type: 'compaction', id: 'compact', parentId: 'a1', summary: 'summary', tokensBefore: 50000, timestamp: '2026-01-01T00:00:03.000Z' },
       { type: 'custom_message', id: 'hidden', parentId: 'compact', customType: 'hidden', content: 'ignore', display: false },
       { type: 'message', id: 'u2', parentId: 'hidden', message: { role: 'user', content: 'Second prompt', timestamp: 4 } },
       { type: 'custom_message', id: 'visible', parentId: 'u2', customType: 'sync', content: 'Visible context', display: true, timestamp: '2026-01-01T00:00:05.000Z' },
@@ -32,7 +32,8 @@ describe('PiSessionHistoryPager', () => {
     expect(newest.hasOlder).toBe(true)
 
     const oldest = await pager.loadEarlier(3)
-    expect(oldest.messages.map((message) => message.content)).toEqual(['First prompt', [{ type: 'text', text: 'First answer' }]])
+    expect(oldest.messages.map((message) => message.content)).toEqual(['First prompt', [{ type: 'text', text: 'First answer' }], 'summary'])
+    expect(oldest.messages.at(-1)).toMatchObject({ role: 'compaction', tokensBefore: 50000, workbenchEntryId: 'compact' })
     expect(oldest.messages.some((message) => message.content === 'Abandoned branch')).toBe(false)
     expect(oldest.hasOlder).toBe(false)
   })

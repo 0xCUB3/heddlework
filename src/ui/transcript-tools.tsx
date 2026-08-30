@@ -39,6 +39,8 @@ function codeSurfaceStyle(): StyleDesc {
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.code,
+    overflow: 'visible',
+    userSelect: 'none',
   }
 }
 

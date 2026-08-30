@@ -103,10 +103,14 @@ export class DemoTransport implements AgentTransport {
       case 'set_thinking_level':
         this.#thinking = String(command.level ?? 'off') as ThinkingLevel
         return undefined as T
-      case 'compact':
+      case 'compact': {
+        const summary = 'Demo context compacted'
+        const tokensBefore = 128_000
+        this.#messages = [...this.#messages, { role: 'compaction', content: summary, tokensBefore, timestamp: Date.now() }]
         this.#emit({ type: 'compaction_start', reason: 'manual' })
-        this.#schedule(250, () => this.#emit({ type: 'compaction_end', reason: 'manual' }))
-        return { summary: 'Demo context compacted' } as T
+        this.#schedule(250, () => this.#emit({ type: 'compaction_end', reason: 'manual', result: { summary, tokensBefore } }))
+        return { summary, tokensBefore } as T
+      }
       default:
         return undefined as T
     }

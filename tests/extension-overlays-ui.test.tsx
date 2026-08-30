@@ -2,6 +2,7 @@ import React from 'react'
 import { describe, expect, it } from 'bun:test'
 import { mkdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { handleGpuixEvent } from '@gpuix/react'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
@@ -108,6 +109,37 @@ describeNative('conversation extension overlays', () => {
       }
       await automation.getByTestId('command-option-ledger').click()
       expect(controller.getSnapshot().editorText).toBe('/ledger ')
+    } finally {
+      await automation.close()
+      root.unmount()
+      await controller.dispose()
+    }
+  })
+
+  it('tab-completes the active slash command without inserting a tab character', async () => {
+    const transport = new OverlayTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    const root = createTestRoot()
+    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
+    await controller.start()
+    const automation = await connectTest(root.renderer)
+    try {
+      await automation.getByTestId('composer').click()
+      await automation.getByTestId('composer').fill('/led')
+      root.renderer.flush()
+      expect(await automation.getByTestId('command-palette').count()).toBe(1)
+      expect(await automation.getByTestId('command-option-ledger').count()).toBe(1)
+
+      expect(await automation.getByTestId('slash-tab-catcher').count()).toBe(1)
+      await automation.getByTestId('composer').press('tab')
+      root.renderer.flush()
+      if (controller.getSnapshot().editorText === '/led') {
+        const catcherId = root.renderer.findByTestId('slash-tab-catcher')!.id
+        handleGpuixEvent({ elementId: catcherId, eventType: 'focus' }, root.renderer)
+        root.renderer.flush()
+      }
+      expect(controller.getSnapshot().editorText).toBe('/ledger ')
+      expect(controller.getSnapshot().editorText).not.toContain('\t')
     } finally {
       await automation.close()
       root.unmount()

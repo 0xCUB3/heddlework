@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useGpuix } from '@gpuix/react'
 import type { ComposerImage, PiModel, PiSessionStats, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { questionnaireFromTool } from '../workbench/ask-user.ts'
@@ -26,11 +27,20 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const [queueHintVisible, setQueueHintVisible] = useState(false)
   const contextPopoverExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queueHintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const gpuix = useGpuix()
+  const composerId = useRef<number | undefined>(undefined)
+  const setComposerNode = useCallback((instance: { id: number } | null) => {
+    composerId.current = instance?.id
+  }, [])
   const queuedByKeyDown = useRef(false)
   const hintShownOnce = useRef(false)
   const commandPickedByKeyDown = useRef(false)
+  const suppressComposerChange = useRef(false)
   const commandQuery = composerCommandQuery(state.editorText)
-  const matchingCommands = useMemo(() => commandQuery === undefined ? [] : matchCommands(state.commands, commandQuery).slice(0, 8), [commandQuery, state.commands])
+  const [slashDismissed, setSlashDismissed] = useState(false)
+  const matchingCommands = useMemo(() => (
+    slashDismissed || commandQuery === undefined ? [] : matchCommands(state.commands, commandQuery).slice(0, 8)
+  ), [commandQuery, slashDismissed, state.commands])
   const [activeCommandIndex, setActiveCommandIndex] = useState(0)
   const collapsedQuestionnaire = useMemo(() => state.questionnaireCollapsed === undefined
     ? undefined
@@ -38,6 +48,9 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
       .map(questionnaireFromTool)
       .find((questionnaire) => questionnaire?.toolCallId === state.questionnaireCollapsed), [state.liveTools, state.questionnaireCollapsed])
   useEffect(() => setActiveCommandIndex(0), [commandQuery])
+  useEffect(() => {
+    if (slashDismissed) setSlashDismissed(false)
+  }, [slashDismissed, state.editorText])
   useEffect(() => {
     const request = state.uiRequest
     if (request?.kind === 'model' || request?.kind === 'thinking') controller.completeUiRequest(request.id)
@@ -122,9 +135,30 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     }, QUEUE_HINT_DURATION_MS)
   }
 
-  const chooseCommand = (command: SlashCommand) => controller.setEditorText(`/${command.name} `)
-  const handleComposerKeyDown = (event: { key?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean } }) => {
+  const keepComposerFocus = () => {
+    const id = composerId.current
+    if (id !== undefined) gpuix.renderer?.focusElement?.(id)
+  }
+  const chooseCommand = (command: SlashCommand) => {
+    suppressComposerChange.current = true
+    controller.setEditorText(`/${command.name} `)
+  }
+  const completeActiveSlashCommand = () => {
+    if (matchingCommands.length === 0 || !commandQuery) return false
+    const command = matchingCommands[Math.min(activeCommandIndex, matchingCommands.length - 1)]
+    if (!command) return false
+    commandPickedByKeyDown.current = true
+    chooseCommand(command)
+    queueMicrotask(() => { commandPickedByKeyDown.current = false })
+    return true
+  }
+  const handleComposerKeyDown = (event: { key?: string; keyChar?: string; modifiers?: { alt?: boolean; cmd?: boolean; ctrl?: boolean } }) => {
     const key = event.key?.toLowerCase()
+    const tab = key === 'tab' || event.keyChar === '\t'
+    if (key === 'escape' && commandQuery !== undefined) {
+      setSlashDismissed(true)
+      return
+    }
     if (matchingCommands.length > 0 && commandQuery !== undefined) {
       if (key === 'down' || key === 'arrowdown') {
         setActiveCommandIndex((index) => (index + 1) % matchingCommands.length)
@@ -135,12 +169,16 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         return
       }
       const command = matchingCommands[Math.min(activeCommandIndex, matchingCommands.length - 1)]
-      if (command && (key === 'tab' || ((key === 'enter' || key === 'return') && commandQuery !== command.name))) {
-        commandPickedByKeyDown.current = true
-        chooseCommand(command)
-        queueMicrotask(() => { commandPickedByKeyDown.current = false })
+      if (command && (tab || ((key === 'enter' || key === 'return') && commandQuery !== command.name))) {
+        completeActiveSlashCommand()
+        if (tab) keepComposerFocus()
+        queueMicrotask(() => { if (tab) keepComposerFocus() })
         return
       }
+    }
+    if (tab && matchingCommands.length > 0) {
+      completeActiveSlashCommand()
+      keepComposerFocus()
     }
     if (key === 'v' && (event.modifiers?.cmd || event.modifiers?.ctrl)) void pasteClipboardImage(state.editorText)
     if (key === 'enter' && event.modifiers?.alt) {
@@ -164,6 +202,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         paddingBottom: draft ? 0 : 10,
         gap: 0,
         overflow: 'visible',
+        pointerEvents: 'none',
       }}
     >
       {collapsedQuestionnaire && <QuestionnaireWaitingDock questionnaire={collapsedQuestionnaire} controller={controller} />}
@@ -180,6 +219,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             display: 'flex',
             flexDirection: 'column',
             width: '100%',
+            pointerEvents: 'auto',
             borderRadius: 22,
             borderWidth: 1,
             borderColor: state.session.isStreaming ? '#343D60' : colors.composerFrame,
@@ -193,7 +233,9 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         {state.editorImages.length > 0 && <ComposerImages images={state.editorImages} onRemove={(id) => controller.removeEditorImage(id)} />}
         {pastingImage && <text style={{ color: colors.textFaint, fontSize: 10, paddingLeft: 16, paddingBottom: 6 }}>Reading image from clipboard…</text>}
         <textarea
+          ref={setComposerNode}
           testId="composer"
+          tabIndex={0}
           value={state.editorText}
           placeholder={connected ? (draft ? (layout.mobile ? 'Ask anything, @tag files, or / for commands' : 'Ask anything, @tag files/folders, $use skills, or / for commands') : 'Ask for follow-up changes or attach images') : 'Reconnect to Pi to begin'}
           minRows={3}
@@ -212,7 +254,13 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             borderWidth: 0,
             backgroundColor: colors.transparent,
           }}
-          onChange={(event) => controller.setEditorText(String(event.value ?? ''))}
+          onChange={(event) => {
+            if (suppressComposerChange.current) {
+              suppressComposerChange.current = false
+              return
+            }
+            controller.setEditorText(String(event.value ?? ''))
+          }}
           onFocus={showQueueHint}
           onClick={() => { if (!hintShownOnce.current) showQueueHint() }}
           onKeyDown={handleComposerKeyDown}
@@ -228,10 +276,22 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             send(String(event.value ?? state.editorText), Boolean(event.modifiers?.alt))
           }}
         />
+        {matchingCommands.length > 0 && commandQuery ? (
+          <div
+            testId="slash-tab-catcher"
+            tabIndex={0}
+            style={{ width: 0, height: 0, overflow: 'hidden', pointerEvents: 'auto' }}
+            onFocus={() => {
+              completeActiveSlashCommand()
+              keepComposerFocus()
+            }}
+          />
+        ) : null}
 
         <div testId="composer-toolbar" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 2 : 4, marginTop: 10, paddingLeft: layout.mobile ? 8 : 10, paddingRight: layout.mobile ? 8 : 11, overflow: 'visible', userSelect: 'none' }}>
           <ChipSelect
             backdropColor={colors.composer}
+            tabIndex={matchingCommands.length > 0 ? -1 : 0}
             testId="model-picker"
             icon="sparkles"
             value={currentModel}
@@ -249,6 +309,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           {!layout.mobile && <ToolbarSeparator />}
           <ChipSelect
             backdropColor={colors.composer}
+            tabIndex={matchingCommands.length > 0 ? -1 : 0}
             testId="thinking-picker"
             value={state.session.thinkingLevel}
             options={thinkingOptions}
@@ -260,10 +321,11 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           />
           <div style={{ flexGrow: 1 }} />
           <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 4 : 9 }}>
-            {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} compact={layout.mobile} popoverOpen={contextPopoverOpen} onToggle={toggleContextPopover} onMouseEnter={showContextPopover} onMouseLeave={hideContextPopover} />}
+            {typeof contextPercent === 'number' && state.stats && <ContextMeter stats={state.stats} compact={layout.mobile} popoverOpen={contextPopoverOpen} tabIndex={matchingCommands.length > 0 ? -1 : 0} onToggle={toggleContextPopover} onMouseEnter={showContextPopover} onMouseLeave={hideContextPopover} />}
             <PrimaryAction
               running={state.session.isStreaming}
               disabled={!connected || (!state.session.isStreaming && !hasComposerInput && !canResumeQueue)}
+              tabIndex={matchingCommands.length > 0 ? -1 : 0}
               queueHintVisible={queueHintOpen}
               queueHintProgress={queueHintProgress}
               width={primaryActionWidth}
@@ -289,11 +351,11 @@ function ToolbarSeparator() {
   return <div style={{ width: 1, height: 16, backgroundColor: colors.borderStrong, marginLeft: 1, marginRight: 1 }} />
 }
 
-function ContextMeter({ stats, compact, popoverOpen, onToggle, onMouseEnter, onMouseLeave }: { stats: PiSessionStats; compact: boolean; popoverOpen: boolean; onToggle(): void; onMouseEnter(): void; onMouseLeave(): void }) {
+function ContextMeter({ stats, compact, popoverOpen, tabIndex = 0, onToggle, onMouseEnter, onMouseLeave }: { stats: PiSessionStats; compact: boolean; popoverOpen: boolean; tabIndex?: number; onToggle(): void; onMouseEnter(): void; onMouseLeave(): void }) {
   const percent = Math.max(0, Math.min(100, stats.contextUsage?.percent ?? 0))
   const tone = percent > 80 ? colors.warning : percent > 60 ? '#D8A95B' : colors.textMuted
   return (
-    <div testId="context-meter" tabIndex={0} style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', ...(compact ? { width: 30, justifyContent: 'center' } : {}), paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 2, borderRadius: 9, backgroundColor: popoverOpen ? colors.hover : colors.transparent, cursor: 'pointer' }} onClick={onToggle} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+    <div testId="context-meter" tabIndex={tabIndex} style={{ position: 'relative', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', ...(compact ? { width: 30, justifyContent: 'center' } : {}), paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 2, borderRadius: 9, backgroundColor: popoverOpen ? colors.hover : colors.transparent, cursor: 'pointer' }} onClick={onToggle} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       <div testId="context-ring" style={{ width: compact ? 16 : 18, height: compact ? 16 : 18, borderRadius: 9, borderWidth: 2, borderColor: tone }} />
     </div>
   )
@@ -391,13 +453,13 @@ function ComposerImages({ images, onRemove }: { images: ComposerImage[]; onRemov
   )
 }
 
-function PrimaryAction({ running, disabled, queueHintVisible, queueHintProgress, width, onSend, onStop }: { running: boolean; disabled: boolean; queueHintVisible: boolean; queueHintProgress: number; width: number; onSend(): void; onStop(): void }) {
+function PrimaryAction({ running, disabled, queueHintVisible, queueHintProgress, width, tabIndex, onSend, onStop }: { running: boolean; disabled: boolean; queueHintVisible: boolean; queueHintProgress: number; width: number; tabIndex?: number; onSend(): void; onStop(): void }) {
   const action = running ? onStop : onSend
   const background = running ? '#D72C58' : colors.primary
   return (
     <div
       testId={running ? 'abort' : 'send'}
-      tabIndex={disabled ? -1 : 0}
+      tabIndex={disabled ? -1 : tabIndex ?? 0}
       style={{
         width,
         minWidth: width,
