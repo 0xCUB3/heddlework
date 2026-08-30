@@ -1,7 +1,7 @@
 import React from 'react'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
-import { buildMathRows, MathMarkdown, parseInlineMarkdown } from '../src/ui/math-markdown.tsx'
+import { buildMathRows, MathMarkdown, parseInlineMarkdown, parseInlineWithMath } from '../src/ui/math-markdown.tsx'
 import { loadFormulaRenderer } from '../src/ui/math-engine.ts'
 import { segmentMathMarkdown } from '../src/ui/math-segment.ts'
 
@@ -69,6 +69,14 @@ describe('math rows', () => {
           { kind: 'text', source: ' inline' },
         ],
       },
+    ])
+  })
+
+  it('keeps bold wrapping a formula inside the markers', () => {
+    expect(parseInlineWithMath('**small \uE0000\uE001**:', ['t'])).toEqual([
+      { kind: 'text', text: 'small ', bold: true, italic: false, code: false },
+      { kind: 'math', latex: 't', bold: true, italic: false },
+      { kind: 'text', text: ':', bold: false, italic: false, code: false },
     ])
   })
 
@@ -172,6 +180,16 @@ describeNative('math markdown', () => {
     expect(painted).toContain('4. Formulas')
     expect(painted).not.toContain('##')
     expect(painted).toContain('Energy')
+    root.unmount()
+  })
+
+  it('boldens text on both sides of an inline formula', async () => {
+    const { root, svgCount } = await renderMath('- **small $t$**: high-$\\lambda$ modes')
+    expect(svgCount).toBeGreaterThan(0)
+    const painted = root.renderer.getPaintedText().join(' ')
+    expect(painted).toContain('small')
+    expect(painted).toContain('high-')
+    expect(painted).not.toContain('**')
     root.unmount()
   })
 

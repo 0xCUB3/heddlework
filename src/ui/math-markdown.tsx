@@ -38,6 +38,10 @@ interface InlineRunStyle {
   code: boolean
 }
 
+export type InlineAtom =
+  | { kind: 'text'; text: string; bold: boolean; italic: boolean; code: boolean }
+  | { kind: 'math'; latex: string; bold: boolean; italic: boolean }
+
 const PLACEHOLDER_START = '\uE000'
 const PLACEHOLDER_END = '\uE001'
 const PLACEHOLDER_RE = /\uE000(\d+)\uE001/g
@@ -82,6 +86,9 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
   const fontSizePx = metrics?.mdTextSize ?? 14
   const lineHeight = metrics?.mdLineHeight ?? Math.round(fontSizePx * 1.55)
   const cellPadding = metrics?.mdTableCellPadding ?? 8
+  const paragraphGap = Math.round(fontSizePx * 1.15)
+  const headingAbove = Math.round(fontSizePx * 2)
+  const headingBelow = Math.round(fontSizePx * 1)
   const formula: FormulaPaint = { renderer, ink, fontSizePx, lineHeight, fontFamily }
   return (
     <div
@@ -114,7 +121,7 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
               source={markdownSourceWithNewlines(row.source)}
               theme={theme}
               testId={undefined}
-              style={{ width: '100%', minWidth: 0 }}
+              style={{ width: '100%', minWidth: 0, marginBottom: paragraphGap }}
               onLinkClick={onLinkClick}
             />
           )
@@ -123,14 +130,14 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
           const size = headingMetric(row.level, metrics?.mdHeadingSizes ?? [20, 16, 14, 14])
           const height = headingMetric(row.level, metrics?.mdHeadingLineHeights ?? [28, 24, 22, 22])
           return (
-            <div key={index} style={{ width: '100%', minWidth: 0, marginTop: 8, marginBottom: 4 }}>
+            <div key={index} style={{ width: '100%', minWidth: 0, marginTop: index === 0 ? 0 : headingAbove, marginBottom: headingBelow }}>
               <InlineRun parts={row.parts} formula={{ ...formula, fontSizePx: size, lineHeight: height, fontWeight: 650 }} />
             </div>
           )
         }
         if (row.type === 'list') {
           return (
-            <div key={index} style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 4, paddingLeft: 2 }}>
+            <div key={index} style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 8, paddingLeft: 2, marginBottom: paragraphGap }}>
               {row.items.map((item, itemIndex) => (
                 <div key={itemIndex} style={{ display: 'flex', flexDirection: 'row', width: '100%', minWidth: 0, gap: 8 }}>
                   <text style={{ color: ink, fontSize: fontSizePx, lineHeight, flexShrink: 0, ...(fontFamily !== undefined ? { fontFamily } : {}) }}>
@@ -147,7 +154,11 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
         if (row.type === 'table') {
           return <MathTable key={index} headers={row.headers} rows={row.rows} theme={theme} onLinkClick={onLinkClick} cellPadding={cellPadding} formula={formula} />
         }
-        return <InlineRun key={index} parts={row.parts} formula={formula} />
+        return (
+          <div key={index} style={{ width: '100%', minWidth: 0, marginBottom: paragraphGap }}>
+            <InlineRun parts={row.parts} formula={formula} />
+          </div>
+        )
       })}
     </div>
   )
@@ -169,7 +180,7 @@ function MathTable({ headers, rows, theme, onLinkClick, cellPadding, formula }: 
   const columns = Math.max(headers.length, ...rows.map((row) => row.length), 1)
   const grid = [headers, ...rows]
   return (
-    <div testId="math-table" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, marginTop: 8, marginBottom: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 8, overflow: 'hidden' }}>
+    <div testId="math-table" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, marginTop: Math.round(formula.fontSizePx * 1.15), marginBottom: Math.round(formula.fontSizePx * 1.15), borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 8, overflow: 'hidden' }}>
       {grid.map((row, rowIndex) => (
         <div
           key={rowIndex}
@@ -192,7 +203,6 @@ function MathTable({ headers, rows, theme, onLinkClick, cellPadding, formula }: 
                   flexGrow: 1,
                   flexBasis: 0,
                   minWidth: 0,
-                  overflow: 'hidden',
                   paddingTop: cellPadding,
                   paddingBottom: cellPadding,
                   paddingLeft: cellPadding,
@@ -232,32 +242,48 @@ function TableCell({ parts, header, theme, onLinkClick, formula }: {
       />
     )
   }
-  return <InlineRun parts={parts} formula={header ? { ...formula, fontWeight: 650 } : formula} />
+  return <InlineRun parts={parts} formula={header ? { ...formula, fontWeight: 650 } : formula} wrap="word" />
 }
 
-function InlineRun({ parts, formula }: { parts: InlinePart[]; formula: FormulaPaint }) {
+function InlineRun({ parts, formula, wrap = 'chunk' }: { parts: InlinePart[]; formula: FormulaPaint; wrap?: 'chunk' | 'word' }) {
+  const atoms = styledAtomsFromParts(parts)
+  const chunk = wrap === 'word' ? 1 : INLINE_CHUNK
   return (
     <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 }}>
-      {parts.flatMap((part, partIndex) => {
-        if (part.kind === 'math') {
-          return [<Formula key={`${partIndex}-math`} latex={part.latex} display={false} {...formula} />]
+      {atoms.flatMap((atom, atomIndex) => {
+        if (atom.kind === 'math') {
+          return [<Formula key={`${atomIndex}-math`} latex={atom.latex} display={false} {...formula} {...(atom.bold ? { fontWeight: 700 } : {})} />]
         }
-        return parseInlineMarkdown(part.source).flatMap((run, runIndex) => tokenizeInlineText(run.text).map((token, tokenIndex) => {
+        return tokenizeInlineText(atom.text, chunk).map((token, tokenIndex) => {
           if (token.kind === 'break') {
-            return <div key={`${partIndex}-${runIndex}-br-${tokenIndex}`} style={{ width: '100%', height: 0 }} />
+            return <div key={`${atomIndex}-br-${tokenIndex}`} style={{ width: '100%', height: 0 }} />
           }
           return (
             <text
-              key={`${partIndex}-${runIndex}-w-${tokenIndex}`}
-              style={inlineTextStyle(run, formula)}
+              key={`${atomIndex}-w-${tokenIndex}`}
+              style={inlineTextStyle(atom, formula)}
             >
               {token.value}
             </text>
           )
-        }))
+        })
       })}
     </div>
   )
+}
+
+function styledAtomsFromParts(parts: InlinePart[]): InlineAtom[] {
+  const formulas: string[] = []
+  let source = ''
+  for (const part of parts) {
+    if (part.kind === 'text') {
+      source += part.source
+      continue
+    }
+    source += `${PLACEHOLDER_START}${formulas.length}${PLACEHOLDER_END}`
+    formulas.push(part.latex)
+  }
+  return parseInlineWithMath(source, formulas)
 }
 
 function inlineTextStyle(run: InlineRunStyle, formula: FormulaPaint): Record<string, unknown> {
@@ -306,56 +332,75 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
 })
 
 export function parseInlineMarkdown(source: string): InlineRunStyle[] {
-  const runs: InlineRunStyle[] = []
+  return parseInlineWithMath(source, []).flatMap((atom) => (
+    atom.kind === 'text' ? [{ text: atom.text, bold: atom.bold, italic: atom.italic, code: atom.code }] : []
+  ))
+}
+
+export function parseInlineWithMath(source: string, formulas: string[]): InlineAtom[] {
+  return parseAtoms(source, formulas, { bold: false, italic: false, code: false })
+}
+
+function parseAtoms(source: string, formulas: string[], style: { bold: boolean; italic: boolean; code: boolean }): InlineAtom[] {
+  const atoms: InlineAtom[] = []
   let index = 0
-  const push = (text: string, style: Partial<InlineRunStyle> = {}): void => {
+  const emitText = (text: string): void => {
     if (!text) return
-    runs.push({ text, bold: style.bold === true, italic: style.italic === true, code: style.code === true })
+    atoms.push({ kind: 'text', text, bold: style.bold, italic: style.italic, code: style.code })
   }
   while (index < source.length) {
-    if (source[index] === '`') {
+    if (source.startsWith(PLACEHOLDER_START, index)) {
+      const end = source.indexOf(PLACEHOLDER_END, index + 1)
+      if (end > index) {
+        const latex = formulas[Number(source.slice(index + PLACEHOLDER_START.length, end))]
+        if (latex !== undefined) atoms.push({ kind: 'math', latex, bold: style.bold, italic: style.italic })
+        index = end + PLACEHOLDER_END.length
+        continue
+      }
+    }
+    if (!style.code && source[index] === '`') {
       const closing = source.indexOf('`', index + 1)
       if (closing > index + 1) {
-        push(source.slice(index + 1, closing), { code: true })
+        atoms.push(...parseAtoms(source.slice(index + 1, closing), formulas, { ...style, code: true }))
         index = closing + 1
         continue
       }
     }
-    if (source.startsWith('**', index)) {
+    if (!style.code && source.startsWith('**', index)) {
       const closing = source.indexOf('**', index + 2)
       if (closing > index + 1) {
-        push(source.slice(index + 2, closing), { bold: true })
+        atoms.push(...parseAtoms(source.slice(index + 2, closing), formulas, { ...style, bold: true }))
         index = closing + 2
         continue
       }
     }
-    if (source.startsWith('~~', index)) {
+    if (!style.code && source.startsWith('~~', index)) {
       const closing = source.indexOf('~~', index + 2)
       if (closing > index + 1) {
-        push(source.slice(index + 2, closing))
+        atoms.push(...parseAtoms(source.slice(index + 2, closing), formulas, style))
         index = closing + 2
         continue
       }
     }
     const link = /^\[([^\]]+)\]\(([^)]+)\)/.exec(source.slice(index))
     if (link) {
-      push(link[1]!)
+      emitText(link[1]!)
       index += link[0].length
       continue
     }
-    if (source[index] === '*' && source[index + 1] && source[index + 1] !== '*' && source[index + 1] !== ' ') {
+    if (!style.code && source[index] === '*' && source[index + 1] && source[index + 1] !== '*' && source[index + 1] !== ' ') {
       const closing = findEmphasisClose(source, index + 1, '*')
       if (closing > index + 1) {
-        push(source.slice(index + 1, closing), { italic: true })
+        atoms.push(...parseAtoms(source.slice(index + 1, closing), formulas, { ...style, italic: true }))
         index = closing + 1
         continue
       }
     }
     const next = nextMarkup(source, index + 1)
-    push(source.slice(index, next))
+    emitText(source.slice(index, next))
     index = next
   }
-  return runs
+  return atoms
 }
 
 function findEmphasisClose(source: string, from: number, marker: string): number {
@@ -374,7 +419,7 @@ function findEmphasisClose(source: string, from: number, marker: string): number
 function nextMarkup(source: string, from: number): number {
   for (let index = from; index < source.length; index++) {
     const character = source[index]!
-    if (character === '`' || character === '[') return index
+    if (character === PLACEHOLDER_START || character === '`' || character === '[') return index
     if (character === '*' || character === '~') return index
   }
   return source.length
@@ -587,7 +632,7 @@ function splitTableRow(line: string): string[] {
   return body.split('|').map((cell) => cell.trim())
 }
 
-function tokenizeInlineText(text: string): Array<{ kind: 'word'; value: string } | { kind: 'break' }> {
+function tokenizeInlineText(text: string, chunk = INLINE_CHUNK): Array<{ kind: 'word'; value: string } | { kind: 'break' }> {
   const tokens: Array<{ kind: 'word'; value: string } | { kind: 'break' }> = []
   const lines = text.split('\n')
   for (let index = 0; index < lines.length; index++) {
@@ -596,7 +641,7 @@ function tokenizeInlineText(text: string): Array<{ kind: 'word'; value: string }
     if (!words) continue
     let run = ''
     for (const word of words) {
-      if (run.length + word.length > INLINE_CHUNK && run.length > 0) {
+      if (run.length + word.length > chunk && run.length > 0) {
         tokens.push({ kind: 'word', value: run })
         run = word
       } else {
