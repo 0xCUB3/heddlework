@@ -18,7 +18,25 @@ export type MathRow =
   | { type: 'markdown'; source: string }
   | { type: 'inline'; parts: InlinePart[] }
   | { type: 'display'; latex: string }
+  | { type: 'heading'; level: number; parts: InlinePart[] }
+  | { type: 'list'; ordered: boolean; items: InlinePart[][] }
   | { type: 'table'; headers: InlinePart[][]; rows: InlinePart[][][] }
+
+interface FormulaPaint {
+  renderer: FormulaRenderer | null
+  ink: string
+  fontSizePx: number
+  lineHeight: number
+  fontFamily: string | undefined
+  fontWeight?: number
+}
+
+interface InlineRunStyle {
+  text: string
+  bold: boolean
+  italic: boolean
+  code: boolean
+}
 
 const PLACEHOLDER_START = '\uE000'
 const PLACEHOLDER_END = '\uE001'
@@ -54,10 +72,17 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
   const rows = useMemo(() => buildMathRows(segments), [segments])
   const ink = (theme as { text?: string } | undefined)?.text ?? colors.text
   const fontFamily = (theme as { fontSans?: string } | undefined)?.fontSans
-  const fontSizePx = (theme as { metrics?: { mdTextSize?: number } } | undefined)?.metrics?.mdTextSize ?? 14
-  const lineHeight = (theme as { metrics?: { mdLineHeight?: number } } | undefined)?.metrics?.mdLineHeight ?? Math.round(fontSizePx * 1.55)
-  const cellPadding = (theme as { metrics?: { mdTableCellPadding?: number } } | undefined)?.metrics?.mdTableCellPadding ?? 8
-  const formula = { renderer, ink, fontSizePx, lineHeight, fontFamily }
+  const metrics = (theme as { metrics?: {
+    mdTextSize?: number
+    mdLineHeight?: number
+    mdTableCellPadding?: number
+    mdHeadingSizes?: number[]
+    mdHeadingLineHeights?: number[]
+  } } | undefined)?.metrics
+  const fontSizePx = metrics?.mdTextSize ?? 14
+  const lineHeight = metrics?.mdLineHeight ?? Math.round(fontSizePx * 1.55)
+  const cellPadding = metrics?.mdTableCellPadding ?? 8
+  const formula: FormulaPaint = { renderer, ink, fontSizePx, lineHeight, fontFamily }
   return (
     <div
       {...(testId !== undefined ? { testId } : {})}
@@ -94,6 +119,31 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
             />
           )
         }
+        if (row.type === 'heading') {
+          const size = headingMetric(row.level, metrics?.mdHeadingSizes ?? [20, 16, 14, 14])
+          const height = headingMetric(row.level, metrics?.mdHeadingLineHeights ?? [28, 24, 22, 22])
+          return (
+            <div key={index} style={{ width: '100%', minWidth: 0, marginTop: 8, marginBottom: 4 }}>
+              <InlineRun parts={row.parts} formula={{ ...formula, fontSizePx: size, lineHeight: height, fontWeight: 650 }} />
+            </div>
+          )
+        }
+        if (row.type === 'list') {
+          return (
+            <div key={index} style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 4, paddingLeft: 2 }}>
+              {row.items.map((item, itemIndex) => (
+                <div key={itemIndex} style={{ display: 'flex', flexDirection: 'row', width: '100%', minWidth: 0, gap: 8 }}>
+                  <text style={{ color: ink, fontSize: fontSizePx, lineHeight, flexShrink: 0, ...(fontFamily !== undefined ? { fontFamily } : {}) }}>
+                    {row.ordered ? `${itemIndex + 1}.` : '•'}
+                  </text>
+                  <div style={{ flexGrow: 1, minWidth: 0 }}>
+                    <InlineRun parts={item} formula={formula} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        }
         if (row.type === 'table') {
           return <MathTable key={index} headers={row.headers} rows={row.rows} theme={theme} onLinkClick={onLinkClick} cellPadding={cellPadding} formula={formula} />
         }
@@ -101,6 +151,11 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
       })}
     </div>
   )
+}
+
+function headingMetric(level: number, values: number[]): number {
+  const index = Math.min(Math.max(level, 1), 6) - 1
+  return values[Math.min(index, values.length - 1)] ?? values[0] ?? 16
 }
 
 function MathTable({ headers, rows, theme, onLinkClick, cellPadding, formula }: {
@@ -137,6 +192,7 @@ function MathTable({ headers, rows, theme, onLinkClick, cellPadding, formula }: 
                   flexGrow: 1,
                   flexBasis: 0,
                   minWidth: 0,
+                  overflow: 'hidden',
                   paddingTop: cellPadding,
                   paddingBottom: cellPadding,
                   paddingLeft: cellPadding,
@@ -176,15 +232,7 @@ function TableCell({ parts, header, theme, onLinkClick, formula }: {
       />
     )
   }
-  return <InlineRun parts={parts} formula={formula} />
-}
-
-interface FormulaPaint {
-  renderer: FormulaRenderer | null
-  ink: string
-  fontSizePx: number
-  lineHeight: number
-  fontFamily: string | undefined
+  return <InlineRun parts={parts} formula={header ? { ...formula, fontWeight: 650 } : formula} />
 }
 
 function InlineRun({ parts, formula }: { parts: InlinePart[]; formula: FormulaPaint }) {
@@ -194,28 +242,34 @@ function InlineRun({ parts, formula }: { parts: InlinePart[]; formula: FormulaPa
         if (part.kind === 'math') {
           return [<Formula key={`${partIndex}-math`} latex={part.latex} display={false} {...formula} />]
         }
-        return tokenizeInlineText(part.source).map((token, tokenIndex) => {
+        return parseInlineMarkdown(part.source).flatMap((run, runIndex) => tokenizeInlineText(run.text).map((token, tokenIndex) => {
           if (token.kind === 'break') {
-            return <div key={`${partIndex}-br-${tokenIndex}`} style={{ width: '100%', height: 0 }} />
+            return <div key={`${partIndex}-${runIndex}-br-${tokenIndex}`} style={{ width: '100%', height: 0 }} />
           }
           return (
             <text
-              key={`${partIndex}-w-${tokenIndex}`}
-              style={{
-                color: formula.ink,
-                fontSize: formula.fontSizePx,
-                lineHeight: formula.lineHeight,
-                flexShrink: 0,
-                ...(formula.fontFamily !== undefined ? { fontFamily: formula.fontFamily } : {}),
-              }}
+              key={`${partIndex}-${runIndex}-w-${tokenIndex}`}
+              style={inlineTextStyle(run, formula)}
             >
               {token.value}
             </text>
           )
-        })
+        }))
       })}
     </div>
   )
+}
+
+function inlineTextStyle(run: InlineRunStyle, formula: FormulaPaint): Record<string, unknown> {
+  const italicFace = formula.fontFamily ? `${formula.fontFamily} Italic` : 'Helvetica Neue Italic'
+  return {
+    color: run.code ? colors.textMuted : formula.ink,
+    fontSize: run.code ? Math.max(11, formula.fontSizePx - 1) : formula.fontSizePx,
+    lineHeight: formula.lineHeight,
+    flexShrink: 0,
+    fontWeight: run.bold ? 700 : formula.fontWeight ?? 400,
+    fontFamily: run.code ? 'Menlo' : run.italic ? italicFace : formula.fontFamily,
+  }
 }
 
 const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizePx, lineHeight }: {
@@ -226,6 +280,7 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
   fontSizePx: number
   lineHeight: number
   fontFamily: string | undefined
+  fontWeight?: number
 }) {
   const rendered = renderer ? renderer(latex, display, undefined, fontSizePx) : null
   if (!rendered) {
@@ -240,7 +295,7 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
   return (
     <div
       testId={display ? 'math-display' : 'math-inline'}
-      style={{ width: rendered.widthPx, height: rendered.heightPx, flexShrink: 0 }}
+      style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', flexShrink: 1, overflow: 'hidden' }}
     >
       {React.createElement('svg', {
         source: rendered.svg,
@@ -249,6 +304,81 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
     </div>
   )
 })
+
+export function parseInlineMarkdown(source: string): InlineRunStyle[] {
+  const runs: InlineRunStyle[] = []
+  let index = 0
+  const push = (text: string, style: Partial<InlineRunStyle> = {}): void => {
+    if (!text) return
+    runs.push({ text, bold: style.bold === true, italic: style.italic === true, code: style.code === true })
+  }
+  while (index < source.length) {
+    if (source[index] === '`') {
+      const closing = source.indexOf('`', index + 1)
+      if (closing > index + 1) {
+        push(source.slice(index + 1, closing), { code: true })
+        index = closing + 1
+        continue
+      }
+    }
+    if (source.startsWith('**', index)) {
+      const closing = source.indexOf('**', index + 2)
+      if (closing > index + 1) {
+        push(source.slice(index + 2, closing), { bold: true })
+        index = closing + 2
+        continue
+      }
+    }
+    if (source.startsWith('~~', index)) {
+      const closing = source.indexOf('~~', index + 2)
+      if (closing > index + 1) {
+        push(source.slice(index + 2, closing))
+        index = closing + 2
+        continue
+      }
+    }
+    const link = /^\[([^\]]+)\]\(([^)]+)\)/.exec(source.slice(index))
+    if (link) {
+      push(link[1]!)
+      index += link[0].length
+      continue
+    }
+    if (source[index] === '*' && source[index + 1] && source[index + 1] !== '*' && source[index + 1] !== ' ') {
+      const closing = findEmphasisClose(source, index + 1, '*')
+      if (closing > index + 1) {
+        push(source.slice(index + 1, closing), { italic: true })
+        index = closing + 1
+        continue
+      }
+    }
+    const next = nextMarkup(source, index + 1)
+    push(source.slice(index, next))
+    index = next
+  }
+  return runs
+}
+
+function findEmphasisClose(source: string, from: number, marker: string): number {
+  for (let index = from; index < source.length; index++) {
+    if (source[index] !== marker) continue
+    if (source[index - 1] === ' ') continue
+    if (source[index + 1] === marker) {
+      index++
+      continue
+    }
+    return index
+  }
+  return -1
+}
+
+function nextMarkup(source: string, from: number): number {
+  for (let index = from; index < source.length; index++) {
+    const character = source[index]!
+    if (character === '`' || character === '[') return index
+    if (character === '*' || character === '~') return index
+  }
+  return source.length
+}
 
 export function buildMathRows(segments: Array<MathSegment>): Array<MathRow> {
   const { text, formulas } = materialize(segments)
@@ -274,6 +404,10 @@ function materialize(segments: Array<MathSegment>): { text: string; formulas: Ar
   return { text, formulas }
 }
 
+function hasPlaceholder(source: string): boolean {
+  return source.includes(PLACEHOLDER_START)
+}
+
 function rowFromBlock(block: { type: 'markdown' | 'paragraph' | 'table'; source: string }, formulas: Array<{ latex: string; display: boolean }>): MathRow | undefined {
   const source = block.source.replace(/^\n+|\n+$/g, '')
   if (!source) return undefined
@@ -281,14 +415,42 @@ function rowFromBlock(block: { type: 'markdown' | 'paragraph' | 'table'; source:
     const table = parseGfmTable(source, formulas)
     if (table) return table
   }
-  if (!PLACEHOLDER_RE.test(source)) {
-    PLACEHOLDER_RE.lastIndex = 0
-    return { type: 'markdown', source }
-  }
-  PLACEHOLDER_RE.lastIndex = 0
+  if (!hasPlaceholder(source)) return { type: 'markdown', source }
   const solo = soloDisplay(source, formulas)
   if (solo !== undefined) return { type: 'display', latex: solo }
+  if (block.type === 'markdown') {
+    const heading = parseHeadingBlock(source, formulas)
+    if (heading) return heading
+    const list = parseListBlock(source, formulas)
+    if (list) return list
+  }
   return { type: 'inline', parts: partsFrom(source, formulas) }
+}
+
+function parseHeadingBlock(source: string, formulas: Array<{ latex: string; display: boolean }>): MathRow | undefined {
+  const match = /^(#{1,6}) (.+)$/.exec(source.split('\n')[0] ?? '')
+  if (!match) return undefined
+  return { type: 'heading', level: match[1]!.length, parts: partsFrom(match[2]!, formulas) }
+}
+
+function parseListBlock(source: string, formulas: Array<{ latex: string; display: boolean }>): MathRow | undefined {
+  const items: InlinePart[][] = []
+  let ordered = false
+  let found = false
+  for (const line of source.split('\n')) {
+    const match = /^ {0,3}([-+*]|(\d+)[.)]) (.*)$/.exec(line)
+    if (match) {
+      found = true
+      ordered = match[2] !== undefined
+      items.push(partsFrom(match[3]!, formulas))
+      continue
+    }
+    if (items.length === 0) return undefined
+    const last = items[items.length - 1]!
+    last.push(...partsFrom(` ${line.trim()}`, formulas))
+  }
+  if (!found) return undefined
+  return { type: 'list', ordered, items }
 }
 
 function soloDisplay(source: string, formulas: Array<{ latex: string; display: boolean }>): string | undefined {

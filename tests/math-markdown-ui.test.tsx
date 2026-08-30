@@ -1,7 +1,7 @@
 import React from 'react'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
-import { buildMathRows, MathMarkdown } from '../src/ui/math-markdown.tsx'
+import { buildMathRows, MathMarkdown, parseInlineMarkdown } from '../src/ui/math-markdown.tsx'
 import { loadFormulaRenderer } from '../src/ui/math-engine.ts'
 import { segmentMathMarkdown } from '../src/ui/math-segment.ts'
 
@@ -72,6 +72,48 @@ describe('math rows', () => {
     ])
   })
 
+  it('parses bold, italic, and inline code around formulas', () => {
+    expect(parseInlineMarkdown('is the *symmetric* form and `contains` plus **small t**')).toEqual([
+      { text: 'is the ', bold: false, italic: false, code: false },
+      { text: 'symmetric', bold: false, italic: true, code: false },
+      { text: ' form and ', bold: false, italic: false, code: false },
+      { text: 'contains', bold: false, italic: false, code: true },
+      { text: ' plus ', bold: false, italic: false, code: false },
+      { text: 'small t', bold: true, italic: false, code: false },
+    ])
+  })
+
+  it('keeps headings with math as headings, not raw hashes', () => {
+    expect(buildMathRows(segmentMathMarkdown('## 2. What $v(t)$ means'))).toEqual([
+      {
+        type: 'heading',
+        level: 2,
+        parts: [
+          { kind: 'text', source: '2. What ' },
+          { kind: 'math', latex: 'v(t)' },
+          { kind: 'text', source: ' means' },
+        ],
+      },
+    ])
+  })
+
+  it('keeps lists with math as list items, not raw dashes', () => {
+    expect(buildMathRows(segmentMathMarkdown('- **small t**: $x$ decays\n- **large t**: rest'))).toEqual([
+      {
+        type: 'list',
+        ordered: false,
+        items: [
+          [
+            { kind: 'text', source: '**small t**: ' },
+            { kind: 'math', latex: 'x' },
+            { kind: 'text', source: ' decays' },
+          ],
+          [{ kind: 'text', source: '**large t**: rest' }],
+        ],
+      },
+    ])
+  })
+
   it('reconstructs markdown tables with math in cells', () => {
     expect(buildMathRows(segmentMathMarkdown('| Feature | Formula |\n| --- | --- |\n| seed | $s$ |'))).toEqual([
       {
@@ -130,6 +172,27 @@ describeNative('math markdown', () => {
     expect(painted).toContain('4. Formulas')
     expect(painted).not.toContain('##')
     expect(painted).toContain('Energy')
+    root.unmount()
+  })
+
+  it('strips emphasis markers when math is mixed into the paragraph', async () => {
+    const { root, svgCount } = await renderMath('is the *symmetric* Laplacian $L$ and a `contains` edge')
+    expect(svgCount).toBeGreaterThan(0)
+    const painted = root.renderer.getPaintedText().join(' ')
+    expect(painted).toContain('symmetric')
+    expect(painted).toContain('contains')
+    expect(painted).not.toContain('*symmetric*')
+    expect(painted).not.toContain('`contains`')
+    root.unmount()
+  })
+
+  it('renders a heading that itself contains math without hash marks', async () => {
+    const { root, svgCount } = await renderMath('## 2. What $v(t)$ means\n\nNext')
+    expect(svgCount).toBeGreaterThan(0)
+    const painted = root.renderer.getPaintedText().join(' ')
+    expect(painted).toContain('2. What')
+    expect(painted).toContain('means')
+    expect(painted).not.toContain('##')
     root.unmount()
   })
 
