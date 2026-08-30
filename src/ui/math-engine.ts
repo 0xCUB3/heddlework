@@ -13,7 +13,7 @@ export type FormulaRenderer = (
 
 /** MathJax SVG dimensions are in `ex`; scale relative to the surrounding text size. */
 const EX_TO_EM = 0.5
-const RENDER_CACHE_LIMIT = 256
+const RENDER_CACHE_LIMIT = 512
 
 let rendererPromise: Promise<FormulaRenderer | null> | undefined
 

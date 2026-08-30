@@ -57,6 +57,30 @@ describe('math rows', () => {
       { type: 'markdown', source: 'After' },
     ])
   })
+
+  it('keeps headings as markdown even when a later paragraph has inline math', () => {
+    expect(buildMathRows(segmentMathMarkdown('## 4. Formulas\n\nEnergy $E = mc^2$ inline'))).toEqual([
+      { type: 'markdown', source: '## 4. Formulas' },
+      {
+        type: 'inline',
+        parts: [
+          { kind: 'text', source: 'Energy ' },
+          { kind: 'math', latex: 'E = mc^2' },
+          { kind: 'text', source: ' inline' },
+        ],
+      },
+    ])
+  })
+
+  it('reconstructs markdown tables with math in cells', () => {
+    expect(buildMathRows(segmentMathMarkdown('| Feature | Formula |\n| --- | --- |\n| seed | $s$ |'))).toEqual([
+      {
+        type: 'table',
+        headers: [[{ kind: 'text', source: 'Feature' }], [{ kind: 'text', source: 'Formula' }]],
+        rows: [[[{ kind: 'text', source: 'seed' }], [{ kind: 'math', latex: 's' }]]],
+      },
+    ])
+  })
 })
 
 describeNative('math markdown', () => {
@@ -84,6 +108,28 @@ describeNative('math markdown', () => {
     const formulaBox = box(root, formula!)
     expect(Math.abs(formulaBox.y - energyBox.y)).toBeLessThan(20)
     expect(formulaBox.x).toBeGreaterThan(energyBox.x)
+    root.unmount()
+  })
+
+  it('renders math inside markdown tables instead of raw pipes', async () => {
+    const { root, svgCount } = await renderMath('| Feature | Formula |\n| --- | --- |\n| seed | $s$ |')
+    expect(svgCount).toBeGreaterThan(0)
+    expect(root.renderer.findByTestId('math-table')).toBeTruthy()
+    expect(root.renderer.findByTestId('math-inline')).toBeTruthy()
+    const painted = root.renderer.getPaintedText().join(' ')
+    expect(painted).toContain('Feature')
+    expect(painted).toContain('seed')
+    expect(painted).not.toContain('$s$')
+    root.unmount()
+  })
+
+  it('keeps headings out of the inline word-split path', async () => {
+    const { root, svgCount } = await renderMath('## 4. Formulas\n\nEnergy $E = mc^2$ inline')
+    expect(svgCount).toBeGreaterThan(0)
+    const painted = root.renderer.getPaintedText().join(' ')
+    expect(painted).toContain('4. Formulas')
+    expect(painted).not.toContain('##')
+    expect(painted).toContain('Energy')
     root.unmount()
   })
 

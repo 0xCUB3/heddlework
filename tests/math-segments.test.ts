@@ -69,9 +69,13 @@ describe('math segmentation', () => {
     ])
   })
 
-  it('leaves inline math inside markdown tables as text', () => {
-    const source = ['| tool | seeds | $s$ |', '| --- | --- | --- |', '| time | $t$ | 1 |'].join('\n')
-    expect(segmentMathMarkdown(source)).toEqual([{ kind: 'text', text: source }])
+  it('segments inline math inside markdown tables', () => {
+    const source = ['| tool | seeds | $s$ |', '| --- | --- | --- |'].join('\n')
+    expect(segmentMathMarkdown(source)).toEqual([
+      { kind: 'text', text: '| tool | seeds | ' },
+      { kind: 'math', latex: 's', display: false, standalone: false },
+      { kind: 'text', text: ' |\n| --- | --- | --- |' },
+    ])
   })
 
   it('ignores empty formula pairs', () => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { memo, useEffect, useMemo, useState } from 'react'
 import type { EventPayload } from '@gpuix/react'
 import { containsPotentialMath, segmentMathMarkdown, type MathSegment } from './math-segment.ts'
 import { formulaFallbackSource, loadFormulaRenderer, type FormulaRenderer } from './math-engine.ts'
@@ -18,8 +18,14 @@ export type MathRow =
   | { type: 'markdown'; source: string }
   | { type: 'inline'; parts: InlinePart[] }
   | { type: 'display'; latex: string }
+  | { type: 'table'; headers: InlinePart[][]; rows: InlinePart[][][] }
 
-export function MathMarkdown(props: MathMarkdownProps) {
+const PLACEHOLDER_START = '\uE000'
+const PLACEHOLDER_END = '\uE001'
+const PLACEHOLDER_RE = /\uE000(\d+)\uE001/g
+const INLINE_CHUNK = 48
+
+export const MathMarkdown = memo(function MathMarkdown(props: MathMarkdownProps) {
   const { source } = props
   if (!containsPotentialMath(source)) return <PlainMarkdown {...props} source={markdownSourceWithNewlines(source)} />
   const segments = segmentMathMarkdown(source)
@@ -27,7 +33,11 @@ export function MathMarkdown(props: MathMarkdownProps) {
     return <PlainMarkdown {...props} source={markdownSourceWithNewlines(source)} />
   }
   return <SegmentedMarkdown {...props} segments={segments} />
-}
+}, (previous, next) => (
+  previous.source === next.source
+  && previous.theme === next.theme
+  && previous.testId === next.testId
+))
 
 function PlainMarkdown({ source, theme, testId, style, onLinkClick }: MathMarkdownProps) {
   return React.createElement('markdown', {
@@ -41,11 +51,13 @@ function PlainMarkdown({ source, theme, testId, style, onLinkClick }: MathMarkdo
 
 function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: MathMarkdownProps & { segments: Array<MathSegment> }) {
   const renderer = useFormulaRenderer()
-  const rows = buildMathRows(segments)
+  const rows = useMemo(() => buildMathRows(segments), [segments])
   const ink = (theme as { text?: string } | undefined)?.text ?? colors.text
   const fontFamily = (theme as { fontSans?: string } | undefined)?.fontSans
   const fontSizePx = (theme as { metrics?: { mdTextSize?: number } } | undefined)?.metrics?.mdTextSize ?? 14
   const lineHeight = (theme as { metrics?: { mdLineHeight?: number } } | undefined)?.metrics?.mdLineHeight ?? Math.round(fontSizePx * 1.55)
+  const cellPadding = (theme as { metrics?: { mdTableCellPadding?: number } } | undefined)?.metrics?.mdTableCellPadding ?? 8
+  const formula = { renderer, ink, fontSizePx, lineHeight, fontFamily }
   return (
     <div
       {...(testId !== undefined ? { testId } : {})}
@@ -66,7 +78,7 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
                 paddingBottom: lineHeight,
               }}
             >
-              <Formula latex={row.latex} display renderer={renderer} ink={ink} fontSizePx={fontSizePx} lineHeight={lineHeight} />
+              <Formula latex={row.latex} display {...formula} />
             </div>
           )
         }
@@ -82,59 +94,138 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
             />
           )
         }
-        return (
-          <div
-            key={index}
-            style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 }}
-          >
-            {row.parts.flatMap((part, partIndex) => {
-              if (part.kind === 'math') {
-                return [
-                  <Formula
-                    key={`${partIndex}-math`}
-                    latex={part.latex}
-                    display={false}
-                    renderer={renderer}
-                    ink={ink}
-                    fontSizePx={fontSizePx}
-                    lineHeight={lineHeight}
-                  />,
-                ]
-              }
-              return tokenizeInlineText(part.source).map((token, tokenIndex) => {
-                if (token.kind === 'break') {
-                  return <div key={`${partIndex}-br-${tokenIndex}`} style={{ width: '100%', height: 0 }} />
-                }
-                return (
-                  <text
-                    key={`${partIndex}-w-${tokenIndex}`}
-                    style={{
-                      color: ink,
-                      fontSize: fontSizePx,
-                      lineHeight,
-                      flexShrink: 0,
-                      ...(fontFamily !== undefined ? { fontFamily } : {}),
-                    }}
-                  >
-                    {token.value}
-                  </text>
-                )
-              })
-            })}
-          </div>
-        )
+        if (row.type === 'table') {
+          return <MathTable key={index} headers={row.headers} rows={row.rows} theme={theme} onLinkClick={onLinkClick} cellPadding={cellPadding} formula={formula} />
+        }
+        return <InlineRun key={index} parts={row.parts} formula={formula} />
       })}
     </div>
   )
 }
 
-function Formula({ latex, display, renderer, ink, fontSizePx, lineHeight }: {
+function MathTable({ headers, rows, theme, onLinkClick, cellPadding, formula }: {
+  headers: InlinePart[][]
+  rows: InlinePart[][][]
+  theme: Record<string, unknown> | undefined
+  onLinkClick: ((event: EventPayload) => void) | undefined
+  cellPadding: number
+  formula: FormulaPaint
+}) {
+  const columns = Math.max(headers.length, ...rows.map((row) => row.length), 1)
+  const grid = [headers, ...rows]
+  return (
+    <div testId="math-table" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, marginTop: 8, marginBottom: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 8, overflow: 'hidden' }}>
+      {grid.map((row, rowIndex) => (
+        <div
+          key={rowIndex}
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            width: '100%',
+            minWidth: 0,
+            backgroundColor: rowIndex === 0 ? colors.raised : colors.transparent,
+            borderBottomWidth: rowIndex === grid.length - 1 ? 0 : 1,
+            borderColor: colors.border,
+          }}
+        >
+          {Array.from({ length: columns }, (_, column) => {
+            const parts = row[column] ?? [{ kind: 'text', source: '' }]
+            return (
+              <div
+                key={column}
+                style={{
+                  flexGrow: 1,
+                  flexBasis: 0,
+                  minWidth: 0,
+                  paddingTop: cellPadding,
+                  paddingBottom: cellPadding,
+                  paddingLeft: cellPadding,
+                  paddingRight: cellPadding,
+                  borderRightWidth: column === columns - 1 ? 0 : 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <TableCell parts={parts} header={rowIndex === 0} theme={theme} onLinkClick={onLinkClick} formula={formula} />
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TableCell({ parts, header, theme, onLinkClick, formula }: {
+  parts: InlinePart[]
+  header: boolean
+  theme: Record<string, unknown> | undefined
+  onLinkClick: ((event: EventPayload) => void) | undefined
+  formula: FormulaPaint
+}) {
+  const hasMath = parts.some((part) => part.kind === 'math')
+  if (!hasMath) {
+    const source = parts.map((part) => (part.kind === 'text' ? part.source : '')).join('')
+    const heading = header ? `**${source}**` : source
+    return (
+      <PlainMarkdown
+        source={markdownSourceWithNewlines(heading)}
+        theme={theme}
+        testId={undefined}
+        style={{ width: '100%', minWidth: 0 }}
+        onLinkClick={onLinkClick}
+      />
+    )
+  }
+  return <InlineRun parts={parts} formula={formula} />
+}
+
+interface FormulaPaint {
+  renderer: FormulaRenderer | null
+  ink: string
+  fontSizePx: number
+  lineHeight: number
+  fontFamily: string | undefined
+}
+
+function InlineRun({ parts, formula }: { parts: InlinePart[]; formula: FormulaPaint }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 }}>
+      {parts.flatMap((part, partIndex) => {
+        if (part.kind === 'math') {
+          return [<Formula key={`${partIndex}-math`} latex={part.latex} display={false} {...formula} />]
+        }
+        return tokenizeInlineText(part.source).map((token, tokenIndex) => {
+          if (token.kind === 'break') {
+            return <div key={`${partIndex}-br-${tokenIndex}`} style={{ width: '100%', height: 0 }} />
+          }
+          return (
+            <text
+              key={`${partIndex}-w-${tokenIndex}`}
+              style={{
+                color: formula.ink,
+                fontSize: formula.fontSizePx,
+                lineHeight: formula.lineHeight,
+                flexShrink: 0,
+                ...(formula.fontFamily !== undefined ? { fontFamily: formula.fontFamily } : {}),
+              }}
+            >
+              {token.value}
+            </text>
+          )
+        })
+      })}
+    </div>
+  )
+}
+
+const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizePx, lineHeight }: {
   latex: string
   display: boolean
   renderer: FormulaRenderer | null
   ink: string
   fontSizePx: number
   lineHeight: number
+  fontFamily: string | undefined
 }) {
   const rendered = renderer ? renderer(latex, display, undefined, fontSizePx) : null
   if (!rendered) {
@@ -157,39 +248,181 @@ function Formula({ latex, display, renderer, ink, fontSizePx, lineHeight }: {
       } as never)}
     </div>
   )
-}
+})
 
 export function buildMathRows(segments: Array<MathSegment>): Array<MathRow> {
+  const { text, formulas } = materialize(segments)
   const rows: Array<MathRow> = []
-  let parts: Array<InlinePart> = []
-  const flush = (): void => {
-    if (parts.length === 0) return
-    const hasMath = parts.some((part) => part.kind === 'math')
-    if (hasMath) {
-      rows.push({ type: 'inline', parts })
-    } else {
-      const source = parts
-        .map((part) => (part.kind === 'text' ? part.source : ''))
-        .join('')
-        .replace(/^\n+|\n+$/g, '')
-      if (source) rows.push({ type: 'markdown', source })
-    }
-    parts = []
+  for (const block of splitSourceBlocks(text)) {
+    const row = rowFromBlock(block, formulas)
+    if (row) rows.push(row)
   }
-  for (const segment of segments) {
-    if (segment.kind === 'math' && segment.display) {
-      flush()
-      rows.push({ type: 'display', latex: segment.latex })
-      continue
-    }
-    if (segment.kind === 'math') {
-      parts.push({ kind: 'math', latex: segment.latex })
-      continue
-    }
-    parts.push({ kind: 'text', source: segment.text })
-  }
-  flush()
   return rows
+}
+
+function materialize(segments: Array<MathSegment>): { text: string; formulas: Array<{ latex: string; display: boolean }> } {
+  const formulas: Array<{ latex: string; display: boolean }> = []
+  let text = ''
+  for (const segment of segments) {
+    if (segment.kind === 'text') {
+      text += segment.text
+      continue
+    }
+    text += `${PLACEHOLDER_START}${formulas.length}${PLACEHOLDER_END}`
+    formulas.push({ latex: segment.latex, display: segment.display })
+  }
+  return { text, formulas }
+}
+
+function rowFromBlock(block: { type: 'markdown' | 'paragraph' | 'table'; source: string }, formulas: Array<{ latex: string; display: boolean }>): MathRow | undefined {
+  const source = block.source.replace(/^\n+|\n+$/g, '')
+  if (!source) return undefined
+  if (block.type === 'table') {
+    const table = parseGfmTable(source, formulas)
+    if (table) return table
+  }
+  if (!PLACEHOLDER_RE.test(source)) {
+    PLACEHOLDER_RE.lastIndex = 0
+    return { type: 'markdown', source }
+  }
+  PLACEHOLDER_RE.lastIndex = 0
+  const solo = soloDisplay(source, formulas)
+  if (solo !== undefined) return { type: 'display', latex: solo }
+  return { type: 'inline', parts: partsFrom(source, formulas) }
+}
+
+function soloDisplay(source: string, formulas: Array<{ latex: string; display: boolean }>): string | undefined {
+  const match = /^\uE000(\d+)\uE001$/.exec(source.trim())
+  if (!match) return undefined
+  const formula = formulas[Number(match[1])]
+  return formula?.display ? formula.latex : undefined
+}
+
+function partsFrom(source: string, formulas: Array<{ latex: string; display: boolean }>): InlinePart[] {
+  const parts: InlinePart[] = []
+  const matcher = new RegExp(PLACEHOLDER_RE.source, 'g')
+  let last = 0
+  let match: RegExpExecArray | null
+  while ((match = matcher.exec(source))) {
+    if (match.index > last) parts.push({ kind: 'text', source: source.slice(last, match.index) })
+    const formula = formulas[Number(match[1])]
+    if (formula) parts.push({ kind: 'math', latex: formula.latex })
+    last = match.index + match[0].length
+  }
+  if (last < source.length) parts.push({ kind: 'text', source: source.slice(last) })
+  return parts.filter((part) => part.kind === 'math' || part.source.length > 0)
+}
+
+function splitSourceBlocks(text: string): Array<{ type: 'markdown' | 'paragraph' | 'table'; source: string }> {
+  const lines = text.split('\n')
+  const blocks: Array<{ type: 'markdown' | 'paragraph' | 'table'; source: string }> = []
+  let index = 0
+  while (index < lines.length) {
+    if (lines[index]!.trim() === '') {
+      index++
+      continue
+    }
+    const fenceEnd = consumeFence(lines, index)
+    if (fenceEnd !== undefined) {
+      blocks.push({ type: 'markdown', source: lines.slice(index, fenceEnd).join('\n') })
+      index = fenceEnd
+      continue
+    }
+    if (isTableStart(lines, index)) {
+      const end = consumeTable(lines, index)
+      blocks.push({ type: 'table', source: lines.slice(index, end).join('\n') })
+      index = end
+      continue
+    }
+    if (isHeadingLine(lines[index]!) || isListLine(lines[index]!)) {
+      const end = consumeMarkdownRun(lines, index, (line, offset) => (
+        offset === index ? true : isListLine(line) || isIndentedContinuation(line)
+      ))
+      blocks.push({ type: 'markdown', source: lines.slice(index, end).join('\n') })
+      index = end
+      continue
+    }
+    const end = consumeParagraph(lines, index)
+    blocks.push({ type: 'paragraph', source: lines.slice(index, end).join('\n') })
+    index = end
+  }
+  return blocks
+}
+
+function consumeFence(lines: string[], start: number): number | undefined {
+  const opening = /^(?:(?:[ \t]*>[ \t]?)*[ \t]*)(```+|~~~+)/.exec(lines[start]!)
+  if (!opening) return undefined
+  const marker = opening[1]!
+  for (let index = start + 1; index < lines.length; index++) {
+    const closing = /^(?:(?:[ \t]*>[ \t]?)*[ \t]*)(`+|~+)[ \t]*$/.exec(lines[index]!)
+    if (closing && closing[1]![0] === marker[0] && closing[1]!.length >= marker.length) return index + 1
+  }
+  return lines.length
+}
+
+function isHeadingLine(line: string): boolean {
+  return /^ {0,3}#{1,6} /.test(line)
+}
+
+function isListLine(line: string): boolean {
+  return /^ {0,3}(?:[-+*]|\d+[.)]) /.test(line)
+}
+
+function isIndentedContinuation(line: string): boolean {
+  return /^ {2,}\S/.test(line)
+}
+
+function isSeparatorRow(line: string): boolean {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  return index + 1 < lines.length && lines[index]!.includes('|') && isSeparatorRow(lines[index + 1]!)
+}
+
+function consumeTable(lines: string[], start: number): number {
+  let index = start + 2
+  while (index < lines.length && lines[index]!.includes('|') && lines[index]!.trim() !== '') index++
+  return index
+}
+
+function consumeMarkdownRun(lines: string[], start: number, take: (line: string, index: number) => boolean): number {
+  let index = start + 1
+  while (index < lines.length && lines[index]!.trim() !== '' && take(lines[index]!, index) && !isTableStart(lines, index) && consumeFence(lines, index) === undefined) {
+    index++
+  }
+  return index
+}
+
+function consumeParagraph(lines: string[], start: number): number {
+  let index = start + 1
+  while (
+    index < lines.length
+    && lines[index]!.trim() !== ''
+    && !isHeadingLine(lines[index]!)
+    && !isListLine(lines[index]!)
+    && !isTableStart(lines, index)
+    && consumeFence(lines, index) === undefined
+  ) {
+    index++
+  }
+  return index
+}
+
+function parseGfmTable(source: string, formulas: Array<{ latex: string; display: boolean }>): MathRow | undefined {
+  const lines = source.split('\n').filter((line) => line.trim() !== '')
+  if (lines.length < 2 || !isSeparatorRow(lines[1]!)) return undefined
+  const headers = splitTableRow(lines[0]!).map((cell) => partsFrom(cell, formulas))
+  const rows = lines.slice(2).map((line) => splitTableRow(line).map((cell) => partsFrom(cell, formulas)))
+  if (headers.length === 0) return undefined
+  return { type: 'table', headers, rows }
+}
+
+function splitTableRow(line: string): string[] {
+  let body = line.trim()
+  if (body.startsWith('|')) body = body.slice(1)
+  if (body.endsWith('|')) body = body.slice(0, -1)
+  return body.split('|').map((cell) => cell.trim())
 }
 
 function tokenizeInlineText(text: string): Array<{ kind: 'word'; value: string } | { kind: 'break' }> {
@@ -199,7 +432,16 @@ function tokenizeInlineText(text: string): Array<{ kind: 'word'; value: string }
     if (index > 0) tokens.push({ kind: 'break' })
     const words = lines[index]!.match(/\S+\s*|\s+/gu)
     if (!words) continue
-    for (const word of words) tokens.push({ kind: 'word', value: word })
+    let run = ''
+    for (const word of words) {
+      if (run.length + word.length > INLINE_CHUNK && run.length > 0) {
+        tokens.push({ kind: 'word', value: run })
+        run = word
+      } else {
+        run += word
+      }
+    }
+    if (run) tokens.push({ kind: 'word', value: run })
   }
   return tokens
 }
