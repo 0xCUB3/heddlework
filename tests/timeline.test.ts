@@ -77,7 +77,7 @@ describe('buildTimeline', () => {
     expect(items[1]).toMatchObject({ kind: 'thinking', revertEntryId: 'tail-user' })
   })
 
-  it('attaches image blocks and the nearest forkable prompt to every turn row', () => {
+  it('attaches image blocks and the nearest branchable prompt to every turn row', () => {
     const messages: PiMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'Inspect this' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png', previewPath: '/tmp/image.png' }], timestamp: 1 },
       { role: 'assistant', content: [{ type: 'text', text: 'I can see it.' }, { type: 'toolCall', id: 'tool', name: 'read', arguments: { path: 'a.ts' } }], timestamp: 2 },

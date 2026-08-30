@@ -950,7 +950,7 @@ function MessageFooter({
   }
   const actions = (
     <>
-      {revertEntryId && <TranscriptInlineAction icon="gitBranch" testId="fork-message" onClick={() => onRevert(revertEntryId)} />}
+      {revertEntryId && <TranscriptInlineAction icon="gitBranch" testId="tree-message" onClick={() => onRevert(revertEntryId)} />}
       {copyText && <TranscriptInlineAction icon={copied ? 'check' : 'copy'} testId="copy-message" onClick={() => void copy()} />}
     </>
   )

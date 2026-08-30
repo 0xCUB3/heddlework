@@ -192,7 +192,7 @@ describeNative('conversation extension overlays', () => {
     }
   })
 
-  it('renders nested Fabric settings as searchable rows in the main conversation area', async () => {
+  it('renders nested Fabric settings as static searchable rows in the main conversation area', async () => {
     const transport = new OverlayTransport()
     const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     const root = createTestRoot()
@@ -222,6 +222,8 @@ describeNative('conversation extension overlays', () => {
       expect(await automation.getByTestId('conversation-extension-overlay').count()).toBe(1)
       expect(await automation.getByTestId('extension-dialog-search').count()).toBe(1)
       expect(await automation.getByTestId('extension-dialog-options').count()).toBe(1)
+      expect(root.renderer.findByTestId('extension-dialog-transition')?.customProps?.motion).toBeUndefined()
+      expect(root.renderer.findByTestId('extension-dialog-options')?.customProps?.motion).toBeUndefined()
       expect(root.renderer.findByTestId('extension-dialog-option-0')?.style.borderBottomWidth).toBe(0)
       expect(root.renderer.findByTestId('extension-dialog-option-1')?.style.borderBottomWidth).toBe(0)
       expect((root.renderer.findByTestId('extension-dialog-option-0')?.style.hover as { backgroundColor?: string } | undefined)?.backgroundColor).toBe(colors.sidebarHover)
@@ -249,11 +251,8 @@ describeNative('conversation extension overlays', () => {
       await automation.getByTestId('extension-dialog-option-0').click()
       await Bun.sleep(40)
       root.renderer.flush()
-      expect(await automation.getByTestId('extension-dialog').count()).toBe(1)
-      expect(root.renderer.findByTestId('extension-dialog-transition')?.style.pointerEvents).toBe('none')
-      const exitMotion = root.renderer.findByTestId('extension-dialog-transition')?.customProps?.motion as { animate?: { opacity?: number; top?: number }; transition?: { delay?: number; duration?: number } } | undefined
-      expect(exitMotion?.animate).toEqual({ opacity: 0, top: 4 })
-      expect(exitMotion?.transition?.delay).toBe(0.08)
+      expect(await automation.getByTestId('extension-dialog').count()).toBe(0)
+      expect(await automation.getByTestId('conversation-extension-overlay').count()).toBe(0)
       transport.emit({ type: 'extension_ui_request', id: 'fabric-settings-ui', method: 'select', title: 'Fabric settings › UI\nFabric activity widget and dashboard.', options: [
         'Enabled · true — Render Fabric UI surfaces.',
         'Widget · auto — Show activity automatically, always, or keep it hidden.',
@@ -268,14 +267,12 @@ describeNative('conversation extension overlays', () => {
       await Bun.sleep(20)
       root.renderer.flush()
       expect(await automation.getByTestId('extension-dialog-search').count()).toBe(1)
-      expect(root.renderer.findByTestId('extension-dialog')?.id).toBe(dialogElementId)
-      expect(root.renderer.findByTestId('extension-dialog-search')?.id).toBe(searchElementId)
+      expect(root.renderer.findByTestId('extension-dialog')?.id).not.toBe(dialogElementId)
+      expect(root.renderer.findByTestId('extension-dialog-search')?.id).not.toBe(searchElementId)
       expect(root.renderer.findByTestId('extension-dialog-options')?.id).not.toBe(optionsElementId)
       expect(root.renderer.findByTestId('extension-dialog-option-0')?.style.borderBottomWidth).toBe(0)
-      const optionsMotion = root.renderer.findByTestId('extension-dialog-options')?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number }; transition?: { duration?: number } } | undefined
-      expect(optionsMotion?.initial).toEqual({ opacity: 0.96, top: 4 })
-      expect(optionsMotion?.animate).toEqual({ opacity: 1, top: 0 })
-      expect(optionsMotion?.transition?.duration).toBe(0.16)
+      expect(root.renderer.findByTestId('extension-dialog-transition')?.customProps?.motion).toBeUndefined()
+      expect(root.renderer.findByTestId('extension-dialog-options')?.customProps?.motion).toBeUndefined()
       if (process.platform === 'darwin') {
         const screenshot = screenshotPath('workbench-fabric-settings-nested.png')
         root.renderer.captureScreenshot(screenshot)
@@ -329,6 +326,8 @@ describeNative('conversation extension overlays', () => {
 
       expect(await automation.getByTestId('ask-user-overlay').count()).toBe(1)
       expect(await automation.getByTestId('ask-user-preview').count()).toBe(1)
+      expect(root.renderer.findByTestId('conversation-extension-overlay')?.customProps?.motion).toBeUndefined()
+      expect(root.renderer.findByTestId('ask-user-overlay')?.customProps?.motion).toBeUndefined()
       const conversationBounds = await automation.getByTestId('conversation-body').bounds()
       const overlayBounds = await automation.getByTestId('conversation-extension-overlay').bounds()
       expect(Math.abs(overlayBounds.x - conversationBounds.x)).toBeLessThanOrEqual(1)

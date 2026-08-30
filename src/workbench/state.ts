@@ -1,4 +1,5 @@
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import type { PiSessionTreeOption } from '../pi/session-tree.ts'
 import { BUILTIN_SLASH_COMMANDS } from '../pi/slash-commands.ts'
 import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import { createQueueState, type WorkbenchQueueState } from './queue.ts'
@@ -66,10 +67,11 @@ export interface ToolRun {
 
 export interface ExtensionDialog {
   id: string
-  method: 'select' | 'confirm' | 'input' | 'editor'
+  method: 'select' | 'confirm' | 'input' | 'editor' | 'tree'
   title: string
   message?: string
   options?: string[]
+  treeOptions?: PiSessionTreeOption[]
   placeholder?: string
   prefill?: string
   timeout?: number

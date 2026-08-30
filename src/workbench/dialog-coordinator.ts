@@ -1,3 +1,4 @@
+import type { PiSessionTreeOption } from '../pi/session-tree.ts'
 import type { ExtensionUiRequest, RpcRecord } from '../pi/types.ts'
 import { errorMessage } from '../pi/types.ts'
 import {
@@ -120,6 +121,18 @@ export class WorkbenchDialogCoordinator {
     const id = `workbench-select-${++this.#nextLocalDialogId}`
     this.#localDialogResponses.set(id, onResponse)
     this.#enqueueDialog({ id, method: 'select', title, options, createdAt: Date.now() })
+  }
+
+  showLocalTree(title: string, treeOptions: PiSessionTreeOption[], onResponse: (response: DialogResponse) => void): void {
+    const id = `workbench-tree-${++this.#nextLocalDialogId}`
+    this.#localDialogResponses.set(id, onResponse)
+    this.#enqueueDialog({ id, method: 'tree', title, treeOptions, createdAt: Date.now() })
+  }
+
+  showLocalInput(title: string, placeholder: string, onResponse: (response: DialogResponse) => void): void {
+    const id = `workbench-input-${++this.#nextLocalDialogId}`
+    this.#localDialogResponses.set(id, onResponse)
+    this.#enqueueDialog({ id, method: 'input', title, placeholder, createdAt: Date.now() })
   }
 
   respond(response: DialogResponse): void {

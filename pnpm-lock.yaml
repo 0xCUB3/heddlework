@@ -4,18 +4,18 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-og2Rob1iVmTVQwB7DeOiypLGjaFGOChKUpggXckMd24=
+packageExtensionsChecksum: sha256-Jvs4pbaejXfUXi3vXmPhNBZmQLto4rJOR6gKt2f7NH4=
 
 importers:
 
   .:
     dependencies:
       '@gpuix/react':
-        specifier: 0.5.1
-        version: 0.5.1(@types/react@19.2.18)(react@19.2.8)
-      mathjax-full:
-        specifier: 3.2.2
-        version: 3.2.2
+        specifier: 0.6.0
+        version: 0.6.0(@types/react@19.2.18)(react@19.2.8)
+      '@mathjax/src':
+        specifier: 4.1.3
+        version: 4.1.3
       react:
         specifier: 19.2.8
         version: 19.2.8
@@ -35,46 +35,38 @@ importers:
 
 packages:
 
-  '@gpuix/native-darwin-arm64@0.5.1':
-    resolution: {integrity: sha512-czBi9tOj6xYfQrtpj8EyrV6VgUi8cpaFVRcWYxJxd/z6KXr1c4S32lsWGs/a6TEOcHfzxGgVE3hBcHv/nHz7nQ==}
+  '@gpuix/native-darwin-arm64@0.6.0':
+    resolution: {integrity: sha512-Aarqk7h5Vz/1JYuEC1uSXA8QvT+yeUPsNrs6INXt0yH6c01FF7L+x6+37zh1rwVeQFADAyZ2Btzqbdqfd+YsaA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@gpuix/native-darwin-x64@0.5.1':
-    resolution: {integrity: sha512-KcmL15yQrtkZh7N+uLoM6waiyA89tS/UJGzjeaqAtYrMtW/69R+eE1QuxGBPpCg8MnEfiHFCfA0ZElbeWksNqA==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@gpuix/native-linux-arm64-gnu@0.5.1':
-    resolution: {integrity: sha512-naMTEdUbFp7CdXtf2XNjM/QszQJcM9UZnt6lFQICOPxwsqPEM7bMgiNntBqL/XsWv/H7rgDF1/Ap9HKgAew2/g==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@gpuix/native-linux-x64-gnu@0.5.1':
-    resolution: {integrity: sha512-hB4GQYPOkjSFuj/BsTk3J0OdNc5r+6tYrcucSTauza1zUtSJpOP1M9ziFFC3jVCCpzFm9ldF/t8qeKtbWq17Dg==}
+  '@gpuix/native-linux-x64-gnu@0.6.0':
+    resolution: {integrity: sha512-ttcc3K+EBjfS+NW0K8yYJ/hFFfmZox8ulp6o11BGbaUykOuvEgFMxdDrJmohDeYCBwj3Hd2gIKA1Zk14ctVs/Q==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@gpuix/native-win32-arm64-msvc@0.5.1':
-    resolution: {integrity: sha512-wET4aWi3/alfGJT/YvLILCUt9akY+VBATMMLBYZ9MFVYlp6c2aWRTUAAQ42F1kvdjKMnWtTAWcM4o9UWg3Cv1A==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@gpuix/native-win32-x64-msvc@0.5.1':
-    resolution: {integrity: sha512-L4CqQUbqPwECb9SB68Syp8AZ5TFdufyzKslvS5QvPAN/LTUbh92h3IYLfDBtAXGMUDdK0G3EOM8ioGM5nrXDKA==}
+  '@gpuix/native-win32-x64-msvc@0.6.0':
+    resolution: {integrity: sha512-/b76q0dAmy3HPZTQI0G4lbbSjqDTKDaN/bVmI75UJP06Kh+soMoizCC1E8vLlNRI6Q77+ClKWUvu/j0SdbDRVQ==}
     cpu: [x64]
     os: [win32]
 
-  '@gpuix/native@0.5.1':
-    resolution: {integrity: sha512-+sy72xd9LDJs7Jfrx4oGFwlOjMzX753gFAlUURxZ7jzctbZuS7XlORoo0IxF5OhKr8+1Xj1SGL3jf35Bz68u7g==}
+  '@gpuix/native@0.6.0':
+    resolution: {integrity: sha512-tpbA+csf12kTzK/vNyAtNAEdJG5GDdBNjDQAfaAkal9m6oCkNGsbeUDhWYsh14Rwa2oRxYoMZ+NQHHXU1EoSyQ==}
 
-  '@gpuix/react@0.5.1':
-    resolution: {integrity: sha512-HbN+kJxgcELdXI5fEXYdfuT7ucQC4s+Q8xUfbtyfxQjoD6qVsKOZ4ZP0sqnGQYEp2Pf+EO9VGUARSSWwMljKMQ==}
+  '@gpuix/react@0.6.0':
+    resolution: {integrity: sha512-b0XS5aSC0L8jcv2KYD3RKUIWZnNOeSU2X6vvkflZizNnbN+AuaObK+FfS8AZzo1G+NITgY7IzIojXRs+oxQABQ==}
     peerDependencies:
       '@types/react': '>=18'
       react: ^18.0.0 || ^19.0.0
+
+  '@mathjax/mathjax-newcm-font@4.1.3':
+    resolution: {integrity: sha512-gzAB3dFHilHX1l5x2xUqRL+1jDQt3Fyza1DkEMVXWC4E8SvsGdlgEza47HYi2WhVcgfkvf4zgUGzuhbq3Pjlew==}
+    peerDependencies:
+      '@mathjax/src': '>=4'
+
+  '@mathjax/src@4.1.3':
+    resolution: {integrity: sha512-rIrWquuBSoJuoMBdC/1qD+AUHTorlccPicoVy6P2xbUgnuDBpCcpbHtOAsB8L3hdCHtNBg92lF8e3Fz+pkcQbw==}
 
   '@types/bun@1.4.0':
     resolution: {integrity: sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ==}
@@ -205,38 +197,60 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@xmldom/xmldom@0.9.10':
-    resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
+  '@xmldom/xmldom@0.9.12':
+    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
     engines: {node: '>=14.6'}
-    deprecated: this version has critical issues, please update to the latest version
+
+  balanced-match@4.0.4:
+    resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
+    engines: {node: 18 || 20 || >=22}
+
+  brace-expansion@5.0.9:
+    resolution: {integrity: sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==}
+    engines: {node: 20 || >=22}
 
   bun-types@1.4.0:
     resolution: {integrity: sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q==}
 
-  commander@13.1.0:
-    resolution: {integrity: sha512-/rFeCpNJQbhSZjGVwO9RFV3xPqbnERS8MmIQzCtD/zl6gpJuV/bMLuN92oG3F7d8oDEHHRrujSXNUr8fpjntKw==}
-    engines: {node: '>=18'}
+  commander@14.0.3:
+    resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
+    engines: {node: '>=20'}
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
-
-  esm@3.2.25:
-    resolution: {integrity: sha512-U1suiZ2oDVWv4zPO56S0NcR5QriEahGtdN2OR6FiOG4WJvcjBVFB0qI4+eKoWFH483PKGuLuu6V8Z4T5g63UVA==}
-    engines: {node: '>=6'}
 
   eventsource-parser@4.1.0:
     resolution: {integrity: sha512-+DHvQ1wLO//MK+1OZgcuXCbZFKgu3YjKPJt7n98rxX8vezL0ni+7s3ZQiM8bJkUEOk7MsuCycrPLj0FzUNf7Og==}
     engines: {node: '>=22.12'}
 
-  mathjax-full@3.2.2:
-    resolution: {integrity: sha512-+LfG9Fik+OuI8SLwsiR02IVdjcnRCy5MufYLi0C3TdMT56L/pjB0alMVGgoWJF8pN9Rc7FESycZB9BMNWIid5w==}
-    deprecated: Version 4 replaces this package with the scoped package @mathjax/src
+  glob@13.0.6:
+    resolution: {integrity: sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==}
+    engines: {node: 18 || 20 || >=22}
+
+  lru-cache@11.5.2:
+    resolution: {integrity: sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g==}
+    engines: {node: 20 || >=22}
 
   mhchemparser@4.2.1:
     resolution: {integrity: sha512-kYmyrCirqJf3zZ9t/0wGgRZ4/ZJw//VwaRVGA75C4nhE60vtnIzhl9J9ndkX/h6hxSN7pjg/cE0VxbnNM+bnDQ==}
 
-  mj-context-menu@0.6.1:
-    resolution: {integrity: sha512-7NO5s6n10TIV96d4g2uDpG7ZDpIhMh0QNfGdJw/W47JswFcosz457wqz/b5sAKvl12sxINGFCn80NZHKwxQEXA==}
+  minimatch@10.2.6:
+    resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
+    engines: {node: 18 || 20 || >=22}
+
+  minipass@7.1.3:
+    resolution: {integrity: sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==}
+    engines: {node: '>=16 || 14 >=14.17'}
+
+  mj-context-menu@1.0.0:
+    resolution: {integrity: sha512-OSgBFQRCVhrZwRa9lhqnKcJU92dd/YXgBjup0uyeuj9bOaVsf4myOyrjU4PfhYkdDk6AqVUTov7v5uFMvIbduA==}
+
+  package-json-from-dist@1.0.1:
+    resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
+
+  path-scurry@2.0.2:
+    resolution: {integrity: sha512-3O/iVVsJAPsOnpwWIeD+d6z/7PmqApyQePUtCndjatj/9I5LylHvt5qluFaBT3I5h3r1ejfR056c+FCv+NnNXg==}
+    engines: {node: 18 || 20 || >=22}
 
   react-reconciler@0.31.0:
     resolution: {integrity: sha512-7Ob7Z+URmesIsIVRjnLoDGwBEG/tVitidU0nMsqX/eeJaLY89RISO/10ERe0MqmzuKUUB1rmY+h1itMbUHg9BQ==}
@@ -248,11 +262,16 @@ packages:
     resolution: {integrity: sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==}
     engines: {node: '>=0.10.0'}
 
+  rimraf@6.1.3:
+    resolution: {integrity: sha512-LKg+Cr2ZF61fkcaK1UdkH2yEBBKnYjTyWzTJT6KNPcSPaiT7HSdhtMXQuN5wkTX0Xu72KQ1l8S42rlmexS2hSA==}
+    engines: {node: 20 || >=22}
+    hasBin: true
+
   scheduler@0.25.0:
     resolution: {integrity: sha512-xFVuu11jh+xcO7JOAGJNOXld8/TcEHK/4CituBUeUb5hqxJLj9YuemAEuvm9gQ/+pgXYfbQuqAkiYu+u7YEsNA==}
 
-  speech-rule-engine@4.1.4:
-    resolution: {integrity: sha512-i/VCLG1fvRc95pMHRqG4aQNscv+9aIsqA2oI7ZQS51sTdUcDHYX6cpT8/tqZ+enjs1tKVwbRBWgxut9SWn+f9g==}
+  speech-rule-engine@5.0.0-rc.4:
+    resolution: {integrity: sha512-3dFcH2QtQNhtvUUc09TxoaEK4WG03B9Z57krFG9jocrKykKGu35BhIkWr0vgEAxZZomEWkeluff69y/EbYzP4Q==}
     hasBin: true
 
   typescript@7.0.2:
@@ -271,41 +290,40 @@ packages:
 
 snapshots:
 
-  '@gpuix/native-darwin-arm64@0.5.1':
+  '@gpuix/native-darwin-arm64@0.6.0':
     optional: true
 
-  '@gpuix/native-darwin-x64@0.5.1':
+  '@gpuix/native-linux-x64-gnu@0.6.0':
     optional: true
 
-  '@gpuix/native-linux-arm64-gnu@0.5.1':
+  '@gpuix/native-win32-x64-msvc@0.6.0':
     optional: true
 
-  '@gpuix/native-linux-x64-gnu@0.5.1':
-    optional: true
-
-  '@gpuix/native-win32-arm64-msvc@0.5.1':
-    optional: true
-
-  '@gpuix/native-win32-x64-msvc@0.5.1':
-    optional: true
-
-  '@gpuix/native@0.5.1':
+  '@gpuix/native@0.6.0':
     optionalDependencies:
-      '@gpuix/native-darwin-arm64': 0.5.1
-      '@gpuix/native-darwin-x64': 0.5.1
-      '@gpuix/native-linux-arm64-gnu': 0.5.1
-      '@gpuix/native-linux-x64-gnu': 0.5.1
-      '@gpuix/native-win32-arm64-msvc': 0.5.1
-      '@gpuix/native-win32-x64-msvc': 0.5.1
+      '@gpuix/native-darwin-arm64': 0.6.0
+      '@gpuix/native-linux-x64-gnu': 0.6.0
+      '@gpuix/native-win32-x64-msvc': 0.6.0
 
-  '@gpuix/react@0.5.1(@types/react@19.2.18)(react@19.2.8)':
+  '@gpuix/react@0.6.0(@types/react@19.2.18)(react@19.2.8)':
     dependencies:
-      '@gpuix/native': 0.5.1
+      '@gpuix/native': 0.6.0
       '@types/react': 19.2.18
       eventsource-parser: 4.1.0
       react: 19.2.8
       react-reconciler: 0.31.0(react@19.2.8)
       zod: 4.4.3
+
+  '@mathjax/mathjax-newcm-font@4.1.3(@mathjax/src@4.1.3)':
+    dependencies:
+      '@mathjax/src': 4.1.3
+
+  '@mathjax/src@4.1.3':
+    dependencies:
+      '@mathjax/mathjax-newcm-font': 4.1.3(@mathjax/src@4.1.3)
+      mhchemparser: 4.2.1
+      mj-context-menu: 1.0.0
+      speech-rule-engine: 5.0.0-rc.4
 
   '@types/bun@1.4.0':
     dependencies:
@@ -379,30 +397,50 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@xmldom/xmldom@0.9.10': {}
+  '@xmldom/xmldom@0.9.12': {}
+
+  balanced-match@4.0.4: {}
+
+  brace-expansion@5.0.9:
+    dependencies:
+      balanced-match: 4.0.4
 
   bun-types@1.4.0:
     dependencies:
       '@types/node': 26.4.0
 
-  commander@13.1.0: {}
+  commander@14.0.3: {}
 
   csstype@3.2.3: {}
 
-  esm@3.2.25: {}
-
   eventsource-parser@4.1.0: {}
 
-  mathjax-full@3.2.2:
+  glob@13.0.6:
     dependencies:
-      esm: 3.2.25
-      mhchemparser: 4.2.1
-      mj-context-menu: 0.6.1
-      speech-rule-engine: 4.1.4
+      minimatch: 10.2.6
+      minipass: 7.1.3
+      path-scurry: 2.0.2
+
+  lru-cache@11.5.2: {}
 
   mhchemparser@4.2.1: {}
 
-  mj-context-menu@0.6.1: {}
+  minimatch@10.2.6:
+    dependencies:
+      brace-expansion: 5.0.9
+
+  minipass@7.1.3: {}
+
+  mj-context-menu@1.0.0:
+    dependencies:
+      rimraf: 6.1.3
+
+  package-json-from-dist@1.0.1: {}
+
+  path-scurry@2.0.2:
+    dependencies:
+      lru-cache: 11.5.2
+      minipass: 7.1.3
 
   react-reconciler@0.31.0(react@19.2.8):
     dependencies:
@@ -411,12 +449,17 @@ snapshots:
 
   react@19.2.8: {}
 
+  rimraf@6.1.3:
+    dependencies:
+      glob: 13.0.6
+      package-json-from-dist: 1.0.1
+
   scheduler@0.25.0: {}
 
-  speech-rule-engine@4.1.4:
+  speech-rule-engine@5.0.0-rc.4:
     dependencies:
-      '@xmldom/xmldom': 0.9.10
-      commander: 13.1.0
+      '@xmldom/xmldom': 0.9.12
+      commander: 14.0.3
       wicked-good-xpath: 1.3.0
 
   typescript@7.0.2:

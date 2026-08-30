@@ -6,6 +6,7 @@ import { Icon } from './icons.tsx'
 import { MotionDiv, useSpringProgress } from './motion.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { useResponsiveLayout } from './responsive.tsx'
+import { NativeVirtualList, useNativeVirtualWindow } from './virtual-list.tsx'
 
 const HEADER_HEIGHT = 42
 const COLLAPSED_HEIGHT = HEADER_HEIGHT
@@ -41,6 +42,8 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
     ...ownedItems.map((item) => ({ id: item.id, text: item.text, placement: 'queued' as const, item })),
     ...state.queue.followUp.map((text, index) => ({ id: `native-follow-up-${index}-${text}`, text, placement: 'follow-up' as const })),
   ], [ownedItems, state.queue.followUp, state.queue.steering])
+  const virtualWindow = useNativeVirtualWindow(rows.length, `queue:${rows.length}:${rows[0]?.id ?? ''}:${rows.at(-1)?.id ?? ''}`)
+  const visibleRows = rows.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   const drainable = state.queue.items.some((item) => !item.flow && !queuedInputControl(item))
   const openProgress = Math.min(1, useSpringProgress(expanded && rows.length > 0))
   const listTargetHeight = Math.min(MAX_LIST_HEIGHT, rows.length * ROW_HEIGHT + 8)
@@ -72,8 +75,14 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
     <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 8, overflow: 'hidden', userSelect: 'none', pointerEvents: 'auto' }}>
       <div testId="queue-panel" style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, top: 0, bottom: 0, borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised }} />
 
-      <div
+      <NativeVirtualList
         testId="queue-scroll"
+        alignment="top"
+        estimatedItemHeight={ROW_HEIGHT}
+        overdraw={ROW_HEIGHT * 3}
+        itemCount={Math.max(1, rows.length)}
+        windowStart={virtualWindow.windowStart}
+        onVisibleRange={virtualWindow.onVisibleRange}
         style={{
           position: 'absolute',
           left: DOCK_INSET,
@@ -84,11 +93,11 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
           flexDirection: 'column',
           paddingTop: 4,
           paddingBottom: 4,
-          overflow: 'scroll',
+          overflow: 'hidden',
           opacity: openProgress,
         }}
       >
-        {rows.map((row) => {
+        {visibleRows.map((row) => {
           const ownedIndex = row.item ? ownedItems.findIndex((item) => item.id === row.id) : -1
           const dispatching = state.queue.dispatchingId === row.id
           const control = row.item ? queuedInputControl(row.item) : undefined
@@ -164,7 +173,7 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
             </div>
           )
         })}
-      </div>
+      </NativeVirtualList>
 
       <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />

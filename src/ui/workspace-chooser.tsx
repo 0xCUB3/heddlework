@@ -4,7 +4,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Composer } from './composer.tsx'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
-import { matchSelectOptions, NativeVirtualList } from './primitives.tsx'
+import { matchSelectOptions, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
 import { colors, nativeTheme } from './theme.ts'
@@ -39,6 +39,8 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
   const choicesByPath = useMemo(() => new Map(choices.map((choice) => [choice.path, choice])), [choices])
   const filteredChoices = useMemo(() => matchSelectOptions(choices.map((choice) => ({ value: choice.path, label: choice.name, detail: choice.path })), query).map((option) => choicesByPath.get(option.value)!).filter(Boolean), [choices, choicesByPath, query])
   const projectListHeight = Math.min(210, Math.max(36, filteredChoices.length * 42))
+  const projectWindow = useNativeVirtualWindow(filteredChoices.length, `workspace-projects:${query}:${filteredChoices.length}`)
+  const visibleChoices = filteredChoices.slice(projectWindow.windowStart, projectWindow.windowEnd)
   const closeMenu = () => {
     dropdown.setOpen(false)
     setQuery('')
@@ -79,8 +81,8 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
                 <input testId="workspace-search" value={query} placeholder="Search projects…" autoFocus theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }} style={{ minWidth: 0, flexGrow: 1, height: 30, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 11 }} onChange={(event) => setQuery(String(event.value ?? ''))} />
               </div>
               {filteredChoices.length > 0 ? (
-                <NativeVirtualList testId="workspace-project-list" alignment="top" estimatedItemHeight={42} overdraw={84} style={{ width: '100%', height: projectListHeight, minHeight: 0 }}>
-                  {filteredChoices.map((choice) => (
+                <NativeVirtualList testId="workspace-project-list" alignment="top" estimatedItemHeight={42} overdraw={84} itemCount={Math.max(1, filteredChoices.length)} windowStart={projectWindow.windowStart} onVisibleRange={projectWindow.onVisibleRange} style={{ width: '100%', height: projectListHeight, minHeight: 0 }}>
+                  {visibleChoices.map((choice) => (
                     <div key={choice.path} testId={choice.current ? 'workspace-choice-current' : 'workspace-choice'} tabIndex={choice.current ? -1 : 0} style={{ height: 42, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 10, paddingRight: 10, borderRadius: 8, backgroundColor: choice.current ? colors.raised : colors.transparent, cursor: choice.current ? 'default' : 'pointer', hover: choice.current ? {} : { backgroundColor: colors.hover } }} {...(choice.current ? {} : { onClick: () => { closeMenu(); void controller.switchWorkspace(choice.path) }, onKeyDown: (event: { key?: string }) => { if (event.key === 'enter') { closeMenu(); void controller.switchWorkspace(choice.path) } } })}>
                       <Icon name="folder" size={15} color={choice.current ? colors.textMuted : colors.textFaint} />
                       <text style={{ minWidth: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{choice.name}</text>

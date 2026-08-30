@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { IconButton, NativeVirtualList } from './primitives.tsx'
+import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -160,6 +160,8 @@ function NotificationCard({ notice, newest, depth, stacked, exiting, promotion, 
 export function NotificationLedgerView({ state, fullscreen = false, fullscreenProgress, panelWidth = 422, onClear, onClose }: { state: WorkbenchState; fullscreen?: boolean; fullscreenProgress?: number; panelWidth?: number; onClear(): void; onClose?(): void }) {
   const { mobile } = useResponsiveLayout()
   const notices = [...state.notices].reverse()
+  const virtualWindow = useNativeVirtualWindow(notices.length, `notifications:${notices.length}:${notices[0]?.id ?? ''}:${notices.at(-1)?.id ?? ''}`)
+  const visibleNotices = notices.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
   const trafficLightInset = process.platform === 'darwin' ? 96 * titlebarProgress : 0
   return (
@@ -178,14 +180,14 @@ export function NotificationLedgerView({ state, fullscreen = false, fullscreenPr
           ))}
         {onClose && <IconButton icon="x" label="Close notifications" testId="notification-panel-close" onClick={onClose} />}
       </div>
-      <NativeVirtualList testId="notification-list" alignment="top" estimatedItemHeight={52} overdraw={300} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
+      <NativeVirtualList testId="notification-list" alignment="top" estimatedItemHeight={52} overdraw={300} itemCount={Math.max(1, notices.length)} windowStart={virtualWindow.windowStart} onVisibleRange={virtualWindow.onVisibleRange} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {notices.length === 0 ? (
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 180, gap: 9 }}>
             <div style={{ width: 38, height: 38, borderRadius: 19, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card }}><Icon name="bell" size={18} color={colors.textFaint} /></div>
             <text style={{ color: colors.text, fontSize: 15, fontWeight: 600 }}>No notifications yet</text>
             <text style={{ maxWidth: '86%', color: colors.textFaint, fontSize: 11, lineHeight: 17, textAlign: 'center', whiteSpace: 'normal' }}>Harness and workspace events will be kept here.</text>
           </div>
-        ) : notices.map((notice) => <LedgerRow key={notice.id} notice={notice} />)}
+        ) : visibleNotices.map((notice) => <LedgerRow key={notice.id} notice={notice} />)}
       </NativeVirtualList>
     </div>
   )

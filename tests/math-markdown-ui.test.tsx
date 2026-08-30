@@ -285,8 +285,8 @@ describeNative('math markdown', () => {
     root.unmount()
   })
 
-  it('clicks fork on a math assistant message', async () => {
-    let forks = 0
+  it('clicks tree navigation on a math assistant message', async () => {
+    let navigations = 0
     const source = 'Threshold at $CR = 3$, and $\\mu_v$ decays.\n\n$$E = mc^2$$\n\nDone.'
     const root = createTestRoot({ width: 900, height: 700 })
     const fade = ['08', '18', '2C', '45', '65', '88', 'AC', 'CE', 'E8', 'F8']
@@ -304,28 +304,28 @@ describeNative('math markdown', () => {
           },
           presenters: new Map(),
           onOpenDiff: () => undefined,
-          onRevert: () => { forks += 1 },
+          onRevert: () => { navigations += 1 },
         }),
         React.createElement('div', { testId: 'transcript-bottom-fade', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 240, display: 'flex', flexDirection: 'column', pointerEvents: 'none' } },
           fade.map((alpha) => React.createElement('div', { key: alpha, style: { height: 24, flexShrink: 0, backgroundColor: `#09090B${alpha}`, pointerEvents: 'none' } })),
         ),
       ),
     )
-    let fork
+    let treeAction
     for (let attempt = 0; attempt < 80; attempt++) {
       await Bun.sleep(25)
       root.renderer.flush()
-      const found = root.renderer.findByType('div').filter((node) => node.testId === 'fork-message')
+      const found = root.renderer.findByType('div').filter((node) => node.testId === 'tree-message')
       if (found.length >= 2 && root.renderer.findByType('svg').length > 0) {
-        fork = found.at(-1)
+        treeAction = found.at(-1)
         break
       }
     }
-    expect(fork).toBeTruthy()
-    const forkBox = box(root, fork!)
-    root.renderer.nativeSimulateClick(forkBox.x + 8, forkBox.y + 8)
+    expect(treeAction).toBeTruthy()
+    const treeActionBox = box(root, treeAction!)
+    root.renderer.nativeSimulateClick(treeActionBox.x + 8, treeActionBox.y + 8)
     root.renderer.dispatchNativeEvents()
-    expect(forks).toBe(1)
+    expect(navigations).toBe(1)
     root.unmount()
   })
 

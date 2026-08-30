@@ -12,6 +12,7 @@ import {
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon, type IconName } from './icons.tsx'
 import { colors } from './theme.ts'
+import { NativeVirtualList, useNativeVirtualWindow } from './virtual-list.tsx'
 
 export interface SelectOption {
   value: string
@@ -54,6 +55,9 @@ export function ChipSelect({
   const selected = options.find((option) => option.value === value)
   const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
   const items = options.map((option) => option.value)
+  const selectedIndex = Math.max(0, items.indexOf(value))
+  const virtualWindow = useNativeVirtualWindow(items.length, `${testId ?? 'select'}:${items.length}:${value}`, Math.max(0, selectedIndex - 80))
+  const visibleItems = items.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   React.useEffect(() => {
     if (openRequest !== undefined) dropdown.setOpen(true)
   }, [openRequest])
@@ -81,11 +85,13 @@ export function ChipSelect({
         style={{ width, minHeight: 0, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: backdropColor, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}
       >
         <DropdownSurface {...(testId ? { testId: `${testId}-surface` } : {})} open={dropdown.open} style={{ width: '100%', maxHeight: 340, minHeight: 0, padding: 5 }}>
-          <ComboboxList {...(testId ? { testId: `${testId}-list` } : {})} style={{ maxHeight: 330, minHeight: 0, overflow: 'scroll' }}>
-            {(item: string) => {
-              const option = optionByValue.get(item)
-              return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
-            }}
+          <ComboboxList {...(testId ? { testId: `${testId}-list` } : {})} style={{ height: Math.min(330, Math.max(36, items.length * 42)), minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+            <NativeVirtualList {...(testId ? { testId: `${testId}-virtual-list` } : {})} alignment="top" estimatedItemHeight={42} overdraw={126} itemCount={Math.max(1, items.length)} windowStart={virtualWindow.windowStart} onVisibleRange={virtualWindow.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+              {visibleItems.map((item) => {
+                const option = optionByValue.get(item)
+                return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
+              })}
+            </NativeVirtualList>
           </ComboboxList>
         </DropdownSurface>
       </ComboboxContent>
@@ -113,6 +119,8 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, o
   const filtered = React.useMemo(() => matchSelectOptions(options, query), [options, query])
   const optionByValue = React.useMemo(() => new Map(options.map((option) => [option.value, option])), [options])
   const items = filtered.map((option) => option.value)
+  const virtualWindow = useNativeVirtualWindow(items.length, `${testId ?? 'searchable-select'}:${query}:${items.length}`)
+  const visibleItems = items.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   React.useEffect(() => {
     if (openRequest === undefined) return
     dropdown.setOpen(true)
@@ -151,11 +159,13 @@ function SearchableChipSelect({ value, label, options, onChange, onOpenChange, o
             <Icon name="search" size={13} color={colors.textFaint} />
             <ComboboxInput {...(testId ? { testId: `${testId}-search` } : {})} placeholder="Search models…" style={{ minWidth: 0, flexGrow: 1, height: 30, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 11 }} />
           </div>
-          <ComboboxList {...(testId ? { testId: `${testId}-list` } : {})} style={{ maxHeight: 290, minHeight: 0, overflow: 'scroll' }}>
-            {(item: string) => {
-              const option = optionByValue.get(item)
-              return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
-            }}
+          <ComboboxList {...(testId ? { testId: `${testId}-list` } : {})} style={{ height: items.length === 0 ? 0 : Math.min(290, Math.max(36, items.length * 42)), minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+            <NativeVirtualList {...(testId ? { testId: `${testId}-virtual-list` } : {})} alignment="top" estimatedItemHeight={42} overdraw={126} itemCount={Math.max(1, items.length)} windowStart={virtualWindow.windowStart} onVisibleRange={virtualWindow.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+              {visibleItems.map((item) => {
+                const option = optionByValue.get(item)
+                return option ? <ComboboxOptionRow key={item} option={option} testId={testId} /> : null
+              })}
+            </NativeVirtualList>
           </ComboboxList>
           <ComboboxEmpty style={{ height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <text style={{ color: colors.textFaint, fontSize: 10 }}>No models match your search</text>
@@ -183,7 +193,7 @@ function ComboboxOptionRow({ option, testId }: { option: SelectOption; testId?: 
     <ComboboxItem
       {...(testId ? { testId: `${testId}-option` } : {})}
       value={option.value}
-      style={(state: ComboboxItemState) => optionStyle(state.highlighted || state.selected)}
+      style={(state: ComboboxItemState) => optionStyle(state.highlighted || state.selected, Boolean(option.detail))}
     >
       {(state: ComboboxItemState) => <OptionText option={option} active={state.selected} />}
     </ComboboxItem>
@@ -219,12 +229,15 @@ function chipTriggerStyle(open: boolean, width: number) {
   }
 }
 
-function optionStyle(active: boolean) {
+function optionStyle(active: boolean, detailed: boolean) {
   return {
     display: 'flex',
     flexDirection: 'column' as const,
     width: '100%',
     minWidth: 0,
+    minHeight: detailed ? 44 : 34,
+    flexShrink: 0,
+    justifyContent: 'center' as const,
     gap: 2,
     paddingTop: 7,
     paddingBottom: 7,

@@ -215,7 +215,7 @@ describeNative('WorkbenchApp', () => {
     await Bun.sleep(30)
     root.renderer.flush()
     expect(await automation.getByTestId('copy-message').count()).toBeGreaterThanOrEqual(2)
-    expect(await automation.getByTestId('fork-message').count()).toBeGreaterThanOrEqual(2)
+    expect(await automation.getByTestId('tree-message').count()).toBeGreaterThanOrEqual(2)
     const assistantRows = await automation.getByTestId('assistant-message').all()
     const assistantBounds = assistantRows.at(-1)?.bounds
     expect(assistantBounds).toBeDefined()
@@ -223,7 +223,7 @@ describeNative('WorkbenchApp', () => {
     await Bun.sleep(80)
     root.renderer.flush()
     expect(await automation.getByTestId('copy-message').count()).toBeGreaterThanOrEqual(2)
-    expect(await automation.getByTestId('fork-message').count()).toBeGreaterThanOrEqual(2)
+    expect(await automation.getByTestId('tree-message').count()).toBeGreaterThanOrEqual(2)
     if (process.platform === 'darwin') {
       const screenshot = resolve(screenshotDirectory, 'workbench-message-actions.png')
       root.renderer.captureScreenshot(screenshot)

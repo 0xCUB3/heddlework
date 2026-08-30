@@ -261,9 +261,114 @@ describe('Pi extension UI projection', () => {
   })
 })
 
+class TreeTransport extends ManualTransport {
+  constructor(readonly treeResponse: unknown) {
+    super()
+  }
+
+  override async request<T = unknown>(command: RpcCommand): Promise<T> {
+    if (command.type === 'get_tree') return this.treeResponse as T
+    return super.request<T>(command)
+  }
+}
+
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('Pi extension conversation overlay', () => {
+
+  it('renders a ten-thousand-branch session as compact connected virtual rows', async () => {
+    const branchCount = 10_000
+    const treeResponse = {
+      leafId: `branch-${branchCount - 1}`,
+      tree: [{
+        entry: { type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'Root prompt' } },
+        children: Array.from({ length: branchCount }, (_, index) => ({
+          entry: { type: 'message', id: `branch-${index}`, parentId: 'root', message: { role: 'assistant', content: `Branch ${index}` } },
+          children: [],
+          ...(index === 42 ? { label: 'checkpoint', labelTimestamp: '2026-08-30T10:15:00.000Z' } : {}),
+        })),
+      }],
+    }
+    const controller = new WorkbenchController(new TreeTransport(treeResponse), '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    const root = createTestRoot({ width: 1_000, height: 700 })
+    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
+    await controller.start()
+    const automation = await connectTest(root.renderer)
+    try {
+      const startedAt = performance.now()
+      await controller.openSessionTree()
+      await Bun.sleep(25)
+      root.renderer.flush()
+      expect(performance.now() - startedAt).toBeLessThan(2_500)
+
+      const list = root.renderer.findByTestId('session-tree-list')!
+      expect(list.type).toBe('virtual-list')
+      expect(list.customProps?.alignment).toBe('bottom')
+      expect(list.customProps?.estimatedItemHeight).toBe(32)
+      expect(await automation.getByTestId('session-tree-active').textContent()).toBe('ACTIVE')
+
+      const activeRow = root.renderer.findByTestId(`session-tree-row-${branchCount}`)!
+      const activeRail = root.renderer.findByTestId(`session-tree-rail-${branchCount}`)!
+      expect(activeRow.style.height).toBe(32)
+      expect(activeRail.style.width).toBe(36)
+      expect(root.renderer.findByTestId(`session-tree-detail-${branchCount}`)?.style.whiteSpace).toBe('nowrap')
+      expect(await automation.getByTestId('session-tree-controls').count()).toBe(1)
+      expect(await automation.getByTestId('session-tree-status').textContent()).toContain('Default')
+      expect(root.renderer.findByTestId('extension-dialog-transition')?.customProps?.motion).toBeUndefined()
+      expect(root.renderer.findByTestId('extension-dialog-options')?.customProps?.motion).toBeUndefined()
+
+      await automation.getByTestId('session-tree-cycle-next').click()
+      root.renderer.flush()
+      expect(await automation.getByTestId('session-tree-status').textContent()).toContain('No tools')
+      await automation.getByTestId('session-tree-cycle-previous').click()
+      await automation.getByTestId('session-tree-filter-labeled-only').click()
+      root.renderer.flush()
+      expect(await automation.getByTestId('session-tree-label-0').textContent()).toBe('[checkpoint]')
+      await automation.getByTestId('session-tree-label-time').click()
+      root.renderer.flush()
+      expect(await automation.getByTestId('session-tree-label-time-0').count()).toBe(1)
+      await automation.getByTestId('extension-dialog-search').press('ctrl-u')
+      root.renderer.flush()
+      expect(await automation.getByTestId('session-tree-kind-0').textContent()).toBe('user')
+      await automation.getByTestId('session-tree-filter-assistant-only').click()
+      await Bun.sleep(25)
+      root.renderer.flush()
+      expect(await automation.getByTestId(`session-tree-kind-${branchCount - 1}`).textContent()).toBe('assistant')
+      expect(await automation.getByTestId('session-tree-status').textContent()).toContain('Assistant')
+      await automation.getByTestId('extension-dialog-search').press('ctrl-d')
+      await Bun.sleep(25)
+      root.renderer.flush()
+      expect(await automation.getByTestId('session-tree-active').count()).toBe(1)
+
+      await automation.getByTestId('extension-dialog-search').fill('Branch 42')
+      root.renderer.flush()
+      expect(await automation.getByText('Branch 42').count()).toBeGreaterThan(0)
+      await automation.getByTestId('extension-dialog-search').fill('no-entry-can-match-this')
+      root.renderer.flush()
+      expect(root.renderer.getPaintedText()).toContain('No entries match this search and view.')
+      await automation.getByTestId('extension-dialog-search').fill('')
+      await Bun.sleep(25)
+      root.renderer.flush()
+      expect(await automation.getByTestId('session-tree-active').count()).toBe(1)
+      const restoredActiveBounds = await automation.getByTestId('session-tree-active').bounds()
+      const restoredListBounds = await automation.getByTestId('extension-dialog-options').bounds()
+      expect(restoredActiveBounds.y).toBeGreaterThanOrEqual(restoredListBounds.y)
+      expect(restoredActiveBounds.y + restoredActiveBounds.height).toBeLessThanOrEqual(restoredListBounds.y + restoredListBounds.height + 1)
+
+      const restoredList = root.renderer.findByTestId('session-tree-list')!
+      root.renderer.scrollToItem(restoredList.id, 0)
+      root.renderer.flush()
+      await Bun.sleep(25)
+      root.renderer.flush()
+      expect(root.renderer.findByTestId('session-tree-row-0')).toBeDefined()
+      expect(root.renderer.findByTestId(`session-tree-row-${branchCount}`)).toBeUndefined()
+    } finally {
+      await automation.close()
+      root.unmount()
+      await controller.dispose()
+    }
+  }, 10_000)
+
   it('wraps a long title inside the main conversation area', async () => {
     const transport = new ManualTransport([
       { role: 'user', content: 'Review the active session.' },

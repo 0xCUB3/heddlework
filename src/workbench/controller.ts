@@ -8,6 +8,13 @@ import {
   SESSION_HISTORY_PAGE_MESSAGES,
   type SessionHistoryPage,
 } from '../pi/session-history.ts'
+import {
+  sessionTreeFrom,
+  sessionTreeLeafDescendsFrom,
+  sessionTreeOptions,
+  treeNavigationLeavesBranch,
+  type PiSessionTree,
+} from '../pi/session-tree.ts'
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
 import {
   encodeFabricBridgeRequest,
@@ -64,6 +71,14 @@ const HISTORY_NAVIGATION_LOAD_OPTIONS = {
   maximumMessages: SESSION_HISTORY_PAGE_MAX_MESSAGES,
 } as const
 
+export interface NavigateTreeOptions {
+  summarize?: boolean | undefined
+  customInstructions?: string | undefined
+  replaceInstructions?: boolean | undefined
+  label?: string | undefined
+  preserveQueue?: boolean | undefined
+}
+
 export interface WorkbenchControllerDependencies {
   sessionCatalog: SessionCatalogService
   workspaceDiff: WorkspaceDiffService
@@ -93,6 +108,7 @@ export class WorkbenchController {
   #sessionRefresh: Promise<void> | undefined
   #sessionTransitionDepth = 0
   #historyPager: PiSessionHistoryPager | undefined
+  #sessionTree: PiSessionTree | undefined
   #nextQueueId = 0
   #nextUiRequestId = 0
   #nextFabricRequestId = 0
@@ -609,6 +625,72 @@ export class WorkbenchController {
     await this.refreshSessions()
   }
 
+  async openSessionTree(options: { preserveQueue?: boolean } = {}): Promise<void> {
+    if (this.#state.session.isStreaming) return
+    try {
+      const sessionTree = await this.#requestSessionTree()
+      const selections = sessionTreeOptions(sessionTree)
+      if (selections.length === 0) {
+        this.#setState((state) => addNotice(state, 'warning', 'The current Pi session tree is empty'))
+        return
+      }
+      this.#dialogs.showLocalTree('Navigate session tree\nSelect any point to continue in this session', selections, (response) => {
+        if (response.value) this.#chooseTreeNavigation(sessionTree, response.value, options.preserveQueue ?? false)
+      })
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'warning', errorMessage(error)))
+    }
+  }
+
+  async navigateTree(entryId: string, options: NavigateTreeOptions = {}): Promise<void> {
+    if (!entryId || this.#state.session.isStreaming) return
+    this.#patch({ activity: options.summarize ? 'Summarizing branch' : 'Navigating session tree' })
+    try {
+      const result = await this.#transport.request<{ cancelled?: boolean; editorText?: string }>({
+        type: 'navigate_tree',
+        entryId,
+        ...(options.summarize === undefined ? {} : { summarize: options.summarize }),
+        ...(options.customInstructions === undefined ? {} : { customInstructions: options.customInstructions }),
+        ...(options.replaceInstructions === undefined ? {} : { replaceInstructions: options.replaceInstructions }),
+        ...(options.label === undefined ? {} : { label: options.label }),
+      })
+      if (result.cancelled) {
+        this.#patch({ activity: 'Ready' })
+        return
+      }
+      this.#historyPager = undefined
+      this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
+      await this.#bootstrap(false)
+      if (result.editorText !== undefined) this.#patch({ editorText: result.editorText, editorImages: [] })
+      this.#setState((state) => addNotice(state, 'info', 'Navigated within the current Pi session'))
+    } catch (error) {
+      this.#patch({ activity: 'Ready' })
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
+  #chooseTreeNavigation(sessionTree: PiSessionTree, entryId: string, preserveQueue: boolean): void {
+    if (!treeNavigationLeavesBranch(sessionTree, entryId)) {
+      void this.navigateTree(entryId, { preserveQueue })
+      return
+    }
+    const withoutSummary = 'Continue without summary — Keep the abandoned branch only in session history'
+    const withSummary = 'Summarize abandoned branch — Carry its important context onto the selected branch'
+    const withCustomSummary = 'Summarize with custom focus — Add instructions for what Pi should preserve'
+    this.#dialogs.showLocalSelect('Leave the active branch\nChoose how context should carry forward', [withoutSummary, withSummary, withCustomSummary], (response) => {
+      if (response.value === withoutSummary) {
+        void this.navigateTree(entryId, { preserveQueue })
+      } else if (response.value === withSummary) {
+        void this.navigateTree(entryId, { summarize: true, preserveQueue })
+      } else if (response.value === withCustomSummary) {
+        this.#dialogs.showLocalInput('Branch summary focus', 'What should Pi preserve from the branch?', (input) => {
+          const customInstructions = input.value?.trim()
+          if (customInstructions) void this.navigateTree(entryId, { summarize: true, customInstructions, preserveQueue })
+        })
+      }
+    })
+  }
+
   async cloneSession(): Promise<void> {
     if (this.#state.session.isStreaming) return
     try {
@@ -1067,6 +1149,9 @@ export class WorkbenchController {
           this.#setState((state) => addNotice(state, 'info', formatSessionNotice(this.#state.session, stats)))
           return true
         }
+        case 'tree':
+          await this.openSessionTree({ preserveQueue: queued })
+          return true
         case 'fork': {
           const messages = this.#state.forkMessages
           if (messages.length === 0) {
@@ -1167,7 +1252,6 @@ export class WorkbenchController {
         case 'quit':
           this.#requestUi({ kind: 'quit' })
           return true
-        case 'tree':
         case 'scoped-models':
         case 'import':
         case 'share':
@@ -1192,7 +1276,11 @@ export class WorkbenchController {
   }
 
   async #bootstrap(includeModels: boolean): Promise<void> {
-    const session = await this.#transport.request<PiSessionState>({ type: 'get_state' })
+    const [session, sessionTree] = await Promise.all([
+      this.#transport.request<PiSessionState>({ type: 'get_state' }),
+      this.#tryRequestSessionTree(),
+    ])
+    this.#sessionTree = sessionTree
     this.#reconnectAttempts = 0
     this.#patch({
       connection: 'connected',
@@ -1203,7 +1291,7 @@ export class WorkbenchController {
       activity: session.isStreaming ? 'Working' : 'Ready',
     })
     const tasks = await Promise.allSettled([
-      this.#loadInitialTranscript(session),
+      this.#loadInitialTranscript(session, sessionTree?.leafId),
       includeModels
         ? this.#transport.request<{ models: PiModel[] }>({ type: 'get_available_models' })
         : Promise.resolve({ models: this.#state.models }),
@@ -1213,7 +1301,7 @@ export class WorkbenchController {
       this.#transport.request<{ commands: RpcSlashCommand[] }>({ type: 'get_commands' }),
     ])
     const [messagesResult, modelsResult, levelsResult, statsResult, forkMessagesResult, commandsResult] = tasks
-    if (messagesResult.status === 'fulfilled') this.#historyPager = messagesResult.value.pager
+    this.#historyPager = messagesResult.status === 'fulfilled' ? messagesResult.value.pager : undefined
     this.#patch({
       messages: messagesResult.status === 'fulfilled' ? messagesResult.value.page.messages : this.#state.messages,
       messagesHasOlder: messagesResult.status === 'fulfilled' ? messagesResult.value.page.hasOlder : false,
@@ -1228,9 +1316,9 @@ export class WorkbenchController {
     if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
   }
 
-  async #loadInitialTranscript(session: PiSessionState): Promise<{ page: SessionHistoryPage; pager: PiSessionHistoryPager | undefined }> {
+  async #loadInitialTranscript(session: PiSessionState, leafId?: string | null): Promise<{ page: SessionHistoryPage; pager: PiSessionHistoryPager | undefined }> {
     if (session.sessionFile) {
-      const pager = new PiSessionHistoryPager(session.sessionFile)
+      const pager = new PiSessionHistoryPager(session.sessionFile, leafId)
       try {
         const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
         return { page, pager }
@@ -1242,6 +1330,23 @@ export class WorkbenchController {
     return { page: { messages: result.messages, hasOlder: false }, pager: undefined }
   }
 
+  async #requestSessionTree(): Promise<PiSessionTree> {
+    const value = await this.#transport.request({ type: 'get_tree' })
+    const sessionTree = sessionTreeFrom(value)
+    if (!sessionTree) throw new Error('This Pi version does not expose session tree navigation to RPC clients')
+    this.#sessionTree = sessionTree
+    return sessionTree
+  }
+
+  async #tryRequestSessionTree(): Promise<PiSessionTree | undefined> {
+    try {
+      const value = await this.#transport.request({ type: 'get_tree' })
+      return sessionTreeFrom(value)
+    } catch {
+      return undefined
+    }
+  }
+
   async #getThinkingLevels(): Promise<ThinkingLevel[]> {
     const data = await this.#transport.request<{ levels: ThinkingLevel[] }>({ type: 'get_available_thinking_levels' })
     return data.levels
@@ -1250,14 +1355,22 @@ export class WorkbenchController {
   async #refreshMessages(): Promise<void> {
     try {
       const sessionFile = this.#state.session.sessionFile
-      const forkMessagesPromise = this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' })
+      const previousTree = this.#sessionTree
+      const [sessionTree, forkMessages] = await Promise.all([
+        this.#tryRequestSessionTree(),
+        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
+      ])
+      if (sessionTree) this.#sessionTree = sessionTree
       if (sessionFile) {
-        const latestPager = new PiSessionHistoryPager(sessionFile)
-        const [page, forkMessages] = await Promise.all([latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS), forkMessagesPromise])
-        const retainedPager = this.#historyPager
+        const latestPager = new PiSessionHistoryPager(sessionFile, sessionTree?.leafId)
+        const page = await latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
+        const branchChanged = previousTree !== undefined
+          && sessionTree !== undefined
+          && !sessionTreeLeafDescendsFrom(sessionTree, previousTree.leafId)
+        const retainedPager = branchChanged ? undefined : this.#historyPager
         if (!retainedPager) this.#historyPager = latestPager
         this.#patch({
-          messages: mergeTranscriptTail(this.#state.messages, page.messages),
+          messages: branchChanged ? page.messages : mergeTranscriptTail(this.#state.messages, page.messages),
           messagesHasOlder: retainedPager ? this.#state.messagesHasOlder : page.hasOlder,
           messagesLoadingEarlier: false,
           forkMessages: forkMessagesFrom(forkMessages),
@@ -1266,10 +1379,7 @@ export class WorkbenchController {
         })
         return
       }
-      const [messages, forkMessages] = await Promise.all([
-        this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' }),
-        forkMessagesPromise,
-      ])
+      const messages = await this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
       this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
     } catch (error) {
       this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
@@ -1528,7 +1638,6 @@ function formatSessionNotice(session: PiSessionState, stats: PiSessionStats): st
 }
 
 function interactiveOnlyCommandMessage(command: ParsedBuiltinSlashCommand['name']): string {
-  if (command === 'tree') return "Pi's /tree navigation is not exposed by RPC yet; use Revert on a user turn to create a fork"
   if (command === 'scoped-models') return "Pi's scoped model editor is not exposed by RPC yet; all available models remain in Heddlework's picker"
   if (command === 'login' || command === 'logout') return `/${command} is interactive-only in Pi; authenticate with Pi in a terminal and reconnect Heddlework`
   if (command === 'trust') return "Pi's /trust flow is interactive-only; save trust in Pi or start Heddlework with an approved Pi configuration"

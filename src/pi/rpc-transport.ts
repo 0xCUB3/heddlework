@@ -3,7 +3,12 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { attachJsonlReader, serializeJsonLine } from './jsonl.ts'
-import { heddleworkFabricBridgePath } from './fabric-bridge.ts'
+import {
+  encodeTreeNavigateBridgeRequest,
+  heddleworkFabricBridgePath,
+  parseTreeNavigateBridgeEvent,
+  type TreeNavigateBridgeEvent,
+} from './fabric-bridge.ts'
 import type { AgentTransport, TransportStatus } from './transport.ts'
 import type { RpcCommand, RpcRecord } from './types.ts'
 
@@ -23,11 +28,18 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>
 }
 
+interface PendingTreeNavigation {
+  resolve(value: TreeNavigateBridgeEvent): void
+  reject(error: Error): void
+  timer: ReturnType<typeof setTimeout>
+}
+
 export class PiRpcTransport implements AgentTransport {
   readonly #options: PiRpcTransportOptions
   readonly #eventListeners = new Set<(event: RpcRecord) => void>()
   readonly #statusListeners = new Set<(status: TransportStatus) => void>()
   readonly #pending = new Map<string, PendingRequest>()
+  readonly #pendingTreeNavigations = new Map<string, PendingTreeNavigation>()
   #process: ChildProcessWithoutNullStreams | undefined
   #detachReader: (() => void) | undefined
   #requestId = 0
@@ -118,9 +130,13 @@ export class PiRpcTransport implements AgentTransport {
   }
 
   request<T = unknown>(command: RpcCommand): Promise<T> {
+    if (command.type === 'navigate_tree') return this.#navigateTree(command) as Promise<T>
+    return this.#requestPi(command)
+  }
+
+  #requestPi<T = unknown>(command: RpcCommand, timeoutMs = this.#options.requestTimeoutMs ?? 45_000): Promise<T> {
     const id = `workbench_${++this.#requestId}`
     const record = { ...command, id }
-    const timeoutMs = this.#options.requestTimeoutMs ?? 45_000
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id)
@@ -144,6 +160,46 @@ export class PiRpcTransport implements AgentTransport {
     })
   }
 
+  async #navigateTree(command: RpcCommand): Promise<{ cancelled: boolean; editorText?: string | undefined }> {
+    if (this.#options.fabricBridge === false) throw new Error('Session tree navigation requires the Heddlework Pi bridge')
+    const targetId = typeof command.entryId === 'string' ? command.entryId : ''
+    if (!targetId) throw new Error('Session tree navigation requires an entry ID')
+    const requestId = `tree_${++this.#requestId}`
+    const timeoutMs = typeof command.summarize === 'boolean' && command.summarize
+      ? Math.max(this.#options.requestTimeoutMs ?? 45_000, 300_000)
+      : this.#options.requestTimeoutMs ?? 45_000
+    const eventPromise = new Promise<TreeNavigateBridgeEvent>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#pendingTreeNavigations.delete(requestId)
+        reject(new Error('Timed out waiting for Pi session tree navigation'))
+      }, timeoutMs)
+      this.#pendingTreeNavigations.set(requestId, { resolve, reject, timer })
+    })
+    const requestPromise = this.#requestPi({
+      type: 'prompt',
+      message: encodeTreeNavigateBridgeRequest({
+        requestId,
+        targetId,
+        ...(typeof command.summarize === 'boolean' ? { summarize: command.summarize } : {}),
+        ...(typeof command.customInstructions === 'string' ? { customInstructions: command.customInstructions } : {}),
+        ...(typeof command.replaceInstructions === 'boolean' ? { replaceInstructions: command.replaceInstructions } : {}),
+        ...(typeof command.label === 'string' ? { label: command.label } : {}),
+      }),
+    }, timeoutMs)
+    try {
+      const [event] = await Promise.all([eventPromise, requestPromise])
+      if (event.event === 'tree_error') throw new Error(event.error)
+      return {
+        cancelled: event.cancelled,
+        ...(event.editorText === undefined ? {} : { editorText: event.editorText }),
+      }
+    } finally {
+      const pending = this.#pendingTreeNavigations.get(requestId)
+      if (pending) clearTimeout(pending.timer)
+      this.#pendingTreeNavigations.delete(requestId)
+    }
+  }
+
   send(record: RpcRecord): void {
     const child = this.#process
     if (!child || child.stdin.destroyed || !child.stdin.writable) {
@@ -159,6 +215,16 @@ export class PiRpcTransport implements AgentTransport {
       record = JSON.parse(line) as RpcRecord
     } catch {
       this.#emitEvent({ type: 'transport_parse_error', line })
+      return
+    }
+    const treeEvent = parseTreeNavigateBridgeEvent(record)
+    if (treeEvent) {
+      const pending = this.#pendingTreeNavigations.get(treeEvent.requestId)
+      if (pending) {
+        this.#pendingTreeNavigations.delete(treeEvent.requestId)
+        clearTimeout(pending.timer)
+        pending.resolve(treeEvent)
+      }
       return
     }
     if (record.type === 'response' && record.id) {
@@ -185,6 +251,11 @@ export class PiRpcTransport implements AgentTransport {
       pending.reject(error)
     }
     this.#pending.clear()
+    for (const pending of this.#pendingTreeNavigations.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(error)
+    }
+    this.#pendingTreeNavigations.clear()
   }
 
   #emitEvent(event: RpcRecord): void {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { IconButton, NativeVirtualList } from './primitives.tsx'
+import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { useSpringProgress } from './motion.ts'
@@ -237,13 +237,16 @@ function diffNoticeCount(patch: string): number {
 }
 
 function DiffFileList({ files, selectedPath, onSelect }: { files: WorkspaceDiffFile[]; selectedPath: string | undefined; onSelect(path: string | undefined): void }) {
+  const entries: Array<WorkspaceDiffFile | undefined> = [undefined, ...files]
+  const selectedIndex = selectedPath ? Math.max(0, entries.findIndex((file) => file?.path === selectedPath)) : 0
+  const virtualWindow = useNativeVirtualWindow(entries.length, `diff-files:${files.length}:${selectedPath ?? 'all'}`, Math.max(0, selectedIndex - 80))
+  const visibleEntries = entries.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   return (
     <div testId="diff-file-list-panel" style={{ width: 212, flexGrow: 1, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
-      <NativeVirtualList alignment="top" estimatedItemHeight={40} overdraw={160} style={{ flexGrow: 1, minHeight: 0, width: '100%', padding: 6 }}>
-        <DiffFileRow label="All changes" active={!selectedPath} additions={files.reduce((sum, file) => sum + file.additions, 0)} deletions={files.reduce((sum, file) => sum + file.deletions, 0)} onClick={() => onSelect(undefined)} />
-        {files.map((file) => (
-          <DiffFileRow key={file.path} label={file.path} active={file.path === selectedPath} additions={file.additions} deletions={file.deletions} onClick={() => onSelect(file.path)} />
-        ))}
+      <NativeVirtualList alignment="top" estimatedItemHeight={40} overdraw={160} itemCount={entries.length} windowStart={virtualWindow.windowStart} onVisibleRange={virtualWindow.onVisibleRange} style={{ flexGrow: 1, minHeight: 0, width: '100%', padding: 6 }}>
+        {visibleEntries.map((file, visibleIndex) => file
+          ? <DiffFileRow key={file.path} label={file.path} active={file.path === selectedPath} additions={file.additions} deletions={file.deletions} onClick={() => onSelect(file.path)} />
+          : <DiffFileRow key={`all-${virtualWindow.windowStart + visibleIndex}`} label="All changes" active={!selectedPath} additions={files.reduce((sum, entry) => sum + entry.additions, 0)} deletions={files.reduce((sum, entry) => sum + entry.deletions, 0)} onClick={() => onSelect(undefined)} />)}
       </NativeVirtualList>
     </div>
   )

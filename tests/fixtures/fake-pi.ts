@@ -9,7 +9,7 @@ process.stdin.on('data', (chunk: string) => {
     const line = buffer.slice(0, newline)
     buffer = buffer.slice(newline + 1)
     if (!line) continue
-    const command = JSON.parse(line) as { id?: string; type: string }
+    const command = JSON.parse(line) as { id?: string; type: string; message?: string }
     if (command.type === 'ping') {
       write({ type: 'queue_update', steering: ['hello\u2028world'], followUp: [] })
       write({ type: 'response', id: command.id, command: 'ping', success: true, data: { pong: true } })
@@ -17,6 +17,16 @@ process.stdin.on('data', (chunk: string) => {
       write({ type: 'response', id: command.id, command: 'argv', success: true, data: { argv: process.argv.slice(2) } })
     } else if (command.type === 'fail') {
       write({ type: 'response', id: command.id, command: 'fail', success: false, error: 'expected failure' })
+    } else if (command.type === 'prompt' && command.message?.startsWith('/heddlework-tree-navigate ')) {
+      const request = JSON.parse(command.message.slice(command.message.indexOf(' ') + 1)) as { requestId: string }
+      write({
+        type: 'extension_ui_request',
+        id: 'tree-event',
+        method: 'setWidget',
+        widgetKey: 'heddlework.fabric.bridge.v1',
+        widgetLines: [JSON.stringify({ version: 1, requestId: request.requestId, event: 'tree_navigated', cancelled: false, editorText: 'Try another branch' })],
+      })
+      write({ type: 'response', id: command.id, command: 'prompt', success: true })
     } else {
       write({ type: 'response', id: command.id, command: command.type, success: true, data: {} })
     }

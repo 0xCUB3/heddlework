@@ -101,56 +101,7 @@ export function IconButton({
   )
 }
 
-export interface NativeElementHandle {
-  id: number
-}
-
-export interface NativeScrollEvent {
-  elementId: number
-  deltaY?: number
-  precise?: boolean
-}
-
-export interface NativeVisibleRangeEvent {
-  startIndex?: number
-  endIndex?: number
-}
-
-export function NativeVirtualList({
-  children,
-  style,
-  alignment = 'top',
-  followTail = false,
-  overdraw,
-  estimatedItemHeight,
-  testId,
-  onScroll,
-  onVisibleRange,
-  elementRef,
-}: {
-  children: React.ReactNode
-  style: Record<string, unknown>
-  alignment?: 'top' | 'bottom'
-  followTail?: boolean
-  overdraw?: number
-  estimatedItemHeight?: number
-  testId?: string
-  onScroll?(event: NativeScrollEvent): void
-  onVisibleRange?(event: NativeVisibleRangeEvent): void
-  elementRef?: React.Ref<NativeElementHandle>
-}) {
-  return React.createElement('virtual-list', {
-    alignment,
-    followTail,
-    overdraw,
-    estimatedItemHeight,
-    style,
-    ...(testId ? { testId } : {}),
-    ...(onScroll ? { onScroll } : {}),
-    ...(onVisibleRange ? { onVisibleRange } : {}),
-    ...(elementRef ? { ref: elementRef } : {}),
-  } as never, children)
-}
+export { NativeVirtualList, useNativeVirtualWindow, type NativeElementHandle, type NativeScrollEvent, type NativeVisibleRangeEvent, type NativeVirtualWindow } from './virtual-list.tsx'
 
 export function Label({ children }: { children: string }) {
   return <text style={{ color: colors.textFaint, fontSize: 10, fontWeight: 650 }}>{children.toUpperCase()}</text>

@@ -268,7 +268,8 @@ function ProjectFilter({ value, options, onChange }: { value: string; options: A
         </div>
       </SelectTrigger>
       <SelectContent testId="sidebar-project-filter" side="bottom" sideOffset={5} align="start" style={{ width: 238, minHeight: 0, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: colors.sidebar, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}>
-        <DropdownSurface testId="sidebar-project-menu" open={dropdown.open} style={{ width: '100%', maxHeight: 320, minHeight: 0, padding: 5, overflow: 'scroll' }}>
+        <DropdownSurface testId="sidebar-project-menu" open={dropdown.open} style={{ width: '100%', height: Math.min(320, Math.max(44, options.length * 34 + 10)), minHeight: 0, padding: 5, overflow: 'hidden' }}>
+          <NativeVirtualList testId="sidebar-project-list" alignment="top" estimatedItemHeight={34} overdraw={102} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
           {options.map((option, index) => (
             <SelectItem
               key={option.value}
@@ -286,6 +287,7 @@ function ProjectFilter({ value, options, onChange }: { value: string; options: A
               )}
             </SelectItem>
           ))}
+          </NativeVirtualList>
         </DropdownSurface>
       </SelectContent>
     </Select>

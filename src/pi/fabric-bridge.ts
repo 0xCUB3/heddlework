@@ -5,6 +5,20 @@ import type { ExtensionUiRequest, RpcRecord } from './types.ts'
 
 export const HEDDLEWORK_FABRIC_BRIDGE_WIDGET = 'heddlework.fabric.bridge.v1'
 export const HEDDLEWORK_FABRIC_BRIDGE_PREFIX = '__heddlework_fabric_bridge_v1__:'
+export const HEDDLEWORK_TREE_BRIDGE_COMMAND = 'heddlework-tree-navigate'
+
+export interface TreeNavigateBridgeRequest {
+  requestId: string
+  targetId: string
+  summarize?: boolean | undefined
+  customInstructions?: string | undefined
+  replaceInstructions?: boolean | undefined
+  label?: string | undefined
+}
+
+export type TreeNavigateBridgeEvent =
+  | { version: 1; requestId: string; event: 'tree_navigated'; cancelled: boolean; editorText?: string | undefined }
+  | { version: 1; requestId: string; event: 'tree_error'; error: string }
 
 export interface FabricPeerCard {
   id: string
@@ -36,17 +50,31 @@ export function encodeFabricBridgeRequest(request: FabricBridgeRequest): string 
   return `${HEDDLEWORK_FABRIC_BRIDGE_PREFIX}${JSON.stringify(request)}`
 }
 
-export function parseFabricBridgeEvent(record: RpcRecord): FabricBridgeEvent | undefined {
-  if (!isBridgeWidget(record)) return undefined
-  const line = record.widgetLines?.[0]
-  if (!line) return undefined
-  let value: unknown
-  try {
-    value = JSON.parse(line)
-  } catch {
-    return undefined
+export function encodeTreeNavigateBridgeRequest(request: TreeNavigateBridgeRequest): string {
+  return `/${HEDDLEWORK_TREE_BRIDGE_COMMAND} ${JSON.stringify(request)}`
+}
+
+export function parseTreeNavigateBridgeEvent(record: RpcRecord): TreeNavigateBridgeEvent | undefined {
+  const value = bridgeValue(record)
+  if (!value || typeof value.requestId !== 'string') return undefined
+  if (value.event === 'tree_navigated' && typeof value.cancelled === 'boolean') {
+    return {
+      version: 1,
+      requestId: value.requestId,
+      event: 'tree_navigated',
+      cancelled: value.cancelled,
+      ...(typeof value.editorText === 'string' ? { editorText: value.editorText } : {}),
+    }
   }
-  if (!isRecord(value) || value.version !== 1 || typeof value.requestId !== 'string' || typeof value.event !== 'string') return undefined
+  if (value.event === 'tree_error' && typeof value.error === 'string') {
+    return { version: 1, requestId: value.requestId, event: 'tree_error', error: value.error }
+  }
+  return undefined
+}
+
+export function parseFabricBridgeEvent(record: RpcRecord): FabricBridgeEvent | undefined {
+  const value = bridgeValue(record)
+  if (!value || typeof value.requestId !== 'string') return undefined
   if (value.event === 'ready') return { version: 1, requestId: value.requestId, event: 'ready' }
   if (value.event === 'started' && (value.activity === 'prewalk' || value.activity === 'await') && typeof value.note === 'string') {
     return { version: 1, requestId: value.requestId, event: 'started', activity: value.activity, note: value.note }
@@ -91,6 +119,19 @@ export function heddleworkFabricBridgePath(root = join(tmpdir(), 'heddlework')):
   return path
 }
 
+function bridgeValue(record: RpcRecord): Record<string, unknown> | undefined {
+  if (!isBridgeWidget(record)) return undefined
+  const line = record.widgetLines?.[0]
+  if (!line) return undefined
+  let value: unknown
+  try {
+    value = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+  return isRecord(value) && value.version === 1 && typeof value.event === 'string' ? value : undefined
+}
+
 function isBridgeWidget(record: RpcRecord): record is ExtensionUiRequest & { method: 'setWidget' } {
   return record.type === 'extension_ui_request'
     && record.method === 'setWidget'
@@ -124,12 +165,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const HEDDLEWORK_FABRIC_BRIDGE_SOURCE = String.raw`const WIDGET_KEY = "heddlework.fabric.bridge.v1";
 const INPUT_PREFIX = "__heddlework_fabric_bridge_v1__:";
+const TREE_COMMAND = "heddlework-tree-navigate";
 const PREWALK_EVENT = "pi-fabric:prewalk:request:v1";
 const PEERS_EVENT = "pi-fabric:peers:cards:v1";
 const AWAIT_EVENT = "pi-fabric:peer:await-settle:v1";
 
 function errorText(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function contentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((block) => block && typeof block.text === "string" ? [block.text] : []).join("\n");
 }
 
 function claimable(pi, event, payload) {
@@ -232,6 +280,51 @@ export default function heddleworkFabricBridge(pi) {
       waits.delete(request.requestId);
     }
   };
+
+  pi.registerCommand(TREE_COMMAND, {
+    description: "Heddlework internal session-tree navigation",
+    handler: async (args, ctx) => {
+      let request;
+      try {
+        request = JSON.parse(args);
+      } catch (error) {
+        publish(ctx, { requestId: "invalid", event: "tree_error", error: errorText(error) });
+        return;
+      }
+      if (!request || typeof request.requestId !== "string" || typeof request.targetId !== "string") {
+        publish(ctx, { requestId: request?.requestId || "invalid", event: "tree_error", error: "Invalid tree navigation request" });
+        return;
+      }
+      const targetEntry = ctx.sessionManager.getEntry(request.targetId);
+      if (!targetEntry) {
+        publish(ctx, { requestId: request.requestId, event: "tree_error", error: "Session tree entry not found: " + request.targetId });
+        return;
+      }
+      const oldLeafId = ctx.sessionManager.getLeafId();
+      let editorText;
+      if (oldLeafId !== request.targetId && targetEntry.type === "message" && targetEntry.message?.role === "user") {
+        editorText = contentText(targetEntry.message.content);
+      } else if (oldLeafId !== request.targetId && targetEntry.type === "custom_message") {
+        editorText = contentText(targetEntry.content);
+      }
+      try {
+        const result = await ctx.navigateTree(request.targetId, {
+          ...(typeof request.summarize === "boolean" ? { summarize: request.summarize } : {}),
+          ...(typeof request.customInstructions === "string" ? { customInstructions: request.customInstructions } : {}),
+          ...(typeof request.replaceInstructions === "boolean" ? { replaceInstructions: request.replaceInstructions } : {}),
+          ...(typeof request.label === "string" ? { label: request.label } : {}),
+        });
+        publish(ctx, {
+          requestId: request.requestId,
+          event: "tree_navigated",
+          cancelled: result.cancelled,
+          ...(!result.cancelled && editorText !== undefined ? { editorText } : {}),
+        });
+      } catch (error) {
+        publish(ctx, { requestId: request.requestId, event: "tree_error", error: errorText(error) });
+      }
+    },
+  });
 
   pi.on("session_start", (_event, ctx) => {
     publish(ctx, { requestId: "bridge", event: "ready" });

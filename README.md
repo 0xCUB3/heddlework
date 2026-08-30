@@ -50,7 +50,7 @@ A heddle guides one thread inside a loom harness. Heddlework applies that model 
 | | Capability | What it unlocks |
 | :-: | --- | --- |
 | 🧵 | **Harness-neutral core** | Pi is the first adapter, not the product boundary. Codex and Claude can join without replacing session, workspace, or review concepts. |
-| 💬 | **Durable conversations** | Searchable project-scoped sessions, streaming responses, reasoning, tool activity, forks, queued steering, and compaction. |
+| 💬 | **Durable conversations** | Searchable project-scoped sessions, streaming responses, reasoning, tool activity, in-session branches, explicit forks, queued steering, and compaction. |
 | 🧭 | **Work lifecycle** | Active, snoozed, and settled threads with persistent navigation designed to grow into scheduled and dependency-aware work. |
 | 🧩 | **Native surfaces** | Conversation, settings, notifications, changed files, and extensible right-side work surfaces in one GPU-rendered shell. |
 | 🔎 | **Review without context switching** | Native virtualized diffs, wrapped lines, file filtering, mutation summaries, and artifact-oriented direction. |
@@ -126,9 +126,11 @@ Parallel work is also observational: any Pi session fans into agent rails only w
 
 ### Pi slash commands
 
-Pi RPC's `get_commands` response intentionally excludes built-in TUI commands, so Heddlework adds Pi's complete built-in command catalog to native completion and gives built-ins precedence over conflicting extension names. RPC-backed commands cover model and thinking changes, HTML export, session naming and stats, forking and cloning, new sessions, compaction with custom instructions, and resource reload. Host-backed commands open Heddlework's settings, model, thinking, resume, and fork surfaces, copy the last response, or quit cleanly. Prompt templates, skills, `/llama`, and other extension commands continue through Pi's `prompt` RPC so Pi performs their normal expansion or command handler.
+Pi RPC's `get_commands` response intentionally excludes built-in TUI commands, so Heddlework adds Pi's complete built-in command catalog to native completion and gives built-ins precedence over conflicting extension names. RPC-backed commands cover model and thinking changes, HTML export, session naming and stats, forking and cloning, new sessions, compaction with custom instructions, and resource reload. Host-backed commands open Heddlework's settings, model, thinking, resume, and session-tree surfaces, copy the last response, or quit cleanly. Prompt templates, skills, `/llama`, and other extension commands continue through Pi's `prompt` RPC so Pi performs their normal expansion or command handler.
 
-Pi does not currently expose RPC operations for `/tree`, `/scoped-models`, `/import`, `/share`, `/trust`, `/login`, `/logout`, `/hotkeys`, or `/changelog`. Heddlework recognizes these commands and reports the protocol limitation instead of sending their text to the model. Authentication and trust changes can still be made from interactive Pi before reconnecting Heddlework.
+Pi RPC exposes the full session tree through `get_tree`, but not the mutating half of `/tree`. Heddlework reads that tree natively and delegates selections through a control-only extension to Pi core's `ExtensionCommandContext.navigateTree()`, the same in-place navigation path used by the TUI. Active transcript paging starts from Pi's `leafId`, so switching branches keeps the session file and ID while restoring the selected branch. See [Pi session tree integration](docs/pi-session-tree.md).
+
+Pi does not currently expose RPC operations for `/scoped-models`, `/import`, `/share`, `/trust`, `/login`, `/logout`, `/hotkeys`, or `/changelog`. Heddlework recognizes these commands and reports the protocol limitation instead of sending their text to the model. Authentication and trust changes can still be made from interactive Pi before reconnecting Heddlework.
 
 ### Pi extension UI
 

@@ -39,9 +39,23 @@ describe('WorkbenchController', () => {
       expect(state.messages.at(-1)?.role).toBe('assistant')
       expect(state.liveTools).toEqual([])
       expect(state.forkMessages).toHaveLength(1)
-      await controller.forkFrom(state.forkMessages[0]!.entryId)
+
+      await controller.submit('/tree')
+      expect(controller.getSnapshot().dialog).toMatchObject({ method: 'tree' })
+      expect(controller.getSnapshot().dialog?.title).toStartWith('Navigate session tree')
+      const rootOption = controller.getSnapshot().dialog?.treeOptions?.find((option) => option.detail.includes('Inspect the repository'))
+      expect(rootOption).toBeDefined()
+      controller.respondToDialog({ value: rootOption!.entryId })
+      expect(controller.getSnapshot().dialog?.title).toStartWith('Leave the active branch')
+      expect(controller.getSnapshot().dialog?.options).toHaveLength(3)
+      controller.respondToDialog({ cancelled: true })
+
+      const sessionId = state.session.sessionId
+      await controller.navigateTree(state.forkMessages[0]!.entryId)
       expect(controller.getSnapshot().editorText).toBe('Inspect the repository')
       expect(controller.getSnapshot().messages).toHaveLength(0)
+      expect(controller.getSnapshot().forkMessages).toHaveLength(1)
+      expect(controller.getSnapshot().session.sessionId).toBe(sessionId)
     } finally {
       await controller.dispose()
     }

@@ -1,4 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useGpuixRequired } from '@gpuix/react'
+import {
+  cycleSessionTreeFilterMode,
+  layoutSessionTreeOptions,
+  PI_SESSION_TREE_FILTER_MODES,
+  sessionTreeFilterLabel,
+  type PiSessionTreeFilterMode,
+  type PiSessionTreeRow,
+} from '../pi/session-tree.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import {
   questionnaireFromTool,
@@ -8,16 +17,11 @@ import {
   type AskUserSubmissionAnswer,
 } from '../workbench/ask-user.ts'
 import type { ExtensionDialog, WorkbenchState } from '../workbench/state.ts'
-import { Button } from './primitives.tsx'
+import { Button, NativeVirtualList, useNativeVirtualWindow, type NativeElementHandle } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
-import { filterExtensionOptions, parseExtensionOption, parseExtensionTitle } from './extension-ui.ts'
+import { filterExtensionOptions, parseExtensionOption, parseExtensionTitle, type ParsedExtensionOption } from './extension-ui.ts'
 import { openExternal } from './open-external.ts'
-import { MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
-
-const DIALOG_TRANSITION_SECONDS = 0.16
-const DIALOG_EXIT_DELAY_SECONDS = 0.08
-const DIALOG_RETAIN_MS = (DIALOG_TRANSITION_SECONDS + DIALOG_EXIT_DELAY_SECONDS) * 1_000 + 20
 
 interface ExtensionDialogResponse {
   value?: string
@@ -45,14 +49,8 @@ export function ConversationExtensionOverlay({ state, controller }: { state: Wor
       || questionnaireMatchesDialog(candidate, state.dialog)
     ))
   }, [state.dialog, state.liveTools, state.questionnaireCollapsed, state.questionnaireSubmitting])
-  const [presentedDialog, beginDialogTransition] = useRetainedDialog(state.dialog)
-  const respondToPresentedDialog = (response: ExtensionDialogResponse) => {
-    beginDialogTransition()
-    controller.respondToDialog(response)
-  }
-
   if (questionnaire && questionnaire.toolCallId === state.questionnaireCollapsed) return null
-  if (!questionnaire && !presentedDialog) return null
+  if (!questionnaire && !state.dialog) return null
   return (
     <div
       testId="conversation-extension-overlay"
@@ -70,47 +68,18 @@ export function ConversationExtensionOverlay({ state, controller }: { state: Wor
     >
       {questionnaire
         ? <QuestionnaireOverlay key={questionnaire.toolCallId} questionnaire={questionnaire} submitting={state.questionnaireSubmitting === questionnaire.toolCallId} controller={controller} />
-        : presentedDialog
-          ? <TransitionedGenericDialog dialog={presentedDialog} active={state.dialog?.id === presentedDialog.id} queued={state.dialogQueue.length} onRespond={respondToPresentedDialog} />
+        : state.dialog
+          ? <GenericDialogSurface dialog={state.dialog} queued={state.dialogQueue.length} onRespond={(response) => controller.respondToDialog(response)} />
           : null}
     </div>
   )
 }
 
-function useRetainedDialog(dialog: ExtensionDialog | undefined): readonly [ExtensionDialog | undefined, () => void] {
-  const [retained, setRetained] = useState(dialog)
-  const retainOnExit = useRef(false)
-  useEffect(() => {
-    if (dialog) {
-      retainOnExit.current = false
-      setRetained(dialog)
-      return
-    }
-    if (!retainOnExit.current) {
-      setRetained(undefined)
-      return
-    }
-    const timer = setTimeout(() => {
-      retainOnExit.current = false
-      setRetained(undefined)
-    }, DIALOG_RETAIN_MS)
-    return () => clearTimeout(timer)
-  }, [dialog])
-  const presented = dialog ?? (retainOnExit.current ? retained : undefined)
-  return [presented, () => { retainOnExit.current = true }]
-}
-
-function TransitionedGenericDialog({ dialog, active, queued, onRespond }: { dialog: ExtensionDialog; active: boolean; queued: number; onRespond(response: ExtensionDialogResponse): void }) {
+function GenericDialogSurface({ dialog, queued, onRespond }: { dialog: ExtensionDialog; queued: number; onRespond(response: ExtensionDialogResponse): void }) {
   return (
-    <MotionDiv
-      testId="extension-dialog-transition"
-      initial={{ opacity: 0.96, top: 4 }}
-      animate={{ opacity: active ? 1 : 0, top: active ? 0 : 4 }}
-      transition={{ duration: DIALOG_TRANSITION_SECONDS, delay: active ? 0 : DIALOG_EXIT_DELAY_SECONDS, ease: 'easeOut' }}
-      style={{ position: 'relative', pointerEvents: active ? 'auto' : 'none', width: '100%', maxWidth: 820, maxHeight: '92%', minWidth: 0, display: 'flex', flexDirection: 'column' }}
-    >
-      <GenericDialog dialog={dialog} interactive={active} queued={queued} onRespond={onRespond} />
-    </MotionDiv>
+    <div testId="extension-dialog-transition" style={{ position: 'relative', pointerEvents: 'auto', width: '100%', maxWidth: 820, maxHeight: '92%', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <GenericDialog dialog={dialog} interactive queued={queued} onRespond={onRespond} />
+    </div>
   )
 }
 
@@ -196,15 +165,19 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
   const hasPreviews = !question.multiSelect && question.options.some((option) => option.preview)
   const previewIndex = draft.kind === 'option' ? draft.optionIndex : question.options.findIndex((option) => option.preview)
   const preview = previewIndex === undefined || previewIndex < 0 ? undefined : question.options[previewIndex]?.preview
+  const optionWindow = useNativeVirtualWindow(question.options.length, `ask-user:${index}:${question.header}:${question.options.length}`)
+  const visibleOptions = question.options.slice(optionWindow.windowStart, optionWindow.windowEnd)
   return (
     <div style={{ minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: mobile && hasPreviews ? 'column' : 'row', overflow: 'hidden' }}>
-      <div style={{ width: mobile ? '100%' : hasPreviews ? '42%' : '100%', height: mobile && hasPreviews ? '58%' : 'auto', minWidth: mobile ? 0 : hasPreviews ? 280 : 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 0, paddingTop: mobile ? 14 : 18, paddingRight: mobile ? 14 : 18, paddingBottom: mobile ? 14 : 18, paddingLeft: mobile ? 14 : 18, borderRightWidth: hasPreviews && !mobile ? 1 : 0, borderBottomWidth: hasPreviews && mobile ? 1 : 0, borderColor: colors.borderStrong, backgroundColor: colors.background, overflow: 'scroll' }}>
+      <div style={{ width: mobile ? '100%' : hasPreviews ? '42%' : '100%', height: mobile && hasPreviews ? '58%' : 'auto', minWidth: mobile ? 0 : hasPreviews ? 280 : 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 0, paddingTop: mobile ? 14 : 18, paddingRight: mobile ? 14 : 18, paddingBottom: mobile ? 14 : 18, paddingLeft: mobile ? 14 : 18, borderRightWidth: hasPreviews && !mobile ? 1 : 0, borderBottomWidth: hasPreviews && mobile ? 1 : 0, borderColor: colors.borderStrong, backgroundColor: colors.background, overflow: 'hidden' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5, paddingBottom: 15 }}>
           <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>{`QUESTION ${index + 1} · ${question.header.toUpperCase()}`}</text>
           <text testId="ask-user-question" style={{ color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: 650, whiteSpace: 'normal' }}>{question.question}</text>
           {question.multiSelect && <text style={{ color: colors.textMuted, fontSize: 10 }}>Choose any number of options, or enter a custom answer.</text>}
         </div>
-        {question.options.map((option, optionIndex) => {
+        <NativeVirtualList testId="ask-user-option-list" alignment="top" estimatedItemHeight={62} overdraw={186} itemCount={Math.max(1, question.options.length)} windowStart={optionWindow.windowStart} onVisibleRange={optionWindow.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+        {visibleOptions.map((option, visibleIndex) => {
+          const optionIndex = optionWindow.windowStart + visibleIndex
           const selected = draft.kind === 'option'
             ? draft.optionIndex === optionIndex
             : draft.kind === 'multi' && draft.optionIndices.includes(optionIndex)
@@ -221,6 +194,7 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
           })
           return <QuestionOption key={`${optionIndex}-${option.label}`} index={optionIndex} label={option.label} description={option.description} selected={selected} multi={question.multiSelect} onClick={choose} />
         })}
+        </NativeVirtualList>
         <div testId="ask-user-custom-option" tabIndex={0} style={{ display: 'flex', flexDirection: 'column', gap: 7, minHeight: 48, paddingTop: 12, paddingRight: 10, paddingBottom: 12, paddingLeft: 10, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: draft.kind === 'custom' ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => onChange((current) => ({ ...current, kind: 'custom', optionIndex: undefined, optionIndices: [] }))} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onChange((current) => ({ ...current, kind: 'custom', optionIndex: undefined, optionIndices: [] })) }}>
           <text style={{ color: draft.kind === 'custom' ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650 }}>Type something else</text>
           {draft.kind === 'custom' && (
@@ -242,7 +216,7 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
 
 function QuestionOption({ index, label, description, selected, multi, onClick }: { index: number; label: string; description: string; selected: boolean; multi: boolean; onClick(): void }) {
   return (
-    <div testId={`ask-user-option-${index}`} tabIndex={0} style={{ minHeight: 62, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingTop: 12, paddingRight: 10, paddingBottom: 12, paddingLeft: 10, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: selected ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
+    <div testId={`ask-user-option-${index}`} tabIndex={0} style={{ minHeight: 62, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingTop: 12, paddingRight: 10, paddingBottom: 12, paddingLeft: 10, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: selected ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
       <div style={{ width: 20, height: 18, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}><text style={{ color: selected ? colors.info : colors.textFaint, fontSize: 9, fontWeight: selected ? 700 : 500 }}>{selected ? '✓' : multi ? '□' : String(index + 1).padStart(2, '0')}</text></div>
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <text style={{ color: selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: 650, whiteSpace: 'normal' }}>{label}</text>
@@ -253,11 +227,15 @@ function QuestionOption({ index, label, description, selected, multi, onClick }:
 }
 
 function QuestionnaireReview({ questionnaire, drafts, complete, onSelect }: { questionnaire: AskUserQuestionnaire; drafts: AnswerDraft[]; complete: boolean; onSelect(index: number): void }) {
+  const reviewWindow = useNativeVirtualWindow(questionnaire.questions.length, `ask-user-review:${questionnaire.toolCallId}:${questionnaire.questions.length}`)
+  const visibleQuestions = questionnaire.questions.slice(reviewWindow.windowStart, reviewWindow.windowEnd)
   return (
-    <div testId="ask-user-review" style={{ minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 10, padding: 16, overflow: 'scroll' }}>
+    <div testId="ask-user-review" style={{ minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 10, padding: 16, overflow: 'hidden' }}>
       <text style={{ color: colors.text, fontSize: 15, fontWeight: 650 }}>Review answers</text>
       {!complete && <text style={{ color: colors.warning, fontSize: 10 }}>Choose an answer for each single-choice question before submitting.</text>}
-      {questionnaire.questions.map((question, index) => {
+      <NativeVirtualList testId="ask-user-review-list" alignment="top" estimatedItemHeight={88} overdraw={176} itemCount={Math.max(1, questionnaire.questions.length)} windowStart={reviewWindow.windowStart} onVisibleRange={reviewWindow.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+      {visibleQuestions.map((question, visibleIndex) => {
+        const index = reviewWindow.windowStart + visibleIndex
         const draft = drafts[index]!
         const answer = draft.kind === 'option'
           ? question.options[draft.optionIndex!]?.label
@@ -267,13 +245,14 @@ function QuestionnaireReview({ questionnaire, drafts, complete, onSelect }: { qu
               ? draft.optionIndices.map((optionIndex) => question.options[optionIndex]?.label).filter(Boolean).join(', ')
               : 'No options selected'
         return (
-          <div key={`${index}-${question.question}`} testId={`ask-user-review-${index}`} tabIndex={0} style={{ display: 'flex', flexDirection: 'column', gap: 5, minHeight: 88, paddingTop: 14, paddingRight: 10, paddingBottom: 14, paddingLeft: 10, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => onSelect(index)} onKeyDown={(event) => { if (event.key === 'enter') onSelect(index) }}>
+          <div key={`${index}-${question.question}`} testId={`ask-user-review-${index}`} tabIndex={0} style={{ display: 'flex', flexDirection: 'column', gap: 5, minHeight: 88, flexShrink: 0, paddingTop: 14, paddingRight: 10, paddingBottom: 14, paddingLeft: 10, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => onSelect(index)} onKeyDown={(event) => { if (event.key === 'enter') onSelect(index) }}>
             <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>{question.header.toUpperCase()}</text>
             <text style={{ color: colors.text, fontSize: 11, fontWeight: 600, whiteSpace: 'normal' }}>{question.question}</text>
             <text style={{ color: answer === 'Unanswered' ? colors.warning : colors.textMuted, fontSize: 11, whiteSpace: 'normal' }}>{answer}</text>
           </div>
         )
       })}
+      </NativeVirtualList>
     </div>
   )
 }
@@ -281,8 +260,10 @@ function QuestionnaireReview({ questionnaire, drafts, complete, onSelect }: { qu
 function GenericDialog({ dialog, interactive, queued, onRespond }: { dialog: ExtensionDialog; interactive: boolean; queued: number; onRespond(response: ExtensionDialogResponse): void }) {
   const [valueState, setValueState] = useState(() => ({ dialogId: dialog.id, value: dialog.prefill ?? '' }))
   const [queryState, setQueryState] = useState(() => ({ dialogId: dialog.id, value: '' }))
+  const [treeViewState, setTreeViewState] = useState<{ dialogId: string; filterMode: PiSessionTreeFilterMode; showLabelTimestamps: boolean }>(() => ({ dialogId: dialog.id, filterMode: 'default', showLabelTimestamps: false }))
   const value = valueState.dialogId === dialog.id ? valueState.value : dialog.prefill ?? ''
   const query = queryState.dialogId === dialog.id ? queryState.value : ''
+  const treeView = treeViewState.dialogId === dialog.id ? treeViewState : { dialogId: dialog.id, filterMode: 'default' as const, showLabelTimestamps: false }
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     if (dialog.deadlineAt === undefined) return
@@ -292,8 +273,21 @@ function GenericDialog({ dialog, interactive, queued, onRespond }: { dialog: Ext
   const title = parseExtensionTitle(dialog.title)
   const options = useMemo(() => (dialog.options ?? []).map(parseExtensionOption), [dialog.options])
   const filtered = useMemo(() => filterExtensionOptions(options, query), [options, query])
+  const treeModeRows = useMemo(() => layoutSessionTreeOptions(dialog.treeOptions ?? [], '', treeView.filterMode), [dialog.treeOptions, treeView.filterMode])
+  const treeRows = useMemo(() => query ? layoutSessionTreeOptions(dialog.treeOptions ?? [], query, treeView.filterMode) : treeModeRows, [dialog.treeOptions, query, treeModeRows, treeView.filterMode])
+  const choiceCount = dialog.method === 'tree' ? dialog.treeOptions?.length ?? 0 : options.length
   const remaining = dialog.deadlineAt === undefined ? undefined : Math.max(0, Math.ceil((dialog.deadlineAt - now) / 1_000))
   const cancelLabel = title.title.includes('›') ? 'Back' : 'Cancel'
+  const setTreeFilterMode = (filterMode: PiSessionTreeFilterMode) => setTreeViewState({ ...treeView, filterMode })
+  const cycleTreeFilter = (direction: 1 | -1) => setTreeFilterMode(cycleSessionTreeFilterMode(treeView.filterMode, direction))
+  const handleTreeSearchKeyDown = (event: { key?: string; ctrlKey?: boolean; shiftKey?: boolean; modifiers?: { ctrl?: boolean; shift?: boolean } }) => {
+    const ctrl = event.modifiers?.ctrl ?? event.ctrlKey ?? false
+    if (!ctrl) return
+    const key = event.key?.toLowerCase()
+    const shortcuts: Partial<Record<string, PiSessionTreeFilterMode>> = { d: 'default', t: 'no-tools', u: 'user-only', l: 'labeled-only', a: 'all' }
+    if (key === 'o') cycleTreeFilter((event.modifiers?.shift ?? event.shiftKey) ? -1 : 1)
+    else if (key && shortcuts[key]) setTreeFilterMode(shortcuts[key]!)
+  }
 
   return (
     <div testId="extension-dialog" style={{ pointerEvents: interactive ? 'auto' : 'none', width: '100%', maxWidth: 820, maxHeight: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, overflow: 'hidden' }}>
@@ -306,25 +300,20 @@ function GenericDialog({ dialog, interactive, queued, onRespond }: { dialog: Ext
         {(queued > 0 || remaining !== undefined) && <text style={{ color: colors.textFaint, fontSize: 9, flexShrink: 0 }}>{[queued > 0 ? `1 of ${queued + 1}` : '', remaining !== undefined ? `${remaining}s` : ''].filter(Boolean).join(' · ')}</text>}
       </div>
       {dialog.message && <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, minWidth: 0, width: '100%', whiteSpace: 'normal' }}>{dialog.message}</text>}
-      {dialog.method === 'select' && (
+      {(dialog.method === 'select' || dialog.method === 'tree') && (
         <>
-          {options.length > 5 && (
+          {dialog.method === 'tree' && (
+            <SessionTreeViewControls filterMode={treeView.filterMode} showLabelTimestamps={treeView.showLabelTimestamps} onFilterMode={setTreeFilterMode} onCycle={cycleTreeFilter} onToggleLabelTimestamps={() => setTreeViewState({ ...treeView, showLabelTimestamps: !treeView.showLabelTimestamps })} />
+          )}
+          {choiceCount > 5 && (
             <div testId="extension-dialog-search-frame" style={{ width: '100%', height: 34, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 10, paddingRight: 10, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
-              <input testId="extension-dialog-search" value={query} placeholder="Search choices…" autoFocus theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }} style={{ minWidth: 0, height: 28, flexGrow: 1, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 11 }} onChange={(event) => setQueryState({ dialogId: dialog.id, value: String(event.value ?? '') })} />
+              <input testId="extension-dialog-search" value={query} placeholder={dialog.method === 'tree' ? 'Search session tree…' : 'Search choices…'} autoFocus theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }} style={{ minWidth: 0, height: 28, flexGrow: 1, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 11 }} onChange={(event) => setQueryState({ dialogId: dialog.id, value: String(event.value ?? '') })} {...(dialog.method === 'tree' ? { onKeyDown: handleTreeSearchKeyDown } : {})} />
             </div>
           )}
-          <MotionDiv key={dialog.id} testId="extension-dialog-options" initial={{ opacity: 0.96, top: 4 }} animate={{ opacity: 1, top: 0 }} transition={{ duration: DIALOG_TRANSITION_SECONDS, ease: 'easeOut' }} style={{ position: 'relative', minHeight: 0, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 2, overflow: 'scroll' }}>
-            {filtered.map((option, index) => (
-              <div key={`${index}-${option.value}`} testId={`extension-dialog-option-${index}`} tabIndex={0} style={{ minHeight: option.detail ? 52 : 48, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingTop: option.detail ? 9 : 0, paddingRight: 9, paddingBottom: option.detail ? 9 : 0, paddingLeft: 9, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => onRespond({ value: option.value })} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onRespond({ value: option.value }) }}>
-                {option.ordinal && <text style={{ width: 19, color: colors.textFaint, fontSize: 10, flexShrink: 0 }}>{option.ordinal}</text>}
-                <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3 }}>
-                  <text testId={`extension-dialog-option-label-${index}`} style={{ color: colors.text, fontSize: 11, lineHeight: 16, fontWeight: 600, whiteSpace: 'normal' }}>{option.label}</text>
-                  {option.detail && <text style={{ color: colors.textFaint, fontSize: 10, lineHeight: 15, whiteSpace: 'normal' }}>{option.detail}</text>}
-                </div>
-              </div>
-            ))}
-            {filtered.length === 0 && <text style={{ color: colors.textFaint, fontSize: 10, padding: 12 }}>No choices match your search.</text>}
-          </MotionDiv>
+          {dialog.method === 'tree'
+            ? <SessionTreeChoiceList dialogId={dialog.id} rows={treeRows} query={query} filterMode={treeView.filterMode} showLabelTimestamps={treeView.showLabelTimestamps} onRespond={onRespond} />
+            : <ExtensionChoiceList dialogId={dialog.id} options={filtered} query={query} onRespond={onRespond} />}
+          {dialog.method === 'tree' && <SessionTreeStatus rows={treeRows} modeCount={treeModeRows.length} totalCount={dialog.treeOptions?.length ?? 0} filterMode={treeView.filterMode} query={query} showLabelTimestamps={treeView.showLabelTimestamps} />}
           <div style={{ display: 'flex', flexDirection: 'row' }}><Button label={cancelLabel} tone="quiet" compact onClick={() => onRespond({ cancelled: true })} /></div>
         </>
       )}
@@ -346,6 +335,173 @@ function GenericDialog({ dialog, interactive, queued, onRespond }: { dialog: Ext
       )}
     </div>
   )
+}
+
+const DIALOG_LIST_MAX_HEIGHT = 360
+const EXTENSION_CHOICE_HEIGHT = 46
+const SESSION_TREE_ROW_HEIGHT = 32
+const SESSION_TREE_COLUMN_WIDTH = 16
+const SESSION_TREE_MAX_VISIBLE_DEPTH = 10
+
+function SessionTreeViewControls({
+  filterMode,
+  showLabelTimestamps,
+  onFilterMode,
+  onCycle,
+  onToggleLabelTimestamps,
+}: {
+  filterMode: PiSessionTreeFilterMode
+  showLabelTimestamps: boolean
+  onFilterMode(mode: PiSessionTreeFilterMode): void
+  onCycle(direction: 1 | -1): void
+  onToggleLabelTimestamps(): void
+}) {
+  return (
+    <div testId="session-tree-controls" style={{ width: '100%', minHeight: 30, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700, marginRight: 2 }}>VIEW</text>
+      <TreeControl label="‹" testId="session-tree-cycle-previous" onClick={() => onCycle(-1)} />
+      {PI_SESSION_TREE_FILTER_MODES.map((mode) => <TreeControl key={mode} label={sessionTreeFilterLabel(mode)} testId={`session-tree-filter-${mode}`} active={mode === filterMode} onClick={() => onFilterMode(mode)} />)}
+      <TreeControl label="›" testId="session-tree-cycle-next" onClick={() => onCycle(1)} />
+      <div style={{ flexGrow: 1 }} />
+      <TreeControl label="Label time" testId="session-tree-label-time" active={showLabelTimestamps} onClick={onToggleLabelTimestamps} />
+    </div>
+  )
+}
+
+function TreeControl({ label, testId, active = false, onClick }: { label: string; testId: string; active?: boolean; onClick(): void }) {
+  return (
+    <div testId={testId} tabIndex={0} style={{ height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 7, paddingRight: 7, borderRadius: 6, borderWidth: 1, borderColor: active ? colors.borderStrong : colors.transparent, backgroundColor: active ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: active ? colors.raised : colors.hover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
+      <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 9, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{label}</text>
+    </div>
+  )
+}
+
+function SessionTreeStatus({ rows, modeCount, totalCount, filterMode, query, showLabelTimestamps }: { rows: PiSessionTreeRow[]; modeCount: number; totalCount: number; filterMode: PiSessionTreeFilterMode; query: string; showLabelTimestamps: boolean }) {
+  const focusIndex = sessionTreeFocusIndex(rows)
+  const parts = [`${rows.length === 0 ? 0 : focusIndex + 1}/${rows.length}`, sessionTreeFilterLabel(filterMode)]
+  if (query) parts.push(`${rows.length} match${rows.length === 1 ? '' : 'es'}`)
+  if (modeCount !== totalCount) parts.push(`${modeCount}/${totalCount} in view`)
+  else if (totalCount > 0) parts.push(`${totalCount} total`)
+  if (showLabelTimestamps) parts.push('label time')
+  return <text testId="session-tree-status" style={{ color: colors.textFaint, fontSize: 9, lineHeight: 13 }}>{parts.join(' · ')}</text>
+}
+
+function sessionTreeFocusIndex(rows: readonly PiSessionTreeRow[]): number {
+  const active = rows.findIndex((row) => row.active)
+  if (active >= 0) return active
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (rows[index]?.onActivePath) return index
+  }
+  return 0
+}
+
+function ExtensionChoiceList({ dialogId, options, query, onRespond }: { dialogId: string; options: ParsedExtensionOption[]; query: string; onRespond(response: ExtensionDialogResponse): void }) {
+  const height = Math.min(DIALOG_LIST_MAX_HEIGHT, Math.max(36, options.length * EXTENSION_CHOICE_HEIGHT))
+  const window = useNativeVirtualWindow(options.length, `${dialogId}:${query}:${options.length}`)
+  const visibleOptions = options.slice(window.windowStart, window.windowEnd)
+  return (
+    <div key={dialogId} testId="extension-dialog-options" style={{ position: 'relative', width: '100%', height, minHeight: 0, flexShrink: 1, display: 'flex', overflow: 'hidden' }}>
+      <NativeVirtualList testId="extension-dialog-option-list" alignment="top" estimatedItemHeight={EXTENSION_CHOICE_HEIGHT} overdraw={EXTENSION_CHOICE_HEIGHT * 3} itemCount={Math.max(1, options.length)} windowStart={window.windowStart} onVisibleRange={window.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+        {options.length === 0
+          ? <div key="empty" style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', paddingLeft: 12 }}><text style={{ color: colors.textFaint, fontSize: 10 }}>No choices match your search.</text></div>
+          : visibleOptions.map((option, visibleIndex) => {
+            const index = window.windowStart + visibleIndex
+            return <div key={`${index}-${option.value}`} testId={`extension-dialog-option-${index}`} tabIndex={0} style={{ height: EXTENSION_CHOICE_HEIGHT, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 9, paddingRight: 9, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={() => onRespond({ value: option.value })} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onRespond({ value: option.value }) }}>
+              {option.ordinal && <text style={{ width: 19, color: colors.textFaint, fontSize: 10, flexShrink: 0 }}>{option.ordinal}</text>}
+              <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
+                <text testId={`extension-dialog-option-label-${index}`} style={{ minWidth: 0, color: colors.text, fontSize: 11, lineHeight: 15, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
+                {option.detail && <text style={{ minWidth: 0, color: colors.textFaint, fontSize: 9, lineHeight: 13, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.detail}</text>}
+              </div>
+            </div>
+          })}
+      </NativeVirtualList>
+    </div>
+  )
+}
+
+function SessionTreeChoiceList({ dialogId, rows, query, filterMode, showLabelTimestamps, onRespond }: { dialogId: string; rows: PiSessionTreeRow[]; query: string; filterMode: PiSessionTreeFilterMode; showLabelTimestamps: boolean; onRespond(response: ExtensionDialogResponse): void }) {
+  const renderer = useGpuixRequired()
+  const listRef = useRef<NativeElementHandle>(null)
+  const height = Math.min(DIALOG_LIST_MAX_HEIGHT, Math.max(36, rows.length * SESSION_TREE_ROW_HEIGHT))
+  const overflow = rows.length * SESSION_TREE_ROW_HEIGHT > DIALOG_LIST_MAX_HEIGHT
+  const focusIndex = sessionTreeFocusIndex(rows)
+  const initialStart = Math.max(0, focusIndex - 159)
+  const viewIdentity = `${dialogId}:${filterMode}:${query}:${rows.length}:${rows[0]?.entryId ?? ''}:${rows.at(-1)?.entryId ?? ''}`
+  const window = useNativeVirtualWindow(rows.length, viewIdentity, initialStart)
+  const visibleRows = rows.slice(window.windowStart, window.windowEnd)
+  useEffect(() => {
+    if (rows.length === 0) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled || !listRef.current) return
+      const bottomOffset = query ? 0 : -Math.max(0, height - SESSION_TREE_ROW_HEIGHT)
+      renderer.scrollToItem?.(listRef.current.id, focusIndex, bottomOffset)
+    })
+    return () => { cancelled = true }
+  }, [focusIndex, height, query, renderer, rows.length, viewIdentity])
+  return (
+    <div key={dialogId} testId="extension-dialog-options" style={{ position: 'relative', width: '100%', height, minHeight: 0, flexShrink: 1, display: 'flex', overflow: 'hidden' }}>
+      <NativeVirtualList key={dialogId} testId="session-tree-list" elementRef={listRef} alignment={!query && overflow ? 'bottom' : 'top'} estimatedItemHeight={SESSION_TREE_ROW_HEIGHT} overdraw={SESSION_TREE_ROW_HEIGHT * 4} itemCount={Math.max(1, rows.length)} windowStart={window.windowStart} onVisibleRange={window.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+        {rows.length === 0
+          ? <div key="empty" style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', paddingLeft: 12 }}><text style={{ color: colors.textFaint, fontSize: 10 }}>No entries match this search and view.</text></div>
+          : visibleRows.map((row, visibleIndex) => {
+            const index = window.windowStart + visibleIndex
+            return <SessionTreeChoiceRow key={row.entryId} row={row} index={index} showLabelTimestamp={showLabelTimestamps} onClick={() => onRespond({ value: row.entryId })} />
+          })}
+      </NativeVirtualList>
+    </div>
+  )
+}
+
+function SessionTreeChoiceRow({ row, index, showLabelTimestamp, onClick }: { row: PiSessionTreeRow; index: number; showLabelTimestamp: boolean; onClick(): void }) {
+  const depthOffset = Math.max(0, row.depth - SESSION_TREE_MAX_VISIBLE_DEPTH)
+  const nodeColumn = row.depth - depthOffset
+  const nodeX = nodeColumn * SESSION_TREE_COLUMN_WIDTH + SESSION_TREE_COLUMN_WIDTH / 2
+  const railWidth = (nodeColumn + 1) * SESSION_TREE_COLUMN_WIDTH + 4
+  const lineColor = row.onActivePath ? colors.primary : colors.borderStrong
+  const parentColumn = row.connection === 'branch' ? row.depth - 1 : row.depth
+  const parentX = (parentColumn - depthOffset) * SESSION_TREE_COLUMN_WIDTH + SESSION_TREE_COLUMN_WIDTH / 2
+  const visibleGuides = row.guides.filter((column) => column >= depthOffset)
+  const entryColor = sessionTreeEntryColor(row)
+  const labelTimestamp = showLabelTimestamp && row.label && row.labelTimestamp !== undefined ? formatSessionTreeLabelTimestamp(row.labelTimestamp) : undefined
+  return (
+    <div testId={`session-tree-row-${index}`} tabIndex={0} style={{ height: SESSION_TREE_ROW_HEIGHT, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingRight: 8, borderRadius: 6, backgroundColor: row.active ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
+      <div testId={`session-tree-rail-${index}`} style={{ position: 'relative', width: railWidth, height: SESSION_TREE_ROW_HEIGHT, flexShrink: 0 }}>
+        {visibleGuides.map((column) => {
+          const x = (column - depthOffset) * SESSION_TREE_COLUMN_WIDTH + SESSION_TREE_COLUMN_WIDTH / 2
+          return <div key={`guide-${column}`} style={{ position: 'absolute', left: x, top: 0, width: 1, height: SESSION_TREE_ROW_HEIGHT, backgroundColor: colors.borderStrong }} />
+        })}
+        {row.connection !== 'root' && !visibleGuides.includes(parentColumn) && parentX >= 0 && <div style={{ position: 'absolute', left: parentX, top: 0, width: 1, height: SESSION_TREE_ROW_HEIGHT / 2 + 1, backgroundColor: lineColor }} />}
+        {row.connection === 'branch' && parentX >= 0 && <div style={{ position: 'absolute', left: parentX, top: SESSION_TREE_ROW_HEIGHT / 2, width: Math.max(1, nodeX - parentX), height: 1, backgroundColor: lineColor }} />}
+        {row.hasChildren && <div style={{ position: 'absolute', left: nodeX, top: SESSION_TREE_ROW_HEIGHT / 2, width: 1, height: SESSION_TREE_ROW_HEIGHT / 2, backgroundColor: row.onActivePath ? colors.primary : colors.borderStrong }} />}
+        <div testId={`session-tree-node-${index}`} style={{ position: 'absolute', left: nodeX - (row.active ? 4 : 3), top: SESSION_TREE_ROW_HEIGHT / 2 - (row.active ? 4 : 3), width: row.active ? 8 : 6, height: row.active ? 8 : 6, borderRadius: 4, borderWidth: row.onActivePath ? 0 : 1, borderColor: row.onActivePath ? colors.primary : colors.textFaint, backgroundColor: row.onActivePath ? colors.primary : colors.card }} />
+      </div>
+      <text testId={`session-tree-path-${index}`} style={{ width: 9, flexShrink: 0, color: colors.primary, fontSize: 10 }}>{row.onActivePath ? '•' : ''}</text>
+      <text testId={`session-tree-kind-${index}`} style={{ width: 78, flexShrink: 0, color: entryColor, fontSize: 10, fontWeight: row.onActivePath ? 650 : 550, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.title}</text>
+      <text testId={`session-tree-detail-${index}`} style={{ minWidth: 0, flexGrow: 1, color: row.active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: row.active ? 600 : 400, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.detail || row.title}</text>
+      {row.label && <text testId={`session-tree-label-${index}`} style={{ maxWidth: 150, flexShrink: 1, marginLeft: 8, paddingLeft: 6, paddingRight: 6, color: colors.warning, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{`[${row.label}]`}</text>}
+      {labelTimestamp && <text testId={`session-tree-label-time-${index}`} style={{ flexShrink: 0, marginLeft: 4, color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{labelTimestamp}</text>}
+      {row.active && <text testId="session-tree-active" style={{ marginLeft: 8, flexShrink: 0, color: colors.primary, fontSize: 9, fontWeight: 700 }}>ACTIVE</text>}
+    </div>
+  )
+}
+
+function sessionTreeEntryColor(row: PiSessionTreeRow): string {
+  if (row.kind === 'user') return colors.info
+  if (row.kind === 'assistant') return colors.success
+  if (row.kind === 'summary') return colors.warning
+  if (row.kind === 'context') return colors.textMuted
+  return colors.textFaint
+}
+
+function formatSessionTreeLabelTimestamp(value: string | number): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return ''
+  const now = new Date()
+  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()) return time
+  const monthDay = `${date.getMonth() + 1}/${date.getDate()}`
+  return date.getFullYear() === now.getFullYear() ? `${monthDay} ${time}` : `${String(date.getFullYear()).slice(-2)}/${monthDay} ${time}`
 }
 
 function questionnaireMarkdownTheme() {

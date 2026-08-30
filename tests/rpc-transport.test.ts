@@ -33,6 +33,7 @@ describe('PiRpcTransport', () => {
       expect(argv.argv).toContain('rpc')
       expect(argv.argv).toContain('--extension')
       expect(argv.argv).toContain(heddleworkFabricBridgePath())
+      await expect(transport.request({ type: 'navigate_tree', entryId: 'entry-1' })).resolves.toEqual({ cancelled: false, editorText: 'Try another branch' })
       await expect(transport.request({ type: 'fail' })).rejects.toThrow('expected failure')
     } finally {
       unsubscribe()

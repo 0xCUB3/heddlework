@@ -1,3 +1,4 @@
+import type { PiSessionEntry, PiSessionTreeNode } from './session-tree.ts'
 import type { AgentTransport, TransportStatus } from './transport.ts'
 import type { PiForkMessage, PiImageContent, PiMessage, PiModel, PiSessionState, RpcCommand, RpcRecord, ThinkingLevel } from './types.ts'
 
@@ -12,6 +13,8 @@ export class DemoTransport implements AgentTransport {
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
   #messages: PiMessage[] = []
   #forkMessages: PiForkMessage[] = []
+  #entries: PiSessionEntry[] = []
+  #leafId: string | null = null
   #model = models[0]!
   #thinking: ThinkingLevel = 'medium'
   #running = false
@@ -54,6 +57,8 @@ export class DemoTransport implements AgentTransport {
         return { messages: this.#messages } as T
       case 'get_fork_messages':
         return { messages: this.#forkMessages } as T
+      case 'get_tree':
+        return { tree: this.#tree(), leafId: this.#leafId } as T
       case 'get_available_models':
         return { models } as T
       case 'get_available_thinking_levels':
@@ -78,20 +83,39 @@ export class DemoTransport implements AgentTransport {
         this.#cancelTimers()
         this.#messages = []
         this.#forkMessages = []
+        this.#entries = []
+        this.#leafId = null
         this.#sessionId = crypto.randomUUID()
         this.#sessionName = undefined
         return { cancelled: false } as T
       case 'clone':
         this.#sessionId = crypto.randomUUID()
         return { cancelled: false } as T
+      case 'navigate_tree': {
+        const targetId = String(command.entryId ?? '')
+        const selected = this.#entries.find((entry) => entry.id === targetId)
+        if (!selected) throw new Error('Session tree entry not found')
+        if (targetId === this.#leafId) return { cancelled: false } as T
+        let editorText: string | undefined
+        if (selected.type === 'message' && selected.message?.role === 'user') {
+          this.#leafId = selected.parentId
+          editorText = messageText(selected.message)
+        } else {
+          this.#leafId = selected.id
+        }
+        this.#messages = this.#activeMessages()
+        return { cancelled: false, ...(editorText === undefined ? {} : { editorText }) } as T
+      }
       case 'fork': {
-        const selected = this.#forkMessages.find((message) => message.entryId === command.entryId)
-        if (!selected) throw new Error('Fork message not found')
-        const userIndex = this.#messages.findIndex((message) => message.role === 'user' && messageText(message) === selected.text)
-        this.#messages = userIndex > 0 ? this.#messages.slice(0, userIndex) : []
-        this.#forkMessages = this.#forkMessages.slice(0, Math.max(0, this.#forkMessages.indexOf(selected)))
+        const selected = this.#entries.find((entry) => entry.id === command.entryId)
+        if (!selected || selected.type !== 'message' || selected.message?.role !== 'user') throw new Error('Fork message not found')
+        this.#leafId = selected.parentId
+        const activeIds = new Set(this.#activeEntries().map((entry) => entry.id))
+        this.#entries = this.#entries.filter((entry) => activeIds.has(entry.id))
+        this.#messages = this.#activeMessages()
+        this.#forkMessages = this.#forkMessages.filter((message) => activeIds.has(message.entryId))
         this.#sessionId = crypto.randomUUID()
-        return { text: selected.text, cancelled: false } as T
+        return { text: messageText(selected.message), cancelled: false } as T
       }
       case 'set_model':
         this.#model = models.find((model) => model.provider === command.provider && model.id === command.modelId) ?? this.#model
@@ -131,12 +155,13 @@ export class DemoTransport implements AgentTransport {
     this.#running = true
     const now = Date.now()
     const entryId = `demo-entry-${now}`
-    this.#forkMessages.push({ entryId, text: prompt })
-    this.#messages.push({
+    const user: PiMessage = {
       role: 'user',
       content: images.length > 0 ? [...(prompt ? [{ type: 'text' as const, text: prompt }] : []), ...images] : prompt,
       timestamp: now,
-    })
+    }
+    this.#forkMessages.push({ entryId, text: prompt })
+    this.#appendMessage(user, entryId)
     const callId = `demo-${now}`
     const intro = 'I’ll inspect the workspace and report back.'
     const answer = 'The workbench transport, event reducer, and native GPUIX transcript are connected. Replace demo mode with the real `pi --mode rpc` process to work on this repository.'
@@ -154,7 +179,7 @@ export class DemoTransport implements AgentTransport {
           { type: 'toolCall', id: callId, name: 'bash', arguments: { command: 'git status --short' } },
         ],
       }
-      this.#messages.push(assistant)
+      this.#appendMessage(assistant, `${entryId}-assistant-tool`)
       this.#emit({ type: 'message_end', message: assistant })
       this.#emit({ type: 'tool_execution_start', toolCallId: callId, toolName: 'bash', args: { command: 'git status --short' } })
     })
@@ -174,7 +199,7 @@ export class DemoTransport implements AgentTransport {
         isError: false,
         timestamp: now + 2,
       }
-      this.#messages.push(result)
+      this.#appendMessage(result, `${entryId}-tool-result`)
       this.#emit({ type: 'tool_execution_end', toolCallId: callId, toolName: 'bash', result: { content: result.content }, isError: false })
       this.#emit({ type: 'turn_end', message: this.#messages.at(-2), toolResults: [result] })
       this.#emit({ type: 'turn_start' })
@@ -187,13 +212,48 @@ export class DemoTransport implements AgentTransport {
     })))
     this.#schedule(1_450, () => {
       const assistant: PiMessage = { role: 'assistant', content: [{ type: 'text', text: answer }], timestamp: now + 3 }
-      this.#messages.push(assistant)
+      this.#appendMessage(assistant, `${entryId}-assistant-final`)
       this.#emit({ type: 'message_end', message: assistant })
       this.#emit({ type: 'turn_end', message: assistant, toolResults: [] })
       this.#emit({ type: 'agent_end', messages: this.#messages, willRetry: false })
       this.#running = false
       this.#emit({ type: 'agent_settled' })
     })
+  }
+
+  #appendMessage(message: PiMessage, id = `demo-entry-${Date.now()}-${this.#entries.length}`): void {
+    this.#entries.push({ type: 'message', id, parentId: this.#leafId, message })
+    this.#leafId = id
+    this.#messages.push(message)
+  }
+
+  #activeEntries(): PiSessionEntry[] {
+    const byId = new Map(this.#entries.map((entry) => [entry.id, entry]))
+    const active: PiSessionEntry[] = []
+    let cursor: string | null = this.#leafId
+    while (cursor) {
+      const entry = byId.get(cursor)
+      if (!entry) break
+      active.push(entry)
+      cursor = entry.parentId
+    }
+    return active.reverse()
+  }
+
+  #activeMessages(): PiMessage[] {
+    return this.#activeEntries().flatMap((entry) => entry.type === 'message' && entry.message ? [entry.message] : [])
+  }
+
+  #tree(): PiSessionTreeNode[] {
+    const nodes = new Map(this.#entries.map((entry) => [entry.id, { entry, children: [] as PiSessionTreeNode[] }]))
+    const roots: PiSessionTreeNode[] = []
+    for (const entry of this.#entries) {
+      const node = nodes.get(entry.id)!
+      const parent = entry.parentId ? nodes.get(entry.parentId) : undefined
+      if (parent) parent.children.push(node)
+      else roots.push(node)
+    }
+    return roots
   }
 
   #schedule(delay: number, callback: () => void): void {

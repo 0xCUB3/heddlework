@@ -36,6 +36,13 @@ describe('PiSessionHistoryPager', () => {
     expect(oldest.messages.at(-1)).toMatchObject({ role: 'compaction', tokensBefore: 50000, workbenchEntryId: 'compact' })
     expect(oldest.messages.some((message) => message.content === 'Abandoned branch')).toBe(false)
     expect(oldest.hasOlder).toBe(false)
+
+    const abandoned = await new PiSessionHistoryPager(path, 'abandoned').loadEarlier(10)
+    expect(abandoned.messages.map((message) => message.content)).toEqual(['First prompt', [{ type: 'text', text: 'First answer' }], 'Abandoned branch'])
+    expect(abandoned.messages.map((message) => message.workbenchEntryId)).toEqual(['u1', 'a1', 'abandoned'])
+
+    const root = await new PiSessionHistoryPager(path, null).loadEarlier(10)
+    expect(root).toEqual({ messages: [], hasOlder: false })
   })
 
   it('scans through collapsed work until a navigable conversation page is available', async () => {

@@ -35,8 +35,12 @@ export class PiSessionHistoryPager {
   #targetId: string | null | undefined
   #done = false
 
-  constructor(path: string) {
+  constructor(path: string, targetId?: string | null) {
     this.#path = path
+    if (targetId !== undefined) {
+      this.#targetId = targetId
+      if (targetId === null) this.#done = true
+    }
   }
 
   async loadEarlier(

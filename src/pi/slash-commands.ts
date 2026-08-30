@@ -40,6 +40,7 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommand[] = BUILTIN_DEFINITIO
 }))
 
 const BUILTIN_NAMES = new Set<string>(BUILTIN_DEFINITIONS.map((command) => command.name))
+const INTERNAL_COMMAND_NAMES = new Set(['heddlework-tree-navigate'])
 
 export function parseBuiltinSlashCommand(text: string): ParsedBuiltinSlashCommand | undefined {
   const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim())
@@ -63,6 +64,7 @@ export function slashCommandsFromRpc(value: unknown): SlashCommand[] {
       typeof candidate.name !== 'string'
       || (candidate.source !== 'extension' && candidate.source !== 'prompt' && candidate.source !== 'skill')
       || seen.has(candidate.name)
+      || INTERNAL_COMMAND_NAMES.has(candidate.name)
     ) continue
     seen.add(candidate.name)
     discovered.push({

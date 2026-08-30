@@ -20,11 +20,26 @@ const options: SelectOption[] = Array.from({ length: 24 }, (_, index) => ({
   detail: `provider/model-${index}`,
 }))
 
+const largeOptions: SelectOption[] = Array.from({ length: 10_000 }, (_, index) => ({
+  value: `provider/large-model-${index}`,
+  label: `Large model ${index}`,
+  detail: `provider/large-model-${index}`,
+}))
+
 function SearchableSelectFixture() {
   const [value, setValue] = useState(options[0]!.value)
   return (
     <div style={{ width: 620, height: 560, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 40 }}>
       <ChipSelect searchable testId="searchable-model-picker" value={value} options={options} width={320} onChange={setValue} />
+    </div>
+  )
+}
+
+function LargeSelectFixture() {
+  const [value, setValue] = useState(largeOptions[0]!.value)
+  return (
+    <div style={{ width: 620, height: 560, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 40 }}>
+      <ChipSelect testId="large-model-picker" value={value} options={largeOptions} width={320} onChange={setValue} />
     </div>
   )
 }
@@ -53,16 +68,44 @@ describeNative('bounded select content', () => {
     const motion = surface.customProps?.motion as { initial: { opacity: number; top: number }; animate: { opacity: number; top: number } }
     expect(content.style.backgroundColor).toBe(colors.background)
     expect(surface.style.overflow).toBe('hidden')
-    expect(list.style.overflow).toBe('scroll')
+    expect(list.style.overflow).toBe('hidden')
     expect((await automation.getByTestId('overflow-model-picker-surface').bounds()).height).toBeLessThanOrEqual(340)
     expect(motion.initial).toEqual({ opacity: 0, top: 4 })
     expect(motion.animate).toEqual({ opacity: 1, top: 0 })
     expect(await automation.getByTestId('overflow-model-picker-option').count()).toBe(24)
 
-    root.renderer.scrollTo(list.id, 0, -10_000)
+    const virtualList = root.renderer.findByTestId('overflow-model-picker-virtual-list')!
+    expect(virtualList.type).toBe('virtual-list')
+    root.renderer.scrollTo(virtualList.id, 0, -10_000)
     root.renderer.flush()
-    expect(root.renderer.getScrollOffset(list.id)?.[1]).toBeLessThan(0)
+    expect(root.renderer.getScrollOffset(virtualList.id)?.[1]).toBeLessThan(0)
     expect(root.renderer.getPaintedText()).toContain('Model 23')
+
+    await automation.close()
+    root.unmount()
+  })
+
+
+  it('bounds ten-thousand model rows and rematerializes the deep native viewport', async () => {
+    const root = createTestRoot()
+    root.render(<LargeSelectFixture />)
+    const automation = await connectTest(root.renderer)
+
+    await automation.getByTestId('large-model-picker').click()
+    await Bun.sleep(20)
+    root.renderer.flush()
+    const list = root.renderer.findByTestId('large-model-picker-virtual-list')!
+    expect(list.type).toBe('virtual-list')
+    expect(list.customProps?.itemCount).toBe(largeOptions.length)
+    expect(await automation.getByTestId('large-model-picker-option').count()).toBeLessThanOrEqual(160)
+    expect(root.renderer.getPaintedText()).toContain('Large model 0')
+
+    root.renderer.scrollToItem(list.id, largeOptions.length - 1)
+    root.renderer.flush()
+    await Bun.sleep(25)
+    root.renderer.flush()
+    expect(await automation.getByTestId('large-model-picker-option').count()).toBeLessThanOrEqual(160)
+    expect(await automation.getByText('Large model 9999').count()).toBe(1)
 
     await automation.close()
     root.unmount()

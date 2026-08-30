@@ -42,12 +42,14 @@ describe('Pi slash commands', () => {
       { name: 'fabric', description: 'Fabric controls', source: 'extension', sourceInfo: { path: '/tmp/fabric.ts' } },
       { name: 'review', description: 'Review changes', argumentHint: '[focus]', source: 'prompt' },
       { name: 'skill:search', source: 'skill' },
+      { name: 'heddlework-tree-navigate', description: 'Internal bridge', source: 'extension', sourceInfo: {} },
       { name: 42, source: 'extension' },
     ] })
 
     expect(commands.filter((command) => command.name === 'compact')).toEqual([
       expect.objectContaining({ name: 'compact', source: 'builtin' }),
     ])
+    expect(commands.some((command) => command.name === 'heddlework-tree-navigate')).toBe(false)
     expect(commands.slice(-3)).toEqual([
       { name: 'fabric', description: 'Fabric controls', source: 'extension', sourceInfo: { path: '/tmp/fabric.ts' } },
       { name: 'review', description: 'Review changes', argumentHint: '[focus]', source: 'prompt' },

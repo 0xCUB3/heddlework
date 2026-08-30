@@ -4,6 +4,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import type { AskUserQuestionnaire } from '../workbench/ask-user.ts'
 import type { ExtensionWidget } from '../workbench/state.ts'
 import { MotionDiv } from './motion.ts'
+import { NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { plainExtensionText } from './extension-ui.ts'
@@ -53,16 +54,25 @@ function DockAction({ label, testId, tone = 'muted', onClick }: { label: string;
 }
 
 export function CommandPalette({ commands, activeIndex, onChoose }: { commands: SlashCommand[]; activeIndex: number; onChoose(command: SlashCommand): void }) {
+  const rowHeight = 38
+  const identity = `${commands.length}:${commands[0]?.name ?? ''}:${commands.at(-1)?.name ?? ''}:${activeIndex}`
+  const window = useNativeVirtualWindow(commands.length, identity, Math.max(0, activeIndex - 80))
+  const visible = commands.slice(window.windowStart, window.windowEnd)
   return (
-    <div testId="command-palette" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, maxHeight: 300, gap: 3, marginBottom: EXTENSION_SURFACE_GAP, padding: 6, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'scroll', pointerEvents: 'auto' }}>
-      {commands.map((command, index) => (
-        <div key={`${command.source}-${command.name}`} testId={`command-option-${command.name}`} style={{ minHeight: 38, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: index === activeIndex ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onMouseDown={() => onChoose(command)} onClick={() => onChoose(command)}>
-          <text style={{ color: index === activeIndex ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650, fontFamily: nativeTheme.fontMono }}>{`/${command.name}`}</text>
-          {command.argumentHint && <text style={{ color: colors.textMuted, fontSize: 9, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap' }}>{command.argumentHint}</text>}
-          {command.description && <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{command.description}</text>}
-          <text style={{ color: colors.textFaint, fontSize: 8 }}>{command.source.toUpperCase()}</text>
-        </div>
-      ))}
+    <div testId="command-palette" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 768, height: Math.min(300, Math.max(rowHeight, commands.length * rowHeight) + 12), minHeight: 0, marginBottom: EXTENSION_SURFACE_GAP, padding: 6, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.popover, overflow: 'hidden', pointerEvents: 'auto' }}>
+      <NativeVirtualList testId="command-palette-list" alignment="top" estimatedItemHeight={rowHeight} overdraw={rowHeight * 3} itemCount={Math.max(1, commands.length)} windowStart={window.windowStart} onVisibleRange={window.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+        {visible.map((command, visibleIndex) => {
+          const index = window.windowStart + visibleIndex
+          return (
+            <div key={`${command.source}-${command.name}`} testId={`command-option-${command.name}`} style={{ height: rowHeight, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: index === activeIndex ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onMouseDown={() => onChoose(command)} onClick={() => onChoose(command)}>
+              <text style={{ color: index === activeIndex ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650, fontFamily: nativeTheme.fontMono }}>{`/${command.name}`}</text>
+              {command.argumentHint && <text style={{ color: colors.textMuted, fontSize: 9, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap' }}>{command.argumentHint}</text>}
+              {command.description && <text style={{ minWidth: 0, flexGrow: 1, color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{command.description}</text>}
+              <text style={{ color: colors.textFaint, fontSize: 8 }}>{command.source.toUpperCase()}</text>
+            </div>
+          )
+        })}
+      </NativeVirtualList>
     </div>
   )
 }

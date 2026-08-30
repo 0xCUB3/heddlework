@@ -3,6 +3,7 @@ import type { ThreadPriority } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
+import { NativeVirtualList, useNativeVirtualWindow } from './virtual-list.tsx'
 
 const PRIORITIES: ReadonlyArray<{ value: ThreadPriority; label: string }> = [
   { value: 0, label: 'No priority' },
@@ -104,6 +105,8 @@ export function FlowLabelPicker({ selected, options, onChange }: { selected: rea
   const visible = all.filter((label) => !normalized || label.toLowerCase().includes(normalized))
   const candidate = query.replace(/\s+/g, ' ').trim().slice(0, 40)
   const canCreate = Boolean(candidate) && !all.some((label) => label.toLowerCase() === candidate.toLowerCase())
+  const virtualWindow = useNativeVirtualWindow(visible.length, `flow-labels:${normalized}:${visible.length}`)
+  const visibleWindow = visible.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   const toggle = (label: string) => {
     onChange(selected.includes(label) ? selected.filter((value) => value !== label) : [...selected, label])
     setQuery('')
@@ -122,11 +125,12 @@ export function FlowLabelPicker({ selected, options, onChange }: { selected: rea
               <Icon name="search" size={12} color={colors.textFaint} />
               <input testId="flow-label-search" value={query} placeholder="Search or create a label…" theme={{ caret: colors.text, text: colors.text, textMuted: colors.placeholder, bg: colors.transparent }} style={{ minWidth: 0, flexGrow: 1, height: 29, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 10 }} onChange={(event) => setQuery(String(event.value ?? ''))} />
             </div>
-            <div style={{ maxHeight: 250, minHeight: 0, overflow: 'scroll' }}>
-              {visible.map((label) => <LabelOption key={label} label={label} selected={selected.includes(label)} onClick={() => toggle(label)} />)}
-              {canCreate && <div testId="flow-label-create" tabIndex={0} style={{ height: 34, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => toggle(candidate)}><Icon name="plus" size={12} color={colors.textMuted} /><text style={{ minWidth: 0, color: colors.textMuted, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{`Create “${candidate}”`}</text></div>}
-              {visible.length === 0 && !canCreate && <div style={{ height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><text style={{ color: colors.textFaint, fontSize: 9 }}>No labels match</text></div>}
-            </div>
+            <NativeVirtualList testId="flow-label-list" alignment="top" estimatedItemHeight={34} overdraw={102} itemCount={Math.max(1, visible.length)} windowStart={virtualWindow.windowStart} onVisibleRange={virtualWindow.onVisibleRange} style={{ width: '100%', height: visible.length === 0 ? 38 : Math.min(canCreate ? 210 : 250, visible.length * 34), minHeight: 0 }}>
+              {visible.length === 0
+                ? <div key="empty" style={{ height: 38, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><text style={{ color: colors.textFaint, fontSize: 9 }}>{canCreate ? 'Create a new label below' : 'No labels match'}</text></div>
+                : visibleWindow.map((label) => <LabelOption key={label} label={label} selected={selected.includes(label)} onClick={() => toggle(label)} />)}
+            </NativeVirtualList>
+            {canCreate && <div testId="flow-label-create" tabIndex={0} style={{ height: 34, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 8, paddingRight: 8, borderRadius: 6, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={() => toggle(candidate)}><Icon name="plus" size={12} color={colors.textMuted} /><text style={{ minWidth: 0, color: colors.textMuted, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{`Create “${candidate}”`}</text></div>}
           </DropdownSurface>
           </div>
         </anchored>
