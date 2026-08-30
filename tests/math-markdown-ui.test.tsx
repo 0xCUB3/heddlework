@@ -161,6 +161,20 @@ describeNative('math markdown', () => {
     root.unmount()
   })
 
+  it('keeps short table formulas on the same line as surrounding words', async () => {
+    const { root, svgCount } = await renderMath('| Feature | Insight |\n| --- | --- |\n| x | Beta($n$) prior |')
+    expect(svgCount).toBeGreaterThan(0)
+    const beta = root.renderer.findByType('text').find((node) => node.text?.includes('Beta'))
+    const formula = root.renderer.findByTestId('math-inline')
+    expect(beta).toBeTruthy()
+    expect(formula).toBeTruthy()
+    const betaBox = box(root, beta!)
+    const formulaBox = box(root, formula!)
+    expect(Math.abs(formulaBox.y - betaBox.y)).toBeLessThan(20)
+    expect(formulaBox.x).toBeGreaterThan(betaBox.x)
+    root.unmount()
+  })
+
   it('scales wide table formulas to the cell instead of clipping them', async () => {
     const latex = 'w = B(0.25 + 0.75\\mathrm{spec}) / \\max(1, \\mathrm{df}/6)'
     const source = ['| Feature | Formula | Insight |', '| --- | --- | --- |', `| x | y | edge $${latex}$ leftover |`].join('\n')

@@ -252,13 +252,7 @@ function InlineRun({ parts, formula, wrap = 'chunk' }: { parts: InlinePart[]; fo
     <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 }}>
       {atoms.flatMap((atom, atomIndex) => {
         if (atom.kind === 'math') {
-          const formulaNode = <Formula key={`${atomIndex}-math`} latex={atom.latex} display={false} {...formula} {...(atom.bold ? { fontWeight: 700 } : {})} />
-          if (wrap !== 'word') return [formulaNode]
-          return [
-            <div key={`${atomIndex}-math-line`} style={{ width: '100%', minWidth: 0 }}>
-              {formulaNode}
-            </div>,
-          ]
+          return [<Formula key={`${atomIndex}-math`} latex={atom.latex} display={false} {...formula} {...(atom.bold ? { fontWeight: 700 } : {})} />]
         }
         return tokenizeInlineText(atom.text, chunk).map((token, tokenIndex) => {
           if (token.kind === 'break') {
@@ -327,7 +321,7 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
   return (
     <div
       testId={display ? 'math-display' : 'math-inline'}
-      style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', minWidth: 0, flexShrink: 1 }}
+      style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', flexShrink: 0 }}
     >
       {React.createElement('svg', {
         source: rendered.svg,
