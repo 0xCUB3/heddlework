@@ -27,6 +27,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const contextPopoverExitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queueHintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queuedByKeyDown = useRef(false)
+  const hintShownOnce = useRef(false)
   const commandPickedByKeyDown = useRef(false)
   const commandQuery = composerCommandQuery(state.editorText)
   const matchingCommands = useMemo(() => commandQuery === undefined ? [] : matchCommands(state.commands, commandQuery).slice(0, 8), [commandQuery, state.commands])
@@ -112,6 +113,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
 
   const showQueueHint = () => {
     if (!connected || state.session.isStreaming) return
+    hintShownOnce.current = true
     if (queueHintTimer.current) clearTimeout(queueHintTimer.current)
     setQueueHintVisible(true)
     queueHintTimer.current = setTimeout(() => {
@@ -211,7 +213,8 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
             backgroundColor: colors.transparent,
           }}
           onChange={(event) => controller.setEditorText(String(event.value ?? ''))}
-          onClick={showQueueHint}
+          onFocus={showQueueHint}
+          onClick={() => { if (!hintShownOnce.current) showQueueHint() }}
           onKeyDown={handleComposerKeyDown}
           onSubmit={(event) => {
             if (commandPickedByKeyDown.current) {
