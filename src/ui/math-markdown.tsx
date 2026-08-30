@@ -328,7 +328,7 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
       style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', flexShrink: 0, overflow: 'hidden', pointerEvents: 'none' }}
     >
       {React.createElement('svg', {
-        source: rendered.svg,
+        src: `data:image/svg+xml,${encodeURIComponent(rendered.svg)}`,
         style: { width: '100%', height: '100%', color: ink, pointerEvents: 'none' },
       } as never)}
     </div>

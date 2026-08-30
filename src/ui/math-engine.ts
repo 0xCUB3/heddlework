@@ -97,6 +97,7 @@ function scaleSvg(svg: string, widthEx: number, heightEx: number, pxPerEx: numbe
   const widthPx = Math.max(1, Math.round(widthEx * pxPerEx))
   const heightPx = Math.max(1, Math.round(heightEx * pxPerEx))
   const scaled = svg
+    .replace(/<svg\b/, '<svg overflow="hidden"')
     .replace(/width="[0-9.]+ex"/, `width="${widthPx}px"`)
     .replace(/height="[0-9.]+ex"/, `height="${heightPx}px"`)
     .replace(/ style="[^"]*"/, '')
