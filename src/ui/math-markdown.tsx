@@ -252,7 +252,13 @@ function InlineRun({ parts, formula, wrap = 'chunk' }: { parts: InlinePart[]; fo
     <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 }}>
       {atoms.flatMap((atom, atomIndex) => {
         if (atom.kind === 'math') {
-          return [<Formula key={`${atomIndex}-math`} latex={atom.latex} display={false} {...formula} {...(atom.bold ? { fontWeight: 700 } : {})} />]
+          const formulaNode = <Formula key={`${atomIndex}-math`} latex={atom.latex} display={false} {...formula} {...(atom.bold ? { fontWeight: 700 } : {})} />
+          if (wrap !== 'word') return [formulaNode]
+          return [
+            <div key={`${atomIndex}-math-line`} style={{ width: '100%', minWidth: 0 }}>
+              {formulaNode}
+            </div>,
+          ]
         }
         return tokenizeInlineText(atom.text, chunk).map((token, tokenIndex) => {
           if (token.kind === 'break') {
@@ -290,7 +296,7 @@ function inlineTextStyle(run: InlineRunStyle, formula: FormulaPaint): Record<str
   const italicFace = formula.fontFamily ? `${formula.fontFamily} Italic` : 'Helvetica Neue Italic'
   return {
     color: run.code ? colors.textMuted : formula.ink,
-    fontSize: run.code ? Math.max(11, formula.fontSizePx - 1) : formula.fontSizePx,
+    fontSize: run.code ? Math.max(10, Math.round(formula.fontSizePx * 0.85)) : formula.fontSizePx,
     lineHeight: formula.lineHeight,
     flexShrink: 0,
     fontWeight: run.bold ? 700 : formula.fontWeight ?? 400,
@@ -321,11 +327,11 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
   return (
     <div
       testId={display ? 'math-display' : 'math-inline'}
-      style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', flexShrink: 1, overflow: 'hidden' }}
+      style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', minWidth: 0, flexShrink: 1 }}
     >
       {React.createElement('svg', {
         source: rendered.svg,
-        style: { width: rendered.widthPx, height: rendered.heightPx, flexShrink: 0, color: ink },
+        style: { width: '100%', height: '100%', color: ink },
       } as never)}
     </div>
   )

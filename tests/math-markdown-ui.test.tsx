@@ -161,6 +161,24 @@ describeNative('math markdown', () => {
     root.unmount()
   })
 
+  it('scales wide table formulas to the cell instead of clipping them', async () => {
+    const latex = 'w = B(0.25 + 0.75\\mathrm{spec}) / \\max(1, \\mathrm{df}/6)'
+    const source = ['| Feature | Formula | Insight |', '| --- | --- | --- |', `| x | y | edge $${latex}$ leftover |`].join('\n')
+    const root = createTestRoot({ width: 540, height: 400 })
+    root.render(React.createElement(MathMarkdown, { source, theme: undefined, testId: undefined, style: undefined, onLinkClick: undefined }))
+    let formula = root.renderer.findByTestId('math-inline')
+    for (let attempt = 0; attempt < 120 && !formula; attempt++) {
+      await Bun.sleep(25)
+      root.renderer.flush()
+      formula = root.renderer.findByTestId('math-inline')
+    }
+    expect(formula).toBeTruthy()
+    const bounds = box(root, formula!)
+    expect(bounds.w).toBeGreaterThan(40)
+    expect(bounds.w).toBeLessThanOrEqual(200)
+    root.unmount()
+  })
+
   it('renders math inside markdown tables instead of raw pipes', async () => {
     const { root, svgCount } = await renderMath('| Feature | Formula |\n| --- | --- |\n| seed | $s$ |')
     expect(svgCount).toBeGreaterThan(0)
