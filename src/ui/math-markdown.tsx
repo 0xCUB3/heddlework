@@ -40,7 +40,7 @@ interface InlineRunStyle {
 
 export type InlineAtom =
   | { kind: 'text'; text: string; bold: boolean; italic: boolean; code: boolean }
-  | { kind: 'math'; latex: string; bold: boolean; italic: boolean }
+  | { kind: 'math'; latex: string; bold: boolean; italic: boolean; glue: string }
 
 const PLACEHOLDER_START = '\uE000'
 const PLACEHOLDER_END = '\uE001'
@@ -256,7 +256,14 @@ function InlineRun({ parts, formula, wrap = 'chunk' }: { parts: InlinePart[]; fo
     <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 }}>
       {atoms.flatMap((atom, atomIndex) => {
         if (atom.kind === 'math') {
-          return [<Formula key={`${atomIndex}-math`} latex={atom.latex} display={false} {...formula} {...(atom.bold ? { fontWeight: 700 } : {})} />]
+          const formulaNode = <Formula key={`${atomIndex}-math`} latex={atom.latex} display={false} {...formula} {...(atom.bold ? { fontWeight: 700 } : {})} />
+          if (!atom.glue) return [formulaNode]
+          return [
+            <div key={`${atomIndex}-math`} style={{ display: 'flex', flexDirection: 'row', flexShrink: 0, alignItems: 'center' }}>
+              {formulaNode}
+              <text style={inlineTextStyle({ text: atom.glue, bold: atom.bold, italic: atom.italic, code: false }, formula)}>{atom.glue}</text>
+            </div>,
+          ]
         }
         return tokenizeInlineText(atom.text, chunk).map((token, tokenIndex) => {
           if (token.kind === 'break') {
@@ -287,7 +294,31 @@ function styledAtomsFromParts(parts: InlinePart[]): InlineAtom[] {
     source += `${PLACEHOLDER_START}${formulas.length}${PLACEHOLDER_END}`
     formulas.push(part.latex)
   }
-  return parseInlineWithMath(source, formulas)
+  return attachMathPunctuation(parseInlineWithMath(source, formulas))
+}
+
+function leadingMathGlue(text: string): string {
+  let end = 0
+  while (end < text.length && ',.;:!?)]'.includes(text[end]!)) end++
+  return text.slice(0, end)
+}
+
+export function attachMathPunctuation(atoms: InlineAtom[]): InlineAtom[] {
+  const output: InlineAtom[] = []
+  for (let index = 0; index < atoms.length; index++) {
+    const atom = atoms[index]!
+    if (atom.kind !== 'math') {
+      output.push(atom)
+      continue
+    }
+    const next = atoms[index + 1]
+    const glue = next?.kind === 'text' ? leadingMathGlue(next.text) : ''
+    output.push({ kind: 'math', latex: atom.latex, bold: atom.bold, italic: atom.italic, glue })
+    if (glue && next?.kind === 'text') {
+      atoms[index + 1] = { ...next, text: next.text.slice(glue.length) }
+    }
+  }
+  return output.filter((atom) => atom.kind === 'math' || atom.text.length > 0)
 }
 
 function inlineTextStyle(run: InlineRunStyle, formula: FormulaPaint): Record<string, unknown> {
@@ -357,7 +388,7 @@ function parseAtoms(source: string, formulas: string[], style: { bold: boolean; 
       const end = source.indexOf(PLACEHOLDER_END, index + 1)
       if (end > index) {
         const latex = formulas[Number(source.slice(index + PLACEHOLDER_START.length, end))]
-        if (latex !== undefined) atoms.push({ kind: 'math', latex, bold: style.bold, italic: style.italic })
+        if (latex !== undefined) atoms.push({ kind: 'math', latex, bold: style.bold, italic: style.italic, glue: '' })
         index = end + PLACEHOLDER_END.length
         continue
       }

@@ -1,7 +1,7 @@
 import React from 'react'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
-import { buildMathRows, MathMarkdown, parseInlineMarkdown, parseInlineWithMath } from '../src/ui/math-markdown.tsx'
+import { attachMathPunctuation, buildMathRows, MathMarkdown, parseInlineMarkdown, parseInlineWithMath } from '../src/ui/math-markdown.tsx'
 import { loadFormulaRenderer } from '../src/ui/math-engine.ts'
 import { segmentMathMarkdown } from '../src/ui/math-segment.ts'
 
@@ -75,8 +75,16 @@ describe('math rows', () => {
   it('keeps bold wrapping a formula inside the markers', () => {
     expect(parseInlineWithMath('**small \uE0000\uE001**:', ['t'])).toEqual([
       { kind: 'text', text: 'small ', bold: true, italic: false, code: false },
-      { kind: 'math', latex: 't', bold: true, italic: false },
+      { kind: 'math', latex: 't', bold: true, italic: false, glue: '' },
       { kind: 'text', text: ':', bold: false, italic: false, code: false },
+    ])
+  })
+
+  it('keeps a comma after a formula attached to that formula', () => {
+    expect(attachMathPunctuation(parseInlineWithMath('at \uE0000\uE001, and more', ['CR = 3']))).toEqual([
+      { kind: 'text', text: 'at ', bold: false, italic: false, code: false },
+      { kind: 'math', latex: 'CR = 3', bold: false, italic: false, glue: ',' },
+      { kind: 'text', text: ' and more', bold: false, italic: false, code: false },
     ])
   })
 
@@ -140,6 +148,20 @@ describeNative('math markdown', () => {
     root.renderer.flush()
     expect(root.renderer.getPaintedText()).toContain('plain bold text')
     expect(root.renderer.findByType('svg')).toHaveLength(0)
+    root.unmount()
+  })
+
+  it('keeps a comma on the same line as the formula before it', async () => {
+    const { root, svgCount } = await renderMath('threshold at $CR = 3$, and contrast')
+    expect(svgCount).toBeGreaterThan(0)
+    const formula = root.renderer.findByTestId('math-inline')
+    const comma = root.renderer.findByType('text').find((node) => node.text === ',')
+    expect(formula).toBeTruthy()
+    expect(comma).toBeTruthy()
+    const formulaBox = box(root, formula!)
+    const commaBox = box(root, comma!)
+    expect(Math.abs(commaBox.y - formulaBox.y)).toBeLessThan(20)
+    expect(commaBox.x).toBeGreaterThan(formulaBox.x)
     root.unmount()
   })
 
