@@ -93,7 +93,7 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
   return (
     <div
       {...(testId !== undefined ? { testId } : {})}
-      style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, ...(style ?? {}) }}
+      style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, overflow: 'hidden', pointerEvents: 'none', ...(style ?? {}) }}
     >
       {rows.map((row, index) => {
         const last = index === rows.length - 1
@@ -123,7 +123,7 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
               source={markdownSourceWithNewlines(row.source)}
               theme={theme}
               testId={undefined}
-              style={{ width: '100%', minWidth: 0, marginBottom: below }}
+              style={{ width: '100%', minWidth: 0, marginBottom: below, pointerEvents: 'auto' }}
               onLinkClick={onLinkClick}
             />
           )

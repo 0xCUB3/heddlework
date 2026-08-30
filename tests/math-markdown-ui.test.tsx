@@ -4,6 +4,8 @@ import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { attachMathPunctuation, buildMathRows, MathMarkdown, parseInlineMarkdown, parseInlineWithMath } from '../src/ui/math-markdown.tsx'
 import { loadFormulaRenderer } from '../src/ui/math-engine.ts'
 import { segmentMathMarkdown } from '../src/ui/math-segment.ts'
+import { Transcript } from '../src/ui/transcript.tsx'
+import { createInitialState } from '../src/workbench/state.ts'
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
@@ -280,6 +282,46 @@ describeNative('math markdown', () => {
     expect(painted).toContain('What')
     expect(painted).toContain('means')
     expect(painted).not.toContain('##')
+    root.unmount()
+  })
+
+  it('clicks fork on a math assistant message', async () => {
+    let forks = 0
+    const source = 'Threshold at $CR = 3$, and $\\mu_v$ decays.\n\n$$E = mc^2$$\n\nDone.'
+    const root = createTestRoot({ width: 900, height: 700 })
+    root.render(
+      React.createElement('div', { style: { width: 900, height: 700, display: 'flex', flexDirection: 'column' } },
+        React.createElement(Transcript, {
+          state: {
+            ...createInitialState('/tmp/math-fork'),
+            session: { model: null, thinkingLevel: 'off', isStreaming: false, sessionFile: '/tmp/math-fork.jsonl', sessionId: 'math-fork' },
+            messages: [
+              { role: 'user', content: 'Explain', timestamp: 1, workbenchEntryId: 'u1' },
+              { role: 'assistant', content: [{ type: 'text', text: source }], timestamp: 2, workbenchEntryId: 'a1' },
+            ],
+            forkMessages: [{ entryId: 'u1', text: 'Explain' }],
+          },
+          presenters: new Map(),
+          onOpenDiff: () => undefined,
+          onRevert: () => { forks += 1 },
+        }),
+      ),
+    )
+    let fork
+    for (let attempt = 0; attempt < 80; attempt++) {
+      await Bun.sleep(25)
+      root.renderer.flush()
+      const found = root.renderer.findByType('div').filter((node) => node.testId === 'fork-message')
+      if (found.length >= 2 && root.renderer.findByType('svg').length > 0) {
+        fork = found.at(-1)
+        break
+      }
+    }
+    expect(fork).toBeTruthy()
+    const forkBox = box(root, fork!)
+    root.renderer.nativeSimulateClick(forkBox.x + 8, forkBox.y + 8)
+    root.renderer.dispatchNativeEvents()
+    expect(forks).toBe(1)
     root.unmount()
   })
 
