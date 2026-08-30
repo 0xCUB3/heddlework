@@ -96,6 +96,8 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
       style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, ...(style ?? {}) }}
     >
       {rows.map((row, index) => {
+        const last = index === rows.length - 1
+        const below = last ? 0 : paragraphGap
         if (row.type === 'display') {
           return (
             <div
@@ -121,7 +123,7 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
               source={markdownSourceWithNewlines(row.source)}
               theme={theme}
               testId={undefined}
-              style={{ width: '100%', minWidth: 0, marginBottom: paragraphGap }}
+              style={{ width: '100%', minWidth: 0, marginBottom: below }}
               onLinkClick={onLinkClick}
             />
           )
@@ -130,14 +132,14 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
           const size = headingMetric(row.level, metrics?.mdHeadingSizes ?? [20, 16, 14, 14])
           const height = headingMetric(row.level, metrics?.mdHeadingLineHeights ?? [28, 24, 22, 22])
           return (
-            <div key={index} style={{ width: '100%', minWidth: 0, marginTop: index === 0 ? 0 : headingAbove, marginBottom: headingBelow }}>
+            <div key={index} style={{ width: '100%', minWidth: 0, marginTop: index === 0 ? 0 : headingAbove, marginBottom: last ? 0 : headingBelow }}>
               <InlineRun parts={row.parts} formula={{ ...formula, fontSizePx: size, lineHeight: height, fontWeight: 650 }} />
             </div>
           )
         }
         if (row.type === 'list') {
           return (
-            <div key={index} style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 8, paddingLeft: 2, marginBottom: paragraphGap }}>
+            <div key={index} style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 8, paddingLeft: 2, marginBottom: below }}>
               {row.items.map((item, itemIndex) => (
                 <div key={itemIndex} style={{ display: 'flex', flexDirection: 'row', width: '100%', minWidth: 0, gap: 8 }}>
                   <text style={{ color: ink, fontSize: fontSizePx, lineHeight, flexShrink: 0, ...(fontFamily !== undefined ? { fontFamily } : {}) }}>
@@ -152,10 +154,10 @@ function SegmentedMarkdown({ segments, theme, testId, style, onLinkClick }: Math
           )
         }
         if (row.type === 'table') {
-          return <MathTable key={index} headers={row.headers} rows={row.rows} theme={theme} onLinkClick={onLinkClick} cellPadding={cellPadding} formula={formula} />
+          return <MathTable key={index} headers={row.headers} rows={row.rows} theme={theme} onLinkClick={onLinkClick} cellPadding={cellPadding} formula={formula} last={last} />
         }
         return (
-          <div key={index} style={{ width: '100%', minWidth: 0, marginBottom: paragraphGap }}>
+          <div key={index} style={{ width: '100%', minWidth: 0, marginBottom: below }}>
             <InlineRun parts={row.parts} formula={formula} />
           </div>
         )
@@ -169,18 +171,20 @@ function headingMetric(level: number, values: number[]): number {
   return values[Math.min(index, values.length - 1)] ?? values[0] ?? 16
 }
 
-function MathTable({ headers, rows, theme, onLinkClick, cellPadding, formula }: {
+function MathTable({ headers, rows, theme, onLinkClick, cellPadding, formula, last }: {
   headers: InlinePart[][]
   rows: InlinePart[][][]
   theme: Record<string, unknown> | undefined
   onLinkClick: ((event: EventPayload) => void) | undefined
   cellPadding: number
   formula: FormulaPaint
+  last: boolean
 }) {
   const columns = Math.max(headers.length, ...rows.map((row) => row.length), 1)
   const grid = [headers, ...rows]
+  const gap = Math.round(formula.fontSizePx * 1.15)
   return (
-    <div testId="math-table" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, marginTop: Math.round(formula.fontSizePx * 1.15), marginBottom: Math.round(formula.fontSizePx * 1.15), borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 8, overflow: 'hidden' }}>
+    <div testId="math-table" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, marginTop: gap, marginBottom: last ? 0 : gap, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 8, overflow: 'hidden' }}>
       {grid.map((row, rowIndex) => (
         <div
           key={rowIndex}
@@ -321,11 +325,11 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
   return (
     <div
       testId={display ? 'math-display' : 'math-inline'}
-      style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', flexShrink: 0 }}
+      style={{ width: rendered.widthPx, height: rendered.heightPx, maxWidth: '100%', flexShrink: 0, overflow: 'hidden', pointerEvents: 'none' }}
     >
       {React.createElement('svg', {
         source: rendered.svg,
-        style: { width: '100%', height: '100%', color: ink },
+        style: { width: '100%', height: '100%', color: ink, pointerEvents: 'none' },
       } as never)}
     </div>
   )

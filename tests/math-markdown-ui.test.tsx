@@ -246,6 +246,42 @@ describeNative('math markdown', () => {
     root.unmount()
   })
 
+  it('does not let formula hit targets swallow clicks below the message', async () => {
+    let clicks = 0
+    const root = createTestRoot({ width: 900, height: 500 })
+    root.render(
+      React.createElement('div', { style: { display: 'flex', flexDirection: 'column', width: 900 } },
+        React.createElement(MathMarkdown, {
+          source: 'Ledger $\\mu_v$ decays and $S \\ge \\theta$ holds. Final note $n$.',
+          theme: undefined,
+          testId: undefined,
+          style: undefined,
+          onLinkClick: undefined,
+        }),
+        React.createElement('div', {
+          testId: 'after-math',
+          style: { width: 120, height: 24, background: '#333333' },
+          onClick: () => { clicks += 1 },
+        }),
+      ),
+    )
+    for (let attempt = 0; attempt < 80; attempt++) {
+      await Bun.sleep(25)
+      root.renderer.flush()
+      if (root.renderer.findByType('svg').length > 0) break
+    }
+    const target = root.renderer.findByTestId('after-math')
+    expect(target).toBeTruthy()
+    const bounds = box(root, target!)
+    root.renderer.nativeSimulateClick(bounds.x + 8, bounds.y + 8)
+    root.renderer.dispatchNativeEvents()
+    expect(clicks).toBe(1)
+    const formula = root.renderer.findByTestId('math-inline')
+    expect(formula?.style.overflow).toBe('hidden')
+    expect(formula?.style.pointerEvents).toBe('none')
+    root.unmount()
+  })
+
   it('renders display math centered with a line of space above and below', async () => {
     const { root, svgCount } = await renderMath('Before\n\n$$\n\\int_0^\\infty e^{-x}\\,dx = 1\n$$\n\nAfter')
     expect(svgCount).toBeGreaterThan(0)
