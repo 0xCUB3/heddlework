@@ -45,7 +45,7 @@ export type InlineAtom =
 const PLACEHOLDER_START = '\uE000'
 const PLACEHOLDER_END = '\uE001'
 const PLACEHOLDER_RE = /\uE000(\d+)\uE001/g
-const INLINE_CHUNK = 48
+
 
 export const MathMarkdown = memo(function MathMarkdown(props: MathMarkdownProps) {
   const { source } = props
@@ -246,12 +246,11 @@ function TableCell({ parts, header, theme, onLinkClick, formula }: {
       />
     )
   }
-  return <InlineRun parts={parts} formula={header ? { ...formula, fontWeight: 650 } : formula} wrap="word" />
+  return <InlineRun parts={parts} formula={header ? { ...formula, fontWeight: 650 } : formula} />
 }
 
-function InlineRun({ parts, formula, wrap = 'chunk' }: { parts: InlinePart[]; formula: FormulaPaint; wrap?: 'chunk' | 'word' }) {
+function InlineRun({ parts, formula }: { parts: InlinePart[]; formula: FormulaPaint }) {
   const atoms = styledAtomsFromParts(parts)
-  const chunk = wrap === 'word' ? 1 : INLINE_CHUNK
   return (
     <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 }}>
       {atoms.flatMap((atom, atomIndex) => {
@@ -265,7 +264,7 @@ function InlineRun({ parts, formula, wrap = 'chunk' }: { parts: InlinePart[]; fo
             </div>,
           ]
         }
-        return tokenizeInlineText(atom.text, chunk).map((token, tokenIndex) => {
+        return tokenizeInlineText(atom.text).map((token, tokenIndex) => {
           if (token.kind === 'break') {
             return <div key={`${atomIndex}-br-${tokenIndex}`} style={{ width: '100%', height: 0 }} />
           }
@@ -667,23 +666,14 @@ function splitTableRow(line: string): string[] {
   return body.split('|').map((cell) => cell.trim())
 }
 
-function tokenizeInlineText(text: string, chunk = INLINE_CHUNK): Array<{ kind: 'word'; value: string } | { kind: 'break' }> {
+function tokenizeInlineText(text: string): Array<{ kind: 'word'; value: string } | { kind: 'break' }> {
   const tokens: Array<{ kind: 'word'; value: string } | { kind: 'break' }> = []
   const lines = text.split('\n')
   for (let index = 0; index < lines.length; index++) {
     if (index > 0) tokens.push({ kind: 'break' })
     const words = lines[index]!.match(/\S+\s*|\s+/gu)
     if (!words) continue
-    let run = ''
-    for (const word of words) {
-      if (run.length + word.length > chunk && run.length > 0) {
-        tokens.push({ kind: 'word', value: run })
-        run = word
-      } else {
-        run += word
-      }
-    }
-    if (run) tokens.push({ kind: 'word', value: run })
+    for (const word of words) tokens.push({ kind: 'word', value: word })
   }
   return tokens
 }

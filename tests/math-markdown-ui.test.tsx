@@ -151,6 +151,20 @@ describeNative('math markdown', () => {
     root.unmount()
   })
 
+  it('wraps after a formula at word boundaries instead of a whole clause', async () => {
+    const { root, svgCount } = await renderMath('Enforced floors in the harness: $CR \\ge 4.5$ for normal text, low-contrast threshold at $CR = 3$, and contrast adjustments capped at a 9% pixel-delta.')
+    expect(svgCount).toBeGreaterThan(0)
+    const formula = root.renderer.findByTestId('math-inline')
+    const andWord = root.renderer.findByType('text').find((node) => node.text?.includes('and'))
+    expect(formula).toBeTruthy()
+    expect(andWord).toBeTruthy()
+    const formulaBox = box(root, formula!)
+    const andBox = box(root, andWord!)
+    expect(Math.abs(andBox.y - formulaBox.y)).toBeLessThan(20)
+    expect(andBox.x).toBeGreaterThan(formulaBox.x)
+    root.unmount()
+  })
+
   it('keeps a comma on the same line as the formula before it', async () => {
     const { root, svgCount } = await renderMath('threshold at $CR = 3$, and contrast')
     expect(svgCount).toBeGreaterThan(0)
@@ -262,7 +276,8 @@ describeNative('math markdown', () => {
     const { root, svgCount } = await renderMath('## 2. What $v(t)$ means\n\nNext')
     expect(svgCount).toBeGreaterThan(0)
     const painted = root.renderer.getPaintedText().join(' ')
-    expect(painted).toContain('2. What')
+    expect(painted).toContain('2.')
+    expect(painted).toContain('What')
     expect(painted).toContain('means')
     expect(painted).not.toContain('##')
     root.unmount()
