@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
-import { sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
+import { isCurrentPiSession, sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
@@ -118,7 +118,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   const settledSessions = visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'settled')
   const renderedSettledSessions = settledExpanded
     ? settledSessions
-    : settledSessions.filter((session) => session.path === activePath || session.id === state.session.sessionId)
+    : settledSessions.filter((session) => isCurrentPiSession(session, state.session))
   const connectionColor = state.connection === 'connected'
     ? colors.success
     : state.connection === 'connecting'
@@ -126,7 +126,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
       : colors.error
 
   const renderSession = (session: PiSessionSummary, lifecycle: 'active' | 'snoozed' | 'settled') => {
-    const active = session.path === activePath || session.id === state.session.sessionId
+    const active = isCurrentPiSession(session, state.session)
     return (
       <SessionRow
         key={session.path}
@@ -135,7 +135,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         projectName={sessionProjectName(session)}
         active={active}
         running={active && state.session.isStreaming}
-        disabled={state.connection !== 'connected' || (state.session.isStreaming && !active)}
+        disabled={state.connection !== 'connected'}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}

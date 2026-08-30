@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import { isCurrentPiSession, type PiSessionSummary } from '../pi/session-catalog.ts'
 import { parseBuiltinSlashCommand, slashCommandsFromRpc, type ParsedBuiltinSlashCommand } from '../pi/slash-commands.ts'
 import {
   PiSessionHistoryPager,
@@ -506,7 +506,11 @@ export class WorkbenchController {
 
   async switchWorkspace(workspacePath: string): Promise<void> {
     const target = resolve(workspacePath)
-    if (this.#state.session.isStreaming || target === resolve(this.#state.workspacePath)) return
+    if (target === resolve(this.#state.workspacePath)) return
+    if (this.#state.connection !== 'connected') {
+      this.#setState((state) => addNotice(state, 'warning', 'Reconnect Pi before switching sessions'))
+      return
+    }
     this.#patch({ activity: 'Opening project' })
     try {
       const session = await this.#sessionCatalog.createWorkspaceSession(target)
@@ -518,15 +522,24 @@ export class WorkbenchController {
   }
 
   async switchSession(session: PiSessionSummary): Promise<void> {
-    if (
-      this.#state.session.isStreaming ||
-      session.path === this.#state.session.sessionFile ||
-      session.id === this.#state.session.sessionId
-    ) return
+    if (isCurrentPiSession(session, this.#state.session)) return
+    if (this.#state.connection !== 'connected') {
+      this.#setState((state) => addNotice(state, 'warning', 'Reconnect Pi before switching sessions'))
+      return
+    }
+    if (this.#sessionTransitionDepth > 0) return
     this.#sessionTransitionDepth += 1
     try {
       this.#dialogs.cancelAll()
       this.#patch({ activity: 'Opening thread' })
+      if (this.#state.session.isStreaming) {
+        this.#pauseAfterTools = false
+        try {
+          await this.#transport.request({ type: 'abort' })
+        } catch {
+          // switch_session still replaces the live turn; a failed abort must not pin the sidebar
+        }
+      }
       const result = await this.#transport.request<{ cancelled?: boolean }>({
         type: 'switch_session',
         sessionPath: session.path,

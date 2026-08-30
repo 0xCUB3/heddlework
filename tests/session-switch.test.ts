@@ -28,6 +28,7 @@ class SwitchingTransport implements AgentTransport {
   readonly sent: RpcRecord[] = []
   readonly requests: RpcCommand[] = []
   active = sessions[0]!
+  extras: PiSessionSummary[] = []
   startCalls = 0
   #notifyDuringBootstrap = false
   #switchBarrier: Promise<void> | undefined
@@ -47,8 +48,9 @@ class SwitchingTransport implements AgentTransport {
 
   async request<T = unknown>(command: RpcCommand): Promise<T> {
     this.requests.push(command)
+    if (command.type === 'abort') return undefined as T
     if (command.type === 'switch_session') {
-      this.active = [...sessions, workspaceSession].find((session) => session.path === command.sessionPath) ?? this.active
+      this.active = [...sessions, workspaceSession, ...this.extras].find((session) => session.path === command.sessionPath) ?? this.active
       this.emitEvent({ type: 'extension_ui_request', id: 'switch-wizard', method: 'notify', message: 'Session wizard' })
       this.#notifyDuringBootstrap = true
       const barrier = this.#switchBarrier
@@ -120,6 +122,66 @@ describe('clickable session switching', () => {
       expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/three.jsonl' })
       expect(controller.getSnapshot()).toMatchObject({ workspacePath: '/tmp/project-three', messages: [] })
       expect(controller.getSnapshot().session).toMatchObject({ sessionId: 'three', sessionFile: '/tmp/three.jsonl' })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('aborts an in-flight turn before switching threads', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      transport.emitEvent({ type: 'agent_start' })
+      expect(controller.getSnapshot().session.isStreaming).toBe(true)
+      const before = transport.requests.length
+      await controller.switchSession(sessions[1]!)
+      const issued = transport.requests.slice(before)
+      expect(issued[0]).toEqual({ type: 'abort' })
+      expect(issued[1]).toEqual({ type: 'switch_session', sessionPath: '/tmp/two.jsonl' })
+      expect(controller.getSnapshot().session.sessionId).toBe('two')
+      expect(controller.getSnapshot().session.isStreaming).toBe(false)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('switches by session file when two threads share an id', async () => {
+    const forked: PiSessionSummary = { id: 'one', path: '/tmp/one-fork.jsonl', cwd: '/tmp/project-fork', title: 'Forked thread', firstMessage: 'Forked', messageCount: 1, createdAt: 4, modifiedAt: 4 }
+    const transport = new SwitchingTransport()
+    transport.extras = [forked]
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      await controller.switchSession(forked)
+      expect(transport.requests).toContainEqual({ type: 'switch_session', sessionPath: '/tmp/one-fork.jsonl' })
+      expect(controller.getSnapshot().session).toMatchObject({ sessionId: 'one', sessionFile: '/tmp/one-fork.jsonl' })
+      expect(controller.getSnapshot().workspacePath).toBe('/tmp/project-fork')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('does not reissue switch_session for the already open thread', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.start()
+      const before = transport.requests.length
+      await controller.switchSession(sessions[0]!)
+      expect(transport.requests.slice(before)).toEqual([])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('explains why a disconnected workbench cannot switch threads', async () => {
+    const transport = new SwitchingTransport()
+    const controller = new WorkbenchController(transport, '/tmp/project', testControllerDependencies(new StaticCatalog()))
+    try {
+      await controller.switchSession(sessions[1]!)
+      expect(transport.requests).toEqual([])
+      expect(controller.getSnapshot().notices.map((notice) => notice.message)).toContain('Reconnect Pi before switching sessions')
     } finally {
       await controller.dispose()
     }

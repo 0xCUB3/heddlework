@@ -76,8 +76,10 @@ export function SessionRow({
     <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} style={{ position: 'relative', height: 78, minHeight: 78, maxHeight: 78, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: 9, borderRadius: 8, backgroundColor: colors.transparent, opacity: disabled ? 0.45 : 1, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => { setHovered(false); setSettleHovered(false) }}>
       <div testId="sidebar-session-surface" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderRadius: 8, backgroundColor: active ? colors.sidebarActive : hovered ? colors.sidebarHover : colors.transparent, pointerEvents: 'none' }} />
       <div style={{ width: '100%', minWidth: 0, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-        <Icon name="folder" size={13} color={colors.textFaint} />
-        <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
+        <div tabIndex={disabled ? -1 : 0} style={{ minWidth: 0, flexGrow: 1, height: 20, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
+          <Icon name="folder" size={13} color={colors.textFaint} />
+          <text style={{ color: colors.textMuted, fontSize: 10, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
+        </div>
         <div style={{ width: 70, height: 20, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
           {compact || hovered || snoozeMounted ? (
             <>

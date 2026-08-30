@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { getPiSessionDirectory, listPiSessions, PiSessionCatalog } from '../src/pi/session-catalog.ts'
+import { getPiSessionDirectory, isCurrentPiSession, listPiSessions, PiSessionCatalog } from '../src/pi/session-catalog.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -94,5 +94,20 @@ describe('PiSessionCatalog', () => {
     expect(new Set(sessions.map((session) => session.cwd))).toEqual(new Set([currentCwd, otherCwd]))
     expect(sessions.find((session) => session.id === 'large')).toMatchObject({ title: 'Tail rename', firstMessage: 'Large session prompt', messageCount: 1 })
     expect(performance.now() - startedAt).toBeLessThan(2_500)
+  })
+})
+
+describe('isCurrentPiSession', () => {
+  const session = { id: 'one', path: '/tmp/one.jsonl' }
+
+  it('matches the open session file even when ids collide', () => {
+    expect(isCurrentPiSession(session, { sessionId: 'one', sessionFile: '/tmp/one.jsonl' })).toBe(true)
+    expect(isCurrentPiSession({ id: 'one', path: '/tmp/fork.jsonl' }, { sessionId: 'one', sessionFile: '/tmp/one.jsonl' })).toBe(false)
+  })
+
+  it('falls back to id only when the live session has no file yet', () => {
+    expect(isCurrentPiSession(session, { sessionId: 'one' })).toBe(true)
+    expect(isCurrentPiSession(session, { sessionId: 'two' })).toBe(false)
+    expect(isCurrentPiSession(session, {})).toBe(false)
   })
 })
