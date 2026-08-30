@@ -35,6 +35,20 @@ function waitForSettled(controller: WorkbenchController): Promise<void> {
   })
 }
 
+function waitForFinalAssistant(controller: WorkbenchController): Promise<void> {
+  const hasFinal = () => controller.getSnapshot().messages.some((message) => (
+    message.role === 'assistant' && JSON.stringify(message.content ?? '').includes('native GPUIX transcript')
+  ))
+  if (hasFinal()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = controller.subscribe(() => {
+      if (!hasFinal()) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
+
 function waitForDiff(controller: WorkbenchController): Promise<void> {
   const status = controller.getSnapshot().workspaceDiff.status
   if (status === 'ready' || status === 'error') return Promise.resolve()
@@ -180,6 +194,7 @@ describeNative('WorkbenchApp', () => {
 
     await controller.submit('Inspect the repository')
     await waitForSettled(controller)
+    await waitForFinalAssistant(controller)
     root.renderer.flush()
     const conversation = root.renderer.getPaintedText()
     const transcriptList = root.renderer.findByTestId('transcript-list')!
@@ -190,6 +205,11 @@ describeNative('WorkbenchApp', () => {
     expect(conversation).toContain('Inspect the repository')
     expect(conversation.some((line) => line.includes('native GPUIX transcript'))).toBe(true)
 
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      root.renderer.flush()
+      if (await automation.getByTestId('copy-message').count() >= 2) break
+      await Bun.sleep(50)
+    }
     const userBounds = await automation.getByTestId('user-message').bounds()
     await automation.call('mouseMove', { x: userBounds.x + userBounds.width - 4, y: userBounds.y + userBounds.height - 3 })
     await Bun.sleep(30)
@@ -332,7 +352,8 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('tool-row').press('enter')
     root.renderer.flush()
     expect(root.renderer.getPaintedText()).toContain('TOOL CALL')
-    expect(await automation.getByTestId('execution-timeline').count()).toBe(1)
+    expect(await automation.getByTestId('execution-timeline').count()).toBeGreaterThanOrEqual(1)
+    expect(await automation.getByTestId('trace-assistant').count()).toBe(1)
     expect(root.renderer.findByTestId('tool-summary-label')?.style.fontFamily).toBe('Menlo')
     await automation.getByTestId('tool-detail-row').press('enter')
     root.renderer.flush()

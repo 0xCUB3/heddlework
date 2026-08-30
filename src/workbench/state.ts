@@ -166,7 +166,7 @@ export function applyRpcEvent(state: WorkbenchState, event: RpcRecord): Workbenc
     case 'agent_start':
       return { ...state, session: { ...state.session, isStreaming: true }, activity: 'Working' }
     case 'agent_end':
-      return { ...state, activity: event.willRetry ? 'Retrying' : 'Finishing' }
+      return event.willRetry ? { ...state, activity: 'Retrying' } : state
     case 'agent_settled':
       return { ...state, session: { ...state.session, isStreaming: false }, activity: 'Ready' }
     case 'turn_start':

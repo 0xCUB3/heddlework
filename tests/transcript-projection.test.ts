@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { TimelineItem } from '../src/workbench/timeline.ts'
-import { groupWorkItems, projectTranscriptRows } from '../src/ui/transcript-projection.ts'
+import { currentWorkWave, groupWorkItems, liveWorkTraceId, pendingWorkTraceId, projectTranscriptRows } from '../src/ui/transcript-projection.ts'
 
 describe('transcript projection', () => {
   const items: TimelineItem[] = [
@@ -27,6 +27,24 @@ describe('transcript projection', () => {
     const running = groupWorkItems([items[0]!, liveThinking, liveTool])
     expect(preparing.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-after-user')
     expect(running.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-after-user')
+  })
+
+  it('reuses the pending work-trace id when the first tool arrives', () => {
+    const user: TimelineItem = { id: 'user', kind: 'user', text: 'Prompt', images: [] }
+    const preparing = groupWorkItems([user], true)
+    const running = groupWorkItems([user, { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'running', isError: false } }], true)
+    expect(pendingWorkTraceId(preparing, true)).toBe('work-trace-after-user')
+    expect(liveWorkTraceId(running, true)).toBe('work-trace-after-user')
+  })
+
+  it('keeps the current-turn work-trace id stable when a tool finishes and another starts', () => {
+    const user: TimelineItem = { id: 'user', kind: 'user', text: 'Prompt', images: [] }
+    const first: TimelineItem = { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } }
+    const second: TimelineItem = { id: 'grep', kind: 'tool', tool: { id: 'grep', name: 'grep', status: 'running', isError: false } }
+    const finished = groupWorkItems([user, first], true)
+    const next = groupWorkItems([user, first, second], true)
+    expect(finished.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-after-user')
+    expect(next.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-after-user')
   })
 
   it('projects only the requested trace prefix and one continuation seam', () => {
@@ -68,5 +86,121 @@ describe('transcript projection', () => {
     expect(notificationRows).toHaveLength(2)
     expect(notificationRows.map((row) => row.notices.length)).toEqual([2, 1])
     expect(rows.map((row) => row.kind)).toEqual(['timeline-item', 'trace-header', 'trace-entry', 'trace-notices', 'trace-notices', 'trace-entry'])
+  })
+
+  it('folds intermediate assistant replies into the work trace and keeps the settled response', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'first', kind: 'assistant', text: 'I will inspect the repo.' },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'second', kind: 'assistant', text: 'There is a session-switch path.' },
+      { id: 'grep', kind: 'tool', tool: { id: 'grep', name: 'grep', status: 'complete', isError: false } },
+      { id: 'final', kind: 'assistant', text: 'Here is the answer.' },
+    ])
+
+    expect(grouped.map((item) => item.kind)).toEqual(['user', 'work-trace', 'assistant'])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    expect(trace.items.map((item) => item.kind)).toEqual(['assistant', 'tool', 'assistant', 'tool'])
+    expect(grouped.at(-1)).toMatchObject({ kind: 'assistant', text: 'Here is the answer.' })
+  })
+
+  it('keeps a live assistant reply visible until later work appears', () => {
+    const streaming: TimelineItem = { id: 'live', kind: 'assistant', text: 'I will inspect the repo.', streaming: true }
+    const preparing = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      streaming,
+    ])
+    const running = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'live', kind: 'assistant', text: 'I will inspect the repo.' },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'running', isError: false } },
+    ])
+
+    expect(preparing.map((item) => item.kind)).toEqual(['user', 'assistant'])
+    expect(running.map((item) => item.kind)).toEqual(['user', 'work-trace'])
+    expect(running.find((item) => item.kind === 'work-trace')?.items.map((item) => item.kind)).toEqual(['assistant', 'tool'])
+  })
+
+  it('keeps the current-turn work trace live while streaming before a response', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+    ])
+    expect(liveWorkTraceId(grouped, true)).toBe('work-trace-read')
+    expect(liveWorkTraceId(grouped, false)).toBeUndefined()
+  })
+
+  it('keeps the current-turn work-trace id while a streaming assistant follows', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'answer', kind: 'assistant', text: 'Done', streaming: true },
+    ], true)
+    expect(grouped.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-after-user')
+  })
+
+  it('does not pending-Working after a settled assistant while still streaming', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+    ], true)
+    expect(liveWorkTraceId(grouped, true)).toBeUndefined()
+    expect(pendingWorkTraceId(grouped, true)).toBeUndefined()
+  })
+
+  it('ends the live work header when an assistant response starts', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'answer', kind: 'assistant', text: 'Done', streaming: true },
+    ])
+    expect(liveWorkTraceId(grouped, true)).toBeUndefined()
+  })
+
+  it('keeps a work-trace id stable when notices append', () => {
+    const tools: TimelineItem[] = [
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+    ]
+    const withNotice = groupWorkItems([
+      ...tools,
+      { id: 'notice-1', kind: 'notice', notice: { id: 1, kind: 'info', message: 'One', createdAt: 1_000 } },
+    ])
+    expect(withNotice.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-read')
+  })
+
+  it('only includes tools after the last assistant in the current work wave', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'first', kind: 'assistant', text: 'Checking.' },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'second', kind: 'assistant', text: 'Continuing.' },
+      { id: 'grep', kind: 'tool', tool: { id: 'grep', name: 'grep', status: 'running', isError: false } },
+    ])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    expect(currentWorkWave(trace.items).tools.map((item) => item.tool.id)).toEqual(['grep'])
+  })
+
+  it('does not revive a previous turn work trace after a new user prompt', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+      { id: 'follow-up', kind: 'user', text: 'Continue', images: [] },
+    ])
+    expect(liveWorkTraceId(grouped, true)).toBeUndefined()
+  })
+
+  it('keeps displayable custom type messages inside the work trace', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'capability', kind: 'context-injection', text: 'pi-fovea · 4 tools matched your prompt.', images: [], source: 'pi-fabric-capability' },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'final', kind: 'assistant', text: 'Done.' },
+    ])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    expect(trace.items.map((item) => item.kind)).toEqual(['context-injection', 'tool'])
+    expect(trace.items[0]).toMatchObject({ source: 'pi-fabric-capability' })
   })
 })

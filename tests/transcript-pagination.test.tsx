@@ -484,6 +484,16 @@ describeNative('reverse-infinite transcript', () => {
     await Bun.sleep(0)
     root.renderer.flush()
     expect(Math.abs((root.renderer.getScrollOffset(list.id)?.[1] ?? 0) - userOffset)).toBeLessThan(2)
+    expect(root.renderer.findByTestId('transcript-list')?.customProps?.followTail).toBe(false)
+
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={{ ...base, session: { ...base.session, isStreaming: false }, liveAssistant: undefined, messages: [...base.messages, { role: 'assistant' as const, content: 'Settled answer', timestamp: 9_999 }] }} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    await Bun.sleep(0)
+    root.renderer.flush()
+    expect(Math.abs((root.renderer.getScrollOffset(list.id)?.[1] ?? 0) - userOffset)).toBeLessThan(2)
 
     await automation.close()
     root.unmount()
@@ -504,14 +514,247 @@ describeNative('reverse-infinite transcript', () => {
       </div>,
     )
 
-    const rowMotion = root.renderer.findByTestId('transcript-row-transition')?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number } } | undefined
+    const rowMotion = root.renderer.findByTestId('transcript-row-transition')?.customProps?.motion as { initial?: { opacity?: number; top?: number } | false; animate?: { opacity?: number; top?: number } } | undefined
     const preview = root.renderer.findByTestId('execution-preview-transition')
     const previewMotion = preview?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number } } | undefined
-    expect(rowMotion?.initial).toEqual({ opacity: 0, top: 6 })
+    expect(rowMotion?.initial).toBe(false)
     expect(rowMotion?.animate).toEqual({ opacity: 1, top: 0 })
     expect(previewMotion?.initial).toEqual({ opacity: 0, top: 4 })
     expect(previewMotion?.animate).toEqual({ opacity: 1, top: 0 })
-    expect(preview?.style.minHeight).toBe(38)
+    expect(preview?.style.justifyContent).toBe('flex-start')
+    expect(preview?.style.minHeight).toBe(22)
+    root.unmount()
+  })
+
+  it('streams reasoning into the working preview', async () => {
+    const root = createTestRoot({ width: 900, height: 640 })
+    const automation = await connectTest(root.renderer)
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript
+          state={{
+            ...createInitialState('/tmp/preview-stream-project'),
+            connection: 'connected',
+            session: { model: null, thinkingLevel: 'off', isStreaming: true, sessionFile: '/tmp/preview-stream.jsonl', sessionId: 'preview-stream' },
+            messages: [{ role: 'user', content: 'Inspect the project', timestamp: 1 }],
+            liveAssistant: { id: 'live', blocks: [{ index: 0, kind: 'thinking', text: 'Planning the next read' }] },
+          }}
+          presenters={new Map()}
+          onOpenDiff={() => {}}
+          onRevert={() => {}}
+        />
+      </div>,
+    )
+    expect(await automation.getByTestId('execution-preview').textContent()).toContain('Planning the next read')
+    await automation.close()
+    root.unmount()
+  })
+
+  it('does not remount Working when the first tool call arrives', () => {
+    const state = (tools: Array<{ id: string; name: string; args: Record<string, unknown>; status: 'running' | 'complete'; isError: false }>) => ({
+      ...createInitialState('/tmp/first-tool-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/first-tool.jsonl', sessionId: 'first-tool' },
+      messages: [{ role: 'user' as const, content: 'Inspect the project', timestamp: 1 }],
+      liveTools: tools,
+    })
+    const root = createTestRoot({ width: 900, height: 640 })
+    const render = (tools: Array<{ id: string; name: string; args: Record<string, unknown>; status: 'running' | 'complete'; isError: false }>) => root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state(tools)} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    render([])
+    const headerId = root.renderer.findByTestId('execution-trace')?.id
+    const rowId = root.renderer.findByTestId('transcript-row-transition')?.id
+    expect(headerId).toBeDefined()
+    expect(root.renderer.findByTestId('execution-preview-transition')?.style.minHeight).toBe(22)
+    render([{ id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'running', isError: false }])
+    expect(root.renderer.findByTestId('execution-trace')?.id).toBe(headerId)
+    expect(root.renderer.findByTestId('transcript-row-transition')?.id).toBe(rowId)
+    expect(root.renderer.findByTestId('execution-preview-transition')?.style.minHeight).toBe(22)
+    root.unmount()
+  })
+
+  it('does not flash Working under a settled assistant before agent_settled', async () => {
+    const root = createTestRoot({ width: 900, height: 640 })
+    const automation = await connectTest(root.renderer)
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript
+          state={{
+            ...createInitialState('/tmp/no-flash-project'),
+            connection: 'connected',
+            session: { model: null, thinkingLevel: 'off', isStreaming: true, sessionFile: '/tmp/no-flash.jsonl', sessionId: 'no-flash' },
+            messages: [
+              { role: 'user', content: 'Inspect the project', timestamp: 1 },
+              { role: 'assistant', content: [{ type: 'toolCall', id: 'one', name: 'read', arguments: { path: 'a.ts' } }, { type: 'text', text: 'Here is the answer.' }], timestamp: 2 },
+              { role: 'toolResult', toolCallId: 'one', toolName: 'read', content: 'ok', timestamp: 3 },
+            ],
+          }}
+          presenters={new Map()}
+          onOpenDiff={() => {}}
+          onRevert={() => {}}
+        />
+      </div>,
+    )
+    expect(await automation.getByTestId('working-row').count()).toBe(0)
+    expect(await automation.getByTestId('execution-trace-label').textContent()).not.toBe('Working')
+    await automation.close()
+    root.unmount()
+  })
+
+  it('does not remount Working when the assistant response starts streaming', () => {
+    const base = {
+      ...createInitialState('/tmp/stream-header-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/stream-header.jsonl', sessionId: 'stream-header' },
+      messages: [{ role: 'user' as const, content: 'Inspect the project', timestamp: 1 }],
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    const render = (state: typeof base) => root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    render({
+      ...base,
+      liveTools: [{ id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'complete' as const, isError: false }],
+    })
+    const headerId = root.renderer.findByTestId('execution-trace')?.id
+    const rowId = root.renderer.findByTestId('transcript-row-transition')?.id
+    render({
+      ...base,
+      liveTools: [{ id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'complete' as const, isError: false }],
+      liveAssistant: { id: 'answer', blocks: [{ index: 0, kind: 'text' as const, text: 'Here is the answer.' }] },
+    })
+    expect(root.renderer.findByTestId('execution-trace')?.id).toBe(headerId)
+    expect(root.renderer.findByTestId('transcript-row-transition')?.id).toBe(rowId)
+    root.unmount()
+  })
+
+  it('does not remount the live work header when a tool finishes', () => {
+    const state = (tools: Array<{ id: string; name: string; args: Record<string, unknown>; status: 'running' | 'complete'; isError: false }>) => ({
+      ...createInitialState('/tmp/tool-remount-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/tool-remount.jsonl', sessionId: 'tool-remount' },
+      messages: [{ role: 'user' as const, content: 'Inspect the project', timestamp: 1 }],
+      liveTools: tools,
+    })
+    const root = createTestRoot({ width: 900, height: 640 })
+    const render = (tools: Array<{ id: string; name: string; args: Record<string, unknown>; status: 'running' | 'complete'; isError: false }>) => root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state(tools)} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    render([{ id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'running', isError: false }])
+    const headerId = root.renderer.findByTestId('execution-trace')?.id
+    const rowId = root.renderer.findByTestId('transcript-row-transition')?.id
+    render([{ id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'complete', isError: false }])
+    expect(root.renderer.findByTestId('execution-trace')?.id).toBe(headerId)
+    expect(root.renderer.findByTestId('transcript-row-transition')?.id).toBe(rowId)
+    render([
+      { id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'complete', isError: false },
+      { id: 'two', name: 'read', args: { path: 'b.ts' }, status: 'running', isError: false },
+    ])
+    expect(root.renderer.findByTestId('execution-trace')?.id).toBe(headerId)
+    expect(root.renderer.findByTestId('transcript-row-transition')?.id).toBe(rowId)
+    root.unmount()
+  })
+
+  it('leases the working preview so later shorter tool lists do not shrink it', () => {
+    const state = (tools: Array<{ id: string; name: string; args: Record<string, unknown>; status: 'running' | 'complete'; isError: false }>) => ({
+      ...createInitialState('/tmp/tool-lease-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/tool-lease.jsonl', sessionId: 'tool-lease' },
+      messages: [{ role: 'user' as const, content: 'Inspect the project', timestamp: 1 }],
+      liveTools: tools,
+    })
+    const root = createTestRoot({ width: 900, height: 640 })
+    const render = (tools: Array<{ id: string; name: string; args: Record<string, unknown>; status: 'running' | 'complete'; isError: false }>) => root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state(tools)} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    render([
+      { id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'complete', isError: false },
+      { id: 'two', name: 'read', args: { path: 'b.ts' }, status: 'running', isError: false },
+      { id: 'three', name: 'read', args: { path: 'c.ts' }, status: 'running', isError: false },
+    ])
+    const tall = root.renderer.findByTestId('execution-preview-transition')?.style.minHeight
+    render([
+      { id: 'three', name: 'read', args: { path: 'c.ts' }, status: 'running', isError: false },
+    ])
+    const preview = root.renderer.findByTestId('execution-preview-transition')
+    expect(preview?.style.minHeight).toBe(tall)
+    expect(preview?.style.justifyContent).toBe('flex-start')
+    expect(root.renderer.findByTestId('transcript-lease')?.style.height).toBeGreaterThan(0)
+    root.unmount()
+  })
+
+  it('keeps one shimmering Working header while streaming after tools complete', async () => {
+    const state = {
+      ...createInitialState('/tmp/one-working-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/one-working.jsonl', sessionId: 'one-working' },
+      messages: [
+        { role: 'user' as const, content: 'Inspect the project', timestamp: 1 },
+        { role: 'assistant' as const, content: [{ type: 'toolCall' as const, id: 'done-read', name: 'read', arguments: { path: 'src/main.tsx' } }], timestamp: 2 },
+        { role: 'toolResult' as const, toolCallId: 'done-read', toolName: 'read', content: 'ok', timestamp: 3 },
+      ],
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    const automation = await connectTest(root.renderer)
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    expect(await automation.getByTestId('execution-trace-label').textContent()).toBe('Working')
+    expect(await automation.getByTestId('execution-trace-label').count()).toBe(1)
+    expect(await automation.getByTestId('working-row').count()).toBe(0)
+    await automation.close()
+    root.unmount()
+  })
+
+  it('collapses the working preview when the assistant response starts', async () => {
+    const base = {
+      ...createInitialState('/tmp/settle-lease-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/settle-lease.jsonl', sessionId: 'settle-lease' },
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    const render = (state: typeof base) => root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    render({
+      ...base,
+      messages: [{ role: 'user' as const, content: 'Inspect the project', timestamp: 1 }],
+      liveTools: [
+        { id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'complete' as const, isError: false },
+        { id: 'two', name: 'read', args: { path: 'b.ts' }, status: 'running' as const, isError: false },
+      ],
+    })
+    const tall = root.renderer.findByTestId('execution-preview-transition')?.style.minHeight
+    expect(tall).toBeGreaterThan(0)
+    render({
+      ...base,
+      messages: [
+        { role: 'user' as const, content: 'Inspect the project', timestamp: 1 },
+        { role: 'assistant' as const, content: [{ type: 'toolCall' as const, id: 'one', name: 'read', arguments: { path: 'a.ts' } }, { type: 'toolCall' as const, id: 'two', name: 'read', arguments: { path: 'b.ts' } }], timestamp: 2 },
+        { role: 'toolResult' as const, toolCallId: 'one', toolName: 'read', content: 'a', timestamp: 3 },
+        { role: 'toolResult' as const, toolCallId: 'two', toolName: 'read', content: 'b', timestamp: 4 },
+      ],
+      liveTools: [],
+      liveAssistant: { id: 'answer', blocks: [{ index: 0, kind: 'text' as const, text: 'Both follow-ups, wrapped up:' }] },
+    })
+    await Bun.sleep(600)
+    root.renderer.flush()
+    const preview = root.renderer.findByTestId('execution-preview-transition')
+    expect(preview == null || Number(preview.style.height ?? preview.style.minHeight ?? 0) < 1).toBe(true)
+    expect(root.renderer.findByTestId('transcript-lease')).toBeUndefined()
     root.unmount()
   })
 
@@ -743,7 +986,10 @@ describeNative('reverse-infinite transcript', () => {
         { type: 'thinking', thinking: '# Plan\nUse **bold reasoning** without enlarging this heading.' },
         { type: 'toolCall', id: 'fabric', name: 'fabric_exec', arguments: { code: 'return await Promise.all(calls)', display: { name: 'Inspecting in parallel' } } },
       ] },
-      { role: 'toolResult', toolCallId: 'fabric', toolName: 'fabric_exec', content: [{ type: 'text', text: 'ok: true' }], details: { audits: Array.from({ length: 10 }, (_, index) => ({ ref: `pi.read.${index}`, tool: 'read', provider: 'pi', success: true, args: { path: index === 0 ? `src/${'deeply-nested/'.repeat(16)}file-${index}.ts` : `src/file-${index}.ts` } })) }, timestamp: 3 },
+      { role: 'toolResult', toolCallId: 'fabric', toolName: 'fabric_exec', content: [{ type: 'text', text: 'ok: true' }], details: { audits: Array.from({ length: 10 }, (_, index) => index === 1
+          ? { ref: 'extensions.fovea_focus', tool: 'fovea_focus', provider: 'extensions', success: true, args: { query: 'session-switch.test.ts' } }
+          : { ref: `pi.read.${index}`, tool: 'read', provider: 'pi', success: true, args: { path: index === 0 ? `src/${'deeply-nested/'.repeat(16)}file-${index}.ts` : `src/file-${index}.ts` } }
+        ) }, timestamp: 3 },
       { role: 'custom', customType: 'pi-fovea-sync', display: true, content: 'Repository structure changed.\n**Changed:** src/file-9.ts', timestamp: 4 },
     ]
     const state = {
@@ -774,7 +1020,10 @@ describeNative('reverse-infinite transcript', () => {
       const statusXs = statusNodes.flatMap((node) => node.bounds ? [node.bounds.x] : [])
       expect(Math.max(...statusXs) - Math.min(...statusXs)).toBeLessThan(1)
       expect(root.renderer.getAllText()).toContain('Plan Use bold reasoning without enlarging this heading.')
-      expect(root.renderer.getAllText()).toContain('CONTEXT INJECTION')
+      expect(root.renderer.getAllText()).toContain('PI-FOVEA-SYNC')
+      expect(root.renderer.getAllText()).not.toContain('[pi-fovea-sync]')
+      expect(root.renderer.getAllText()).not.toContain('CONTEXT INJECTION')
+      expect(root.renderer.getAllText()).toContain('extensions.fovea_focus session-switch.test.ts')
       expect(root.renderer.getAllText()).toContain('… 2 nested calls hidden')
 
       await automation.getByTestId('tool-detail-row').hover()
@@ -789,9 +1038,18 @@ describeNative('reverse-infinite transcript', () => {
       root.renderer.flush()
       const markdown = root.renderer.findByTestId('trace-reasoning-markdown')
       expect(markdown?.customProps?.source).toContain('# Plan')
+      expect(markdown?.customProps?.source).toContain('# Plan  \n')
       const metrics = (markdown?.customProps?.theme as { metrics?: { mdHeadingSizes?: number[]; mdHeadingLineHeights?: number[] } } | undefined)?.metrics
       expect(metrics?.mdHeadingSizes).toEqual([12, 12, 12, 12])
       expect(metrics?.mdHeadingLineHeights).toEqual([19, 19, 19, 19])
+
+      await automation.getByTestId('trace-context-injection-toggle').click()
+      root.renderer.flush()
+      const customMarkdown = root.renderer.findByTestId('trace-context-injection-markdown')
+      expect(customMarkdown?.customProps?.source).toContain('**Changed:**')
+      expect(customMarkdown?.customProps?.source).toContain('changed.  \n')
+      const customMetrics = (customMarkdown?.customProps?.theme as { metrics?: { mdHeadingSizes?: number[] } } | undefined)?.metrics
+      expect(customMetrics?.mdHeadingSizes).toEqual([12, 12, 12, 12])
 
       await automation.getByTestId('tool-row').click()
       expect(await automation.getByTestId('trace-reasoning-markdown').count()).toBe(0)
@@ -805,6 +1063,85 @@ describeNative('reverse-infinite transcript', () => {
       await automation.close()
       root.unmount()
       await kernel.dispose()
+    }
+  })
+
+  it('keeps only the settled assistant reply outside the work trace', async () => {
+    const traceMessages: PiMessage[] = [
+      { role: 'user', content: 'Inspect session switching', timestamp: 1 },
+      { role: 'assistant', timestamp: 2, content: [
+        { type: 'text', text: 'I will survey the repo first.' },
+        { type: 'toolCall', id: 'read-1', name: 'read', arguments: { path: 'README.md' } },
+      ] },
+      { role: 'toolResult', toolCallId: 'read-1', toolName: 'read', content: 'ok', timestamp: 3 },
+      { role: 'assistant', timestamp: 4, content: [
+        { type: 'text', text: 'There is a dedicated session-switch path.' },
+        { type: 'toolCall', id: 'read-2', name: 'read', arguments: { path: 'src/session-switch.ts' } },
+      ] },
+      { role: 'toolResult', toolCallId: 'read-2', toolName: 'read', content: 'ok', timestamp: 5 },
+      { role: 'assistant', timestamp: 6, content: 'Here is the settled answer.' },
+    ]
+    const state = {
+      ...createInitialState('/tmp/settled-response-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: false, sessionFile: '/tmp/settled.jsonl', sessionId: 'settled' },
+      messages: traceMessages,
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={state} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+    const automation = await connectTest(root.renderer)
+    try {
+      expect(await automation.getByTestId('assistant-message').count()).toBe(1)
+      expect(await automation.getByTestId('execution-trace').count()).toBe(1)
+      expect(root.renderer.findByTestId('assistant-message-markdown')?.customProps?.source).toBe('Here is the settled answer.')
+      expect(await automation.getByTestId('trace-assistant').count()).toBe(0)
+
+      await automation.getByTestId('tool-row').click()
+      root.renderer.flush()
+      expect(await automation.getByTestId('trace-assistant').count()).toBe(2)
+      expect(root.renderer.getAllText()).toContain('I will survey the repo first.')
+      expect(root.renderer.getAllText()).toContain('There is a dedicated session-switch path.')
+      expect(root.renderer.findByTestId('assistant-message-markdown')?.customProps?.source).toBe('Here is the settled answer.')
+    } finally {
+      await automation.close()
+      root.unmount()
+    }
+  })
+
+  it('shows collapsed tools and animates the previous assistant reply out when work continues', async () => {
+    const base = {
+      ...createInitialState('/tmp/retire-response-project'),
+      connection: 'connected' as const,
+      session: { model: null, thinkingLevel: 'off' as const, isStreaming: true, sessionFile: '/tmp/retire.jsonl', sessionId: 'retire' },
+      messages: [{ role: 'user' as const, content: 'Inspect the project', timestamp: 1 }],
+    }
+    const root = createTestRoot({ width: 900, height: 640 })
+    const render = (liveAssistant?: { id: string; blocks: Array<{ index: number; kind: 'text'; text: string }> }, liveTools: Array<{ id: string; name: string; args: Record<string, unknown>; status: 'running'; isError: false }> = []) => root.render(
+      <div style={{ width: 900, height: 640, display: 'flex', flexDirection: 'column' }}>
+        <Transcript state={{ ...base, ...(liveAssistant ? { liveAssistant } : {}), liveTools }} presenters={new Map()} onOpenDiff={() => {}} onRevert={() => {}} />
+      </div>,
+    )
+
+    render({ id: 'live', blocks: [{ index: 0, kind: 'text', text: 'I will survey the repo first.' }] })
+    const automation = await connectTest(root.renderer)
+    try {
+      expect(await automation.getByTestId('assistant-message').count()).toBe(1)
+      render(undefined, [{ id: 'live-read', name: 'read', args: { path: 'README.md' }, status: 'running', isError: false }])
+      await Bun.sleep(0)
+      root.renderer.flush()
+      expect(await automation.getByTestId('retiring-assistant').count()).toBe(1)
+      expect(await automation.getByTestId('collapsed-trace-tools').count()).toBe(1)
+      expect(await automation.getByTestId('assistant-message').count()).toBe(1)
+      const preview = root.renderer.findByTestId('execution-preview-transition')
+      expect(preview?.style.minHeight).toBeGreaterThanOrEqual(22)
+      expect(preview?.style.justifyContent).toBe('flex-start')
+    } finally {
+      await automation.close()
+      root.unmount()
     }
   })
 })

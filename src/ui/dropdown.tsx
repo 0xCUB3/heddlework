@@ -25,6 +25,7 @@ export function useDropdownState(onOpenChange?: ((open: boolean) => void) | unde
     onOpenChange?.(nextOpen)
   }, [onOpenChange])
   const toggle = useCallback(() => setOpen(!open), [open, setOpen])
+  useEffect(() => () => onOpenChange?.(false), [onOpenChange])
   return { open, mounted, setOpen, toggle }
 }
 
