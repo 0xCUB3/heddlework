@@ -248,6 +248,13 @@ function isStandalone(markdown: string, start: number, end: number): boolean {
   )
 }
 
+function isOnTableRow(text: string, index: number): boolean {
+  const lineStart = text.lastIndexOf('\n', index - 1) + 1
+  const lineEnd = text.indexOf('\n', index)
+  const line = text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd)
+  return /^\s*\|/.test(markdownLineContent(line))
+}
+
 export function segmentMathMarkdown(markdown: string): MathSegment[] {
   if (!containsPotentialMath(markdown)) return [{ kind: 'text', text: markdown }]
 
@@ -300,6 +307,10 @@ export function segmentMathMarkdown(markdown: string): MathSegment[] {
     }
 
     if (character === '$' && !isEscaped(markdown, index)) {
+      if (isOnTableRow(markdown, index)) {
+        index++
+        continue
+      }
       if (markdown[index + 1] === '$') {
         const closing = findUnescapedSequence(markdown, '$$', index + 2)
         if (closing >= 0) {
@@ -338,6 +349,10 @@ export function segmentMathMarkdown(markdown: string): MathSegment[] {
 
     if (character === '\\' && !isEscaped(markdown, index)) {
       const delimiter = markdown[index + 1]
+      if ((delimiter === '(' || delimiter === '[') && isOnTableRow(markdown, index)) {
+        index++
+        continue
+      }
       if (delimiter === '(' || delimiter === '[') {
         const closingSequence = delimiter === '(' ? '\\)' : '\\]'
         const closing = findUnescapedSequence(markdown, closingSequence, index + 2)
