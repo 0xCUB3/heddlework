@@ -289,8 +289,9 @@ describeNative('math markdown', () => {
     let forks = 0
     const source = 'Threshold at $CR = 3$, and $\\mu_v$ decays.\n\n$$E = mc^2$$\n\nDone.'
     const root = createTestRoot({ width: 900, height: 700 })
+    const fade = ['08', '18', '2C', '45', '65', '88', 'AC', 'CE', 'E8', 'F8']
     root.render(
-      React.createElement('div', { style: { width: 900, height: 700, display: 'flex', flexDirection: 'column' } },
+      React.createElement('div', { style: { position: 'relative', width: 900, height: 700, display: 'flex', flexDirection: 'column' } },
         React.createElement(Transcript, {
           state: {
             ...createInitialState('/tmp/math-fork'),
@@ -305,6 +306,9 @@ describeNative('math markdown', () => {
           onOpenDiff: () => undefined,
           onRevert: () => { forks += 1 },
         }),
+        React.createElement('div', { testId: 'transcript-bottom-fade', style: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 240, display: 'flex', flexDirection: 'column', pointerEvents: 'none' } },
+          fade.map((alpha) => React.createElement('div', { key: alpha, style: { height: 24, flexShrink: 0, backgroundColor: `#09090B${alpha}`, pointerEvents: 'none' } })),
+        ),
       ),
     )
     let fork

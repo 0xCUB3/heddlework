@@ -333,7 +333,7 @@ function TranscriptFade() {
     <div testId="transcript-bottom-fade" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 240, display: 'flex', flexDirection: 'column', pointerEvents: 'none' }}>
       {layers.map((alpha) => (
         <React.Fragment key={alpha}>
-          <div style={{ height: 24, flexShrink: 0, backgroundColor: `${colors.background}${alpha}` }} />
+          <div style={{ height: 24, flexShrink: 0, backgroundColor: `${colors.background}${alpha}`, pointerEvents: 'none' }} />
         </React.Fragment>
       ))}
     </div>
