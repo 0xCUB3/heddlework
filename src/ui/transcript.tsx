@@ -4,6 +4,7 @@ import type { WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon } from './icons.tsx'
 import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
+import { MathMarkdown } from './math-markdown.tsx'
 import { openExternal } from './open-external.ts'
 import { formatElapsedSeconds } from './duration.ts'
 import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
@@ -554,9 +555,9 @@ function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { 
 function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'assistant' }>; onRevert(entryId: string): void }) {
   return (
     <div testId="assistant-message" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 5, paddingLeft: 4, paddingRight: 4 }}>
-      <markdown
+      <MathMarkdown
         testId="assistant-message-markdown"
-        source={markdownSourceWithNewlines(item.text || '…')}
+        source={item.text || '…'}
         theme={nativeTheme}
         style={{ width: '100%', minWidth: 0 }}
         onLinkClick={(event) => openExternal(String(event.value ?? ''))}
@@ -771,9 +772,9 @@ function TraceDisclosure({ label, text, testId, expanded, onToggle }: { label: s
         <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, cursor: 'pointer', backgroundColor: '#00000001' }} onClick={onToggle} />
       </div>
       {expanded && (
-        <markdown
+        <MathMarkdown
           testId={`${testId}-markdown`}
-          source={markdownSourceWithNewlines(text)}
+          source={text}
           theme={traceMarkdownTheme()}
           style={{ width: '100%', minWidth: 0, overflow: 'visible', userSelect: 'none', pointerEvents: 'none' }}
           onLinkClick={(event) => openExternal(String(event.value ?? ''))}
@@ -815,12 +816,6 @@ function compactionTraceLabel(trace: Extract<DisplayTimelineItem, { kind: 'work-
   const compaction = trace.items.find((item): item is Extract<TraceTimelineItem, { kind: 'compaction' }> => item.kind === 'compaction')
   if (!compaction) return undefined
   return typeof compaction.tokensBefore === 'number' ? `Compacted from ${compaction.tokensBefore.toLocaleString()} tokens` : 'Compacted'
-}
-
-function markdownSourceWithNewlines(source: string): string {
-  return source.replace(/\r\n/g, '\n').replace(/(```[\s\S]*?```)|([^\n])\n(?!\n)/g, (chunk, fence: string | undefined, character: string | undefined) => (
-    fence ?? `${character}  \n`
-  ))
 }
 
 function CollapsedTraceTools({ items, hidden, presenters }: { items: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>; hidden: number; presenters: ReadonlyMap<string, ToolPresenter> }) {
