@@ -1,6 +1,6 @@
 diff --git a/.changeset/quiet-terminals-capture-tabs.md b/.changeset/quiet-terminals-capture-tabs.md
 new file mode 100644
-index 0000000..05c9408
+index 0000000..78f81c0
 --- /dev/null
 +++ b/.changeset/quiet-terminals-capture-tabs.md
 @@ -0,0 +1,6 @@
@@ -9,9 +9,9 @@ index 0000000..05c9408
 +"@gpuix/react": patch
 +---
 +
-+Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a compact fixed-cell terminal element backed by GPUI glyph-atlas painting.
++Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a packed fixed-cell terminal element backed by one background texture, cached shaping, and direct GPUI glyph-atlas painting.
 diff --git a/README.md b/README.md
-index 0eb922b..bbb004a 100644
+index 0eb922b..b840b58 100644
 --- a/README.md
 +++ b/README.md
 @@ -41,7 +41,7 @@ bun add -d @types/react typescript
@@ -23,17 +23,18 @@ index 0eb922b..bbb004a 100644
  typecheck.
  
  ```json
-@@ -1749,6 +1749,42 @@ assert the geometry without a screenshot. Zed's own editor paints search
+@@ -1749,6 +1749,36 @@ assert the geometry without a screenshot. Zed's own editor paints search
  highlights manually for the same reason.
  </details>
  
 +## Native terminal surface
 +
-+`<terminal>` is a low-level fixed-cell painter for applications that already own a VT parser and PTY. A whole terminal frame crosses the React bridge as one `frame` prop and remains one retained host node. GPUI paints exact background rectangles and shapes each style run with a forced cell advance, so long box-drawing runs cannot drift away from the final column.
++`<terminal>` is a low-level fixed-cell painter for applications that already own a VT parser and PTY. A complete terminal frame crosses the React bridge as one versioned `frame` prop and remains one retained host node. The `cells` value is a base64-encoded, row-major buffer of 16-byte little-endian records: `u32 glyph`, `u32 foreground RGB`, `u32 background RGB`, `u16 flags`, and two reserved bytes. A glyph with bit 31 set indexes `graphemes`; otherwise it is a Unicode scalar value. Flag bits 0–7 are wide, spacer, bold, italic, underline, strike, block-fill, and Nerd Font respectively.
 +
 +```tsx
 +<terminal
 +  frame={{
++    version: 2,
 +    cols: 80,
 +    rows: 24,
 +    cellWidth: 7.83,
@@ -44,29 +45,22 @@ index 0eb922b..bbb004a 100644
 +    cursorX: 0,
 +    cursorY: 0,
 +    cursorVisible: true,
-+    styles: [{
-+      color: '#e7e7e7',
-+      backgroundColor: '#0b0c0c',
-+      fontFamily: 'Menlo',
-+      fontWeight: 400,
-+      italic: false,
-+      underline: false,
-+      strike: false,
-+      fill: false,
-+    }],
-+    // row, column, column count, style index, text
-+    runs: [[0, 0, 6, 0, 'prompt']],
++    fontFamily: 'Menlo',
++    nerdFontFamily: 'Symbols Nerd Font Mono',
++    ligaturesEnabled: true,
++    cells: packedCellsBase64,
++    graphemes: [],
 +  }}
 +  style={{ width: 626.4, height: 408, overflow: 'hidden' }}
 +/>
 +```
 +
-+The painter uses GPUI's cached monochrome glyph atlas (`MonochromeSprite`) for ordinary text, so foreground colour is applied to reusable alpha coverage on the GPU. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries.
++The painter decodes the frame once, uploads all backgrounds as one nearest-sampled cell texture, and caches shaping independently of ANSI colour. It then paints GPUI's cached monochrome glyph-atlas coverage directly with each run's foreground, so colour animation does not reshape text or create a second atlas. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries.
 +
  ## Native text components
  
  Three elements render text with Syntect syntax highlighting computed in
-@@ -2011,6 +2047,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
+@@ -2011,6 +2041,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
  automatically. A listener alone does not put a `div` in the Tab order; add
  `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
  
@@ -81,7 +75,7 @@ index 0eb922b..bbb004a 100644
  A node that listens for both `onMouseDown` and `onMouseMove` **captures the
  pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
  `onMouseMove` and `onMouseUp` keep firing after the pointer leaves the hitbox,
-@@ -2556,6 +2600,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
+@@ -2556,6 +2594,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
  - [x] Image and SVG elements (`<img>`, `<svg>`)
  - [x] Virtual lists (`<virtual-list>`)
  - [x] Native text components (`<code>`, `<diff>`, `<markdown>`)
@@ -89,11 +83,31 @@ index 0eb922b..bbb004a 100644
  - [x] Cross-element text selection
  - [x] Text highlighting and search (`highlight`, `useTextSearch`)
  - [x] Headless Select, Combobox, and Tooltip
+diff --git a/packages/native/Cargo.lock b/packages/native/Cargo.lock
+index debe15c..102ba54 100644
+--- a/packages/native/Cargo.lock
++++ b/packages/native/Cargo.lock
+@@ -2526,6 +2526,7 @@ name = "gpuix-native"
+ version = "0.6.0"
+ dependencies = [
+  "anyhow",
++ "base64",
+  "core-graphics 0.24.0",
+  "core-text",
+  "csscolorparser",
 diff --git a/packages/native/Cargo.toml b/packages/native/Cargo.toml
-index c23c69f..c16a227 100644
+index c23c69f..d4ae9b3 100644
 --- a/packages/native/Cargo.toml
 +++ b/packages/native/Cargo.toml
-@@ -75,6 +75,7 @@ gpui_macos = { path = "../../zed/crates/gpui_macos", default-features = false, f
+@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
+ [dependencies]
+ serde = { version = "1", features = ["derive"] }
+ serde_json = { version = "1", features = ["raw_value"] }
++base64 = "0.22"
+ anyhow = "1"
+ csscolorparser = "0.8.3"
+ log = "0.4"
+@@ -75,6 +76,7 @@ gpui_macos = { path = "../../zed/crates/gpui_macos", default-features = false, f
  # letting users write GPU-backed tests for their apps.
  default = ["test-support"]
  test-support = ["gpui/test-support", "gpui_platform/test-support", "gpui_macos/test-support", "gpui_macos/font-kit"]
@@ -143,13 +157,31 @@ index b3811c1..6cd7461 100644
  
 diff --git a/packages/native/src/custom_elements/terminal.rs b/packages/native/src/custom_elements/terminal.rs
 new file mode 100644
-index 0000000..e5f13cd
+index 0000000..e1d9f80
 --- /dev/null
 +++ b/packages/native/src/custom_elements/terminal.rs
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,509 @@
++use std::{
++    collections::HashMap,
++    sync::{Arc, Mutex},
++};
++
++use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 +use serde::Deserialize;
 +
 +use super::{CustomElement, CustomElementFactory, CustomRenderContext};
++
++const CELL_BYTES: usize = 16;
++const CELL_WIDE: u16 = 1 << 0;
++const CELL_SPACER: u16 = 1 << 1;
++const CELL_BOLD: u16 = 1 << 2;
++const CELL_ITALIC: u16 = 1 << 3;
++const CELL_UNDERLINE: u16 = 1 << 4;
++const CELL_STRIKE: u16 = 1 << 5;
++const CELL_FILL: u16 = 1 << 6;
++const CELL_NERD_FONT: u16 = 1 << 7;
++const GRAPHEME_INDEX: u32 = 0x8000_0000;
++const SHAPE_CACHE_LIMIT: usize = 4096;
 +
 +pub struct TerminalFactory;
 +
@@ -165,29 +197,8 @@ index 0000000..e5f13cd
 +
 +#[derive(Clone, Debug, Deserialize)]
 +#[serde(rename_all = "camelCase")]
-+struct WireStyle {
-+    color: String,
-+    background_color: String,
-+    font_family: String,
-+    #[serde(default = "normal_weight")]
-+    font_weight: f32,
-+    #[serde(default)]
-+    italic: bool,
-+    #[serde(default)]
-+    underline: bool,
-+    #[serde(default)]
-+    strike: bool,
-+    #[serde(default)]
-+    fill: bool,
-+}
-+
-+fn normal_weight() -> f32 {
-+    400.0
-+}
-+
-+#[derive(Clone, Debug, Deserialize)]
-+#[serde(rename_all = "camelCase")]
 +struct WireFrame {
++    version: u8,
 +    cols: usize,
 +    rows: usize,
 +    cell_width: f32,
@@ -198,18 +209,20 @@ index 0000000..e5f13cd
 +    cursor_x: usize,
 +    cursor_y: usize,
 +    cursor_visible: bool,
-+    styles: Vec<WireStyle>,
-+    runs: Vec<(usize, usize, usize, usize, String)>,
++    font_family: String,
++    nerd_font_family: String,
++    ligatures_enabled: bool,
++    cells: String,
++    #[serde(default)]
++    graphemes: Vec<String>,
 +}
 +
-+#[derive(Clone, Debug)]
-+struct PaintStyle {
-+    color: gpui::Hsla,
-+    background_color: gpui::Hsla,
-+    font: gpui::Font,
-+    underline: bool,
-+    strike: bool,
-+    fill: bool,
++#[derive(Clone, Copy, Debug)]
++struct PackedCell {
++    glyph: u32,
++    foreground: u32,
++    background: u32,
++    flags: u16,
 +}
 +
 +#[derive(Clone, Debug)]
@@ -217,11 +230,25 @@ index 0000000..e5f13cd
 +    row: usize,
 +    column: usize,
 +    columns: usize,
-+    style: usize,
-+    text: gpui::SharedString,
++    foreground: u32,
++    background: u32,
++    flags: u16,
++    font_family: String,
++    text: String,
 +}
 +
-+#[derive(Clone, Debug)]
++impl PaintRun {
++    fn can_append(&self, cell: PackedCell, column: usize, font_family: &str) -> bool {
++        self.column + self.columns == column
++            && self.foreground == cell.foreground
++            && self.background == cell.background
++            && self.flags == cell.flags
++            && self.flags & CELL_WIDE == 0
++            && cell.flags & CELL_WIDE == 0
++            && self.font_family == font_family
++    }
++}
++
 +struct TerminalFrame {
 +    cols: usize,
 +    rows: usize,
@@ -233,47 +260,37 @@ index 0000000..e5f13cd
 +    cursor_x: usize,
 +    cursor_y: usize,
 +    cursor_visible: bool,
-+    styles: Vec<PaintStyle>,
 +    runs: Vec<PaintRun>,
++    background_image: Arc<gpui::RenderImage>,
 +}
 +
 +impl TerminalFrame {
-+    fn from_wire(frame: WireFrame) -> Self {
++    fn from_wire(frame: WireFrame) -> Option<Self> {
++        if frame.version != 2 || frame.cols == 0 || frame.rows == 0 {
++            return None;
++        }
++        let cells = decode_cells(&frame.cells, frame.cols.checked_mul(frame.rows)?)?;
 +        let background = parse_color(&frame.background, gpui::transparent_black());
-+        let styles = frame
-+            .styles
-+            .into_iter()
-+            .map(|style| {
-+                let color = parse_color(&style.color, gpui::white());
-+                let mut font = gpui::font(style.font_family);
-+                font.weight = gpui::FontWeight(style.font_weight.clamp(100.0, 900.0));
-+                font.style = if style.italic {
-+                    gpui::FontStyle::Italic
-+                } else {
-+                    gpui::FontStyle::Normal
-+                };
-+                PaintStyle {
-+                    color,
-+                    background_color: parse_color(&style.background_color, background),
-+                    font,
-+                    underline: style.underline,
-+                    strike: style.strike,
-+                    fill: style.fill,
-+                }
-+            })
-+            .collect();
-+        let runs = frame
-+            .runs
-+            .into_iter()
-+            .map(|(row, column, columns, style, text)| PaintRun {
-+                row,
-+                column,
-+                columns,
-+                style,
-+                text: text.into(),
-+            })
-+            .collect();
-+        Self {
++        let mut background_bgra = vec![0; cells.len() * 4];
++        for (index, cell) in cells.iter().enumerate() {
++            let color = if cell.flags & CELL_FILL != 0 {
++                cell.foreground
++            } else {
++                cell.background
++            };
++            let offset = index * 4;
++            background_bgra[offset] = color as u8;
++            background_bgra[offset + 1] = (color >> 8) as u8;
++            background_bgra[offset + 2] = (color >> 16) as u8;
++            background_bgra[offset + 3] = 255;
++        }
++        let background_image = Arc::new(gpui::RenderImage::from_bgra(
++            frame.cols as u32,
++            frame.rows as u32,
++            background_bgra,
++        )?);
++        let runs = build_runs(&frame, &cells);
++        Some(Self {
 +            cols: frame.cols,
 +            rows: frame.rows,
 +            cell_width: frame.cell_width.max(1.0),
@@ -284,10 +301,94 @@ index 0000000..e5f13cd
 +            cursor_x: frame.cursor_x,
 +            cursor_y: frame.cursor_y,
 +            cursor_visible: frame.cursor_visible,
-+            styles,
 +            runs,
++            background_image,
++        })
++    }
++}
++
++fn decode_cells(encoded: &str, count: usize) -> Option<Vec<PackedCell>> {
++    let bytes = BASE64.decode(encoded).ok()?;
++    if bytes.len() != count.checked_mul(CELL_BYTES)? {
++        return None;
++    }
++    Some(
++        bytes
++            .chunks_exact(CELL_BYTES)
++            .map(|cell| PackedCell {
++                glyph: u32::from_le_bytes(cell[0..4].try_into().unwrap()),
++                foreground: u32::from_le_bytes(cell[4..8].try_into().unwrap()) & 0x00ff_ffff,
++                background: u32::from_le_bytes(cell[8..12].try_into().unwrap()) & 0x00ff_ffff,
++                flags: u16::from_le_bytes(cell[12..14].try_into().unwrap()),
++            })
++            .collect(),
++    )
++}
++
++fn build_runs(frame: &WireFrame, cells: &[PackedCell]) -> Vec<PaintRun> {
++    let mut runs = Vec::<PaintRun>::new();
++    for row in 0..frame.rows {
++        let mut column = 0;
++        let mut last_run: Option<usize> = None;
++        while column < frame.cols {
++            let cell = cells[row * frame.cols + column];
++            if cell.flags & CELL_SPACER != 0 {
++                last_run = None;
++                column += 1;
++                continue;
++            }
++            let columns = if cell.flags & CELL_WIDE != 0 { 2 } else { 1 };
++            let text = glyph_text(cell.glyph, &frame.graphemes);
++            let decorated = cell.flags & (CELL_UNDERLINE | CELL_STRIKE) != 0;
++            if cell.flags & CELL_FILL != 0
++                || text.is_empty()
++                || (text.chars().all(char::is_whitespace) && !decorated)
++                || (cell.foreground == cell.background && !decorated)
++            {
++                last_run = None;
++                column += columns;
++                continue;
++            }
++            let font_family = if cell.flags & CELL_NERD_FONT != 0 {
++                frame.nerd_font_family.as_str()
++            } else {
++                frame.font_family.as_str()
++            };
++            if let Some(index) =
++                last_run.filter(|index| runs[*index].can_append(cell, column, font_family))
++            {
++                if !frame.ligatures_enabled {
++                    runs[index].text.push('\u{200c}');
++                }
++                runs[index].text.push_str(&text);
++                runs[index].columns += columns;
++            } else {
++                runs.push(PaintRun {
++                    row,
++                    column,
++                    columns,
++                    foreground: cell.foreground,
++                    background: cell.background,
++                    flags: cell.flags,
++                    font_family: font_family.to_string(),
++                    text,
++                });
++                last_run = Some(runs.len() - 1);
++            }
++            column += columns;
 +        }
 +    }
++    runs
++}
++
++fn glyph_text(glyph: u32, graphemes: &[String]) -> String {
++    if glyph & GRAPHEME_INDEX != 0 {
++        return graphemes
++            .get((glyph & !GRAPHEME_INDEX) as usize)
++            .cloned()
++            .unwrap_or_else(|| "�".to_string());
++    }
++    char::from_u32(glyph).unwrap_or('�').to_string()
 +}
 +
 +fn parse_color(value: &str, fallback: gpui::Hsla) -> gpui::Hsla {
@@ -296,141 +397,143 @@ index 0000000..e5f13cd
 +        .unwrap_or(fallback)
 +}
 +
++fn packed_color(value: u32) -> gpui::Hsla {
++    gpui::rgb(value & 0x00ff_ffff).into()
++}
++
++#[derive(Clone, Debug, Eq, Hash, PartialEq)]
++struct ShapeKey {
++    font_family: String,
++    font_weight: u16,
++    italic: bool,
++    text: String,
++    columns: usize,
++    font_size: u32,
++    cell_width: u32,
++}
++
 +#[derive(Clone)]
-+struct ShapedRun {
++struct ShapedPaintRun {
 +    line: gpui::ShapedLine,
 +    x: f32,
 +    y: f32,
-+}
-+
-+#[derive(Clone)]
-+struct PaintRect {
-+    x: f32,
-+    y: f32,
 +    width: f32,
-+    height: f32,
 +    color: gpui::Hsla,
++    underline: bool,
++    strike: bool,
 +}
 +
 +struct PaintState {
-+    frame: TerminalFrame,
-+    text: Vec<ShapedRun>,
-+    rects: Vec<PaintRect>,
++    frame: Arc<TerminalFrame>,
++    text: Vec<ShapedPaintRun>,
 +}
 +
-+#[derive(Default)]
 +pub struct TerminalElement {
-+    frame: Option<TerminalFrame>,
++    frame: Option<Arc<TerminalFrame>>,
++    stale_images: Vec<Arc<gpui::RenderImage>>,
++    shape_cache: Arc<Mutex<HashMap<ShapeKey, gpui::ShapedLine>>>,
++}
++
++impl Default for TerminalElement {
++    fn default() -> Self {
++        Self {
++            frame: None,
++            stale_images: Vec::new(),
++            shape_cache: Arc::new(Mutex::new(HashMap::new())),
++        }
++    }
 +}
 +
 +impl CustomElement for TerminalElement {
 +    fn render(
 +        &mut self,
 +        ctx: CustomRenderContext,
-+        _window: &mut gpui::Window,
++        window: &mut gpui::Window,
 +        _cx: &mut gpui::Context<crate::renderer::GpuixView>,
 +    ) -> gpui::AnyElement {
 +        use gpui::prelude::*;
 +
++        for image in self.stale_images.drain(..) {
++            let _ = window.drop_image(image);
++        }
 +        let Some(frame) = self.frame.clone() else {
 +            let empty = super::custom_surface(
-+                gpui::div().id(gpui::SharedString::from(format!("__gpuix_terminal_{}", ctx.id))),
++                gpui::div().id(gpui::SharedString::from(format!(
++                    "__gpuix_terminal_{}",
++                    ctx.id
++                ))),
 +                &ctx,
 +            );
 +            return empty.into_any_element();
 +        };
-+
++        let shape_cache = self.shape_cache.clone();
 +        let canvas = gpui::canvas(
 +            move |_bounds, window, _cx| {
 +                let mut text = Vec::with_capacity(frame.runs.len());
-+                let mut rects = Vec::new();
++                let mut cache = shape_cache.lock().unwrap();
++                if cache.len() > SHAPE_CACHE_LIMIT {
++                    cache.clear();
++                }
 +                for run in &frame.runs {
-+                    if run.row >= frame.rows || run.column >= frame.cols || run.columns == 0 {
-+                        continue;
-+                    }
-+                    let Some(style) = frame.styles.get(run.style) else {
-+                        continue;
++                    let key = ShapeKey {
++                        font_family: run.font_family.clone(),
++                        font_weight: if run.flags & CELL_BOLD != 0 { 700 } else { 400 },
++                        italic: run.flags & CELL_ITALIC != 0,
++                        text: run.text.clone(),
++                        columns: run.columns,
++                        font_size: frame.font_size.to_bits(),
++                        cell_width: frame.cell_width.to_bits(),
 +                    };
-+                    let x = run.column as f32 * frame.cell_width;
-+                    let y = run.row as f32 * frame.line_height;
-+                    let width = run.columns.min(frame.cols - run.column) as f32 * frame.cell_width;
-+                    if style.fill || style.background_color != frame.background {
-+                        rects.push(PaintRect {
-+                            x,
-+                            y,
-+                            width,
-+                            height: frame.line_height,
-+                            color: if style.fill { style.color } else { style.background_color },
-+                        });
-+                    }
-+                    if style.fill
-+                        || run.text.is_empty()
-+                        || (run.text.chars().all(char::is_whitespace)
-+                            && !style.underline
-+                            && !style.strike)
-+                        || (style.color == style.background_color
-+                            && !style.underline
-+                            && !style.strike)
-+                    {
-+                        continue;
-+                    }
-+                    let text_run = gpui::TextRun {
-+                        len: run.text.len(),
-+                        font: style.font.clone(),
-+                        color: style.color,
-+                        background_color: None,
-+                        underline: style.underline.then_some(gpui::UnderlineStyle {
-+                            thickness: gpui::px(1.0),
-+                            color: Some(style.color),
-+                            wavy: false,
-+                        }),
-+                        strikethrough: style.strike.then_some(gpui::StrikethroughStyle {
-+                            thickness: gpui::px(1.0),
-+                            color: Some(style.color),
-+                        }),
++                    let line = if let Some(line) = cache.get(&key) {
++                        line.clone()
++                    } else {
++                        let mut font = gpui::font(run.font_family.clone());
++                        font.weight = gpui::FontWeight(key.font_weight as f32);
++                        font.style = if key.italic {
++                            gpui::FontStyle::Italic
++                        } else {
++                            gpui::FontStyle::Normal
++                        };
++                        let text_run = gpui::TextRun {
++                            len: run.text.len(),
++                            font,
++                            color: gpui::white(),
++                            background_color: None,
++                            underline: None,
++                            strikethrough: None,
++                        };
++                        let line = window.text_system().shape_line(
++                            run.text.clone().into(),
++                            gpui::px(frame.font_size),
++                            &[text_run],
++                            Some(gpui::px(frame.cell_width)),
++                        );
++                        cache.insert(key, line.clone());
++                        line
 +                    };
-+                    let line = window.text_system().shape_line(
-+                        run.text.clone(),
-+                        gpui::px(frame.font_size),
-+                        &[text_run],
-+                        Some(gpui::px(frame.cell_width)),
-+                    );
-+                    text.push(ShapedRun { line, x, y });
++                    text.push(ShapedPaintRun {
++                        line,
++                        x: run.column as f32 * frame.cell_width,
++                        y: run.row as f32 * frame.line_height,
++                        width: run.columns as f32 * frame.cell_width,
++                        color: packed_color(run.foreground),
++                        underline: run.flags & CELL_UNDERLINE != 0,
++                        strike: run.flags & CELL_STRIKE != 0,
++                    });
 +                }
-+                PaintState {
-+                    frame,
-+                    text,
-+                    rects,
-+                }
++                drop(cache);
++                PaintState { frame, text }
 +            },
 +            move |bounds, state, window, cx| {
 +                window.paint_quad(gpui::fill(bounds, state.frame.background));
-+                for rect in state.rects {
-+                    window.paint_quad(gpui::fill(
-+                        gpui::Bounds::new(
-+                            gpui::point(
-+                                bounds.origin.x + gpui::px(rect.x),
-+                                bounds.origin.y + gpui::px(rect.y),
-+                            ),
-+                            gpui::size(gpui::px(rect.width), gpui::px(rect.height)),
-+                        ),
-+                        rect.color,
-+                    ));
-+                }
-+                for run in state.text {
-+                    crate::text::paint::log_painted_text(run.line.text.clone());
-+                    let _ = run.line.paint(
-+                        gpui::point(
-+                            bounds.origin.x + gpui::px(run.x),
-+                            bounds.origin.y + gpui::px(run.y),
-+                        ),
-+                        gpui::px(state.frame.line_height),
-+                        gpui::TextAlign::Left,
-+                        None,
-+                        window,
-+                        cx,
-+                    );
-+                }
++                let _ = window.paint_image_nearest(
++                    bounds,
++                    bounds,
++                    Default::default(),
++                    state.frame.background_image.clone(),
++                    0,
++                    false,
++                );
 +                if state.frame.cursor_visible
 +                    && state.frame.cursor_x < state.frame.cols
 +                    && state.frame.cursor_y < state.frame.rows
@@ -439,9 +542,13 @@ index 0000000..e5f13cd
 +                        gpui::Bounds::new(
 +                            gpui::point(
 +                                bounds.origin.x
-+                                    + gpui::px(state.frame.cursor_x as f32 * state.frame.cell_width),
++                                    + gpui::px(
++                                        state.frame.cursor_x as f32 * state.frame.cell_width,
++                                    ),
 +                                bounds.origin.y
-+                                    + gpui::px(state.frame.cursor_y as f32 * state.frame.line_height),
++                                    + gpui::px(
++                                        state.frame.cursor_y as f32 * state.frame.line_height,
++                                    ),
 +                            ),
 +                            gpui::size(
 +                                gpui::px(state.frame.cell_width),
@@ -451,6 +558,45 @@ index 0000000..e5f13cd
 +                        state.frame.cursor_color.opacity(0.35),
 +                    ));
 +                }
++                for run in state.text {
++                    crate::text::paint::log_painted_text(run.line.text.clone());
++                    let origin = gpui::point(
++                        bounds.origin.x + gpui::px(run.x),
++                        bounds.origin.y + gpui::px(run.y),
++                    );
++                    let _ = paint_shaped_line(
++                        &run.line,
++                        origin,
++                        gpui::px(state.frame.line_height),
++                        run.color,
++                        window,
++                    );
++                    if run.underline {
++                        window.paint_quad(gpui::fill(
++                            gpui::Bounds::new(
++                                gpui::point(
++                                    origin.x,
++                                    origin.y + gpui::px(state.frame.line_height - 2.0),
++                                ),
++                                gpui::size(gpui::px(run.width), gpui::px(1.0)),
++                            ),
++                            run.color,
++                        ));
++                    }
++                    if run.strike {
++                        window.paint_quad(gpui::fill(
++                            gpui::Bounds::new(
++                                gpui::point(
++                                    origin.x,
++                                    origin.y + gpui::px(state.frame.line_height * 0.52),
++                                ),
++                                gpui::size(gpui::px(run.width), gpui::px(1.0)),
++                            ),
++                            run.color,
++                        ));
++                    }
++                }
++                let _ = cx;
 +            },
 +        )
 +        .absolute()
@@ -458,7 +604,10 @@ index 0000000..e5f13cd
 +
 +        let surface = super::custom_surface(
 +            gpui::div()
-+                .id(gpui::SharedString::from(format!("__gpuix_terminal_{}", ctx.id)))
++                .id(gpui::SharedString::from(format!(
++                    "__gpuix_terminal_{}",
++                    ctx.id
++                )))
 +                .overflow_hidden(),
 +            &ctx,
 +        );
@@ -466,11 +615,16 @@ index 0000000..e5f13cd
 +    }
 +
 +    fn set_prop(&mut self, key: &str, value: serde_json::Value) {
-+        if key == "frame" {
-+            self.frame = serde_json::from_value::<WireFrame>(value)
-+                .ok()
-+                .map(TerminalFrame::from_wire);
++        if key != "frame" {
++            return;
 +        }
++        if let Some(frame) = self.frame.take() {
++            self.stale_images.push(frame.background_image.clone());
++        }
++        self.frame = serde_json::from_value::<WireFrame>(value)
++            .ok()
++            .and_then(TerminalFrame::from_wire)
++            .map(Arc::new);
 +    }
 +
 +    fn supported_props(&self) -> &'static [&'static str] {
@@ -483,7 +637,38 @@ index 0000000..e5f13cd
 +
 +    fn destroy(&mut self) {
 +        self.frame = None;
++        self.stale_images.clear();
++        self.shape_cache.lock().unwrap().clear();
 +    }
++}
++
++fn paint_shaped_line(
++    line: &gpui::ShapedLine,
++    origin: gpui::Point<gpui::Pixels>,
++    line_height: gpui::Pixels,
++    color: gpui::Hsla,
++    window: &mut gpui::Window,
++) -> gpui::Result<()> {
++    let padding_top = (line_height - line.ascent - line.descent) / 2.0;
++    let baseline = origin.y + padding_top + line.ascent;
++    for shaped_run in &line.runs {
++        for glyph in &shaped_run.glyphs {
++            let glyph_origin =
++                gpui::point(origin.x + glyph.position.x, baseline + glyph.position.y);
++            if glyph.is_emoji {
++                window.paint_emoji(glyph_origin, shaped_run.font_id, glyph.id, line.font_size)?;
++            } else {
++                window.paint_glyph(
++                    glyph_origin,
++                    shaped_run.font_id,
++                    glyph.id,
++                    line.font_size,
++                    color,
++                )?;
++            }
++        }
++    }
++    Ok(())
 +}
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
 index 9620967..ffa6901 100644
@@ -640,17 +825,29 @@ index 2a93c7a..fa461d2 100644
        const [secondEnabled, setSecondEnabled] = useState(true)
 diff --git a/packages/react/src/__tests__/terminal.test.tsx b/packages/react/src/__tests__/terminal.test.tsx
 new file mode 100644
-index 0000000..e8f7922
+index 0000000..d1f2b18
 --- /dev/null
 +++ b/packages/react/src/__tests__/terminal.test.tsx
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,79 @@
 +import { afterEach, beforeEach, describe, expect, it } from "vitest"
 +import { createTestRoot, hasNativeTestRenderer, type TestRoot } from "../testing.js"
 +
 +const describeNative = hasNativeTestRenderer ? describe : describe.skip
 +
 +function frame(text: string, color = "#e7e7e7") {
++  const bytes = new Uint8Array(100 * 2 * 16)
++  const view = new DataView(bytes.buffer)
++  const foreground = Number.parseInt(color.slice(1), 16)
++  const background = 0x0b0c0c
++  const glyphs = [...text.padEnd(200)]
++  for (let index = 0; index < 200; index += 1) {
++    const offset = index * 16
++    view.setUint32(offset, glyphs[index]!.codePointAt(0)!, true)
++    view.setUint32(offset + 4, foreground, true)
++    view.setUint32(offset + 8, background, true)
++  }
 +  return {
++    version: 2 as const,
 +    cols: 100,
 +    rows: 2,
 +    cellWidth: 7.83,
@@ -661,17 +858,11 @@ index 0000000..e8f7922
 +    cursorX: 0,
 +    cursorY: 1,
 +    cursorVisible: true,
-+    styles: [{
-+      color,
-+      backgroundColor: "#0b0c0c",
-+      fontFamily: "Menlo",
-+      fontWeight: 400,
-+      italic: false,
-+      underline: false,
-+      strike: false,
-+      fill: false,
-+    }],
-+    runs: [[0, 0, 100, 0, text]],
++    fontFamily: "Menlo",
++    nerdFontFamily: "Symbols Nerd Font Mono",
++    ligaturesEnabled: true,
++    cells: Buffer.from(bytes).toString("base64"),
++    graphemes: [],
 +  }
 +}
 +
@@ -730,16 +921,14 @@ index 548e7ea..fa23e61 100644
    textarea: "textarea",
    anchored: "anchored",
 diff --git a/packages/react/src/index.ts b/packages/react/src/index.ts
-index 9e88b09..76a8436 100644
+index 9e88b09..c1a4660 100644
 --- a/packages/react/src/index.ts
 +++ b/packages/react/src/index.ts
-@@ -91,6 +91,10 @@ export type {
+@@ -91,6 +91,8 @@ export type {
    NativeWindowInsets,
    PublicInstance,
    StyleDesc,
 +  TerminalFrame,
-+  TerminalFrameRun,
-+  TerminalFrameStyle,
 +  TerminalProps,
  } from "./types/host.js"
  export { handleGpuixEvent } from "./reconciler/event-registry.js"
@@ -780,7 +969,7 @@ index 064174b..7f0aa33 100644
  
    /** Set the scroll offset of a scrollable element (overflow: "scroll").
 diff --git a/packages/react/src/types/host.ts b/packages/react/src/types/host.ts
-index 022ef20..9d48b5b 100644
+index 022ef20..a3f1ed4 100644
 --- a/packages/react/src/types/host.ts
 +++ b/packages/react/src/types/host.ts
 @@ -185,6 +185,7 @@ export type ElementType =
@@ -800,27 +989,13 @@ index 022ef20..9d48b5b 100644
    /** Stable locator id for automation. */
    testId?: string
    /** Internal native animation description used by motion components. */
-@@ -480,6 +483,41 @@ export interface SvgProps extends Props {
+@@ -480,6 +483,32 @@ export interface SvgProps extends Props {
    source?: string
  }
  
-+/** One deduplicated style used by a native terminal frame. */
-+export interface TerminalFrameStyle {
-+  color: string
-+  backgroundColor: string
-+  fontFamily: string
-+  fontWeight?: number
-+  italic?: boolean
-+  underline?: boolean
-+  strike?: boolean
-+  fill?: boolean
-+}
-+
-+/** row, column, column count, style index, text */
-+export type TerminalFrameRun = readonly [number, number, number, number, string]
-+
 +/** A complete visible grid painted by the native GPU terminal surface. */
 +export interface TerminalFrame {
++  version: 2
 +  cols: number
 +  rows: number
 +  cellWidth: number
@@ -831,8 +1006,13 @@ index 022ef20..9d48b5b 100644
 +  cursorX: number
 +  cursorY: number
 +  cursorVisible: boolean
-+  styles: readonly TerminalFrameStyle[]
-+  runs: readonly TerminalFrameRun[]
++  fontFamily: string
++  nerdFontFamily: string
++  ligaturesEnabled: boolean
++  /** Base64-encoded little-endian 16-byte cell records. */
++  cells: string
++  /** Strings referenced by cells whose glyph word has bit 31 set. */
++  graphemes: readonly string[]
 +}
 +
 +export interface TerminalProps extends Props {
@@ -842,7 +1022,7 @@ index 022ef20..9d48b5b 100644
  /**
   * Props for the <code> custom element — a syntax-highlighted code block.
   *
-@@ -598,6 +636,8 @@ export interface NativeRenderer {
+@@ -598,6 +627,8 @@ export interface NativeRenderer {
  
    // ── Window API ─────────────────────────────────────────────────
    getWindowSize?(): { width: number; height: number }
@@ -851,3 +1031,158 @@ index 022ef20..9d48b5b 100644
    getWindowInsets?(): NativeWindowInsets
    setWindowTitle?(title: string): void
    /** Bring the window forward and focus it. Reveals a `show: false` window. */
+diff --git a/zed/crates/gpui/src/assets.rs b/zed/crates/gpui/src/assets.rs
+index cb8b47e..71e12b6 100644
+--- a/zed/crates/gpui/src/assets.rs
++++ b/zed/crates/gpui/src/assets.rs
+@@ -68,6 +68,12 @@ impl RenderImage {
+         }
+     }
+ 
++    /// Create a single-frame image from tightly packed BGRA pixels.
++    pub fn from_bgra(width: u32, height: u32, bytes: Vec<u8>) -> Option<Self> {
++        let buffer = image::RgbaImage::from_raw(width, height, bytes)?;
++        Some(Self::new(SmallVec::from_elem(Frame::new(buffer), 1)))
++    }
++
+     /// Convert this image into a byte slice.
+     pub fn as_bytes(&self, frame_index: usize) -> Option<&[u8]> {
+         self.data
+@@ -130,4 +136,13 @@ mod tests {
+         assert_eq!(image.delay(0), Delay::from_numer_denom_ms(100, 1));
+         let _ = format!("{image:?}");
+     }
++
++    #[test]
++    fn constructs_an_image_from_bgra_bytes() {
++        let bytes = vec![0x10, 0x20, 0x30, 0xff, 0xaa, 0xbb, 0xcc, 0xff];
++        let image = RenderImage::from_bgra(2, 1, bytes.clone()).expect("valid BGRA image");
++        assert_eq!(image.size(0), size(DevicePixels(2), DevicePixels(1)));
++        assert_eq!(image.as_bytes(0), Some(bytes.as_slice()));
++        assert!(RenderImage::from_bgra(2, 1, vec![0; 4]).is_none());
++    }
+ }
+diff --git a/zed/crates/gpui/src/window.rs b/zed/crates/gpui/src/window.rs
+index 25f98cd..3ce046a 100644
+--- a/zed/crates/gpui/src/window.rs
++++ b/zed/crates/gpui/src/window.rs
+@@ -4538,6 +4538,48 @@ impl Window {
+         data: Arc<RenderImage>,
+         frame_index: usize,
+         grayscale: bool,
++    ) -> Result<()> {
++        self.paint_image_with_sampling(
++            bounds,
++            image_bounds,
++            corner_radii,
++            data,
++            frame_index,
++            grayscale,
++            false,
++        )
++    }
++
++    /// Paint an image with nearest-neighbor sampling.
++    pub fn paint_image_nearest(
++        &mut self,
++        bounds: Bounds<Pixels>,
++        image_bounds: Bounds<Pixels>,
++        corner_radii: Corners<Pixels>,
++        data: Arc<RenderImage>,
++        frame_index: usize,
++        grayscale: bool,
++    ) -> Result<()> {
++        self.paint_image_with_sampling(
++            bounds,
++            image_bounds,
++            corner_radii,
++            data,
++            frame_index,
++            grayscale,
++            true,
++        )
++    }
++
++    fn paint_image_with_sampling(
++        &mut self,
++        bounds: Bounds<Pixels>,
++        image_bounds: Bounds<Pixels>,
++        corner_radii: Corners<Pixels>,
++        data: Arc<RenderImage>,
++        frame_index: usize,
++        grayscale: bool,
++        nearest: bool,
+     ) -> Result<()> {
+         self.invalidator.debug_assert_paint();
+ 
+@@ -4617,7 +4659,7 @@ impl Window {
+ 
+         self.next_frame.scene.insert_primitive(PolychromeSprite {
+             order: 0,
+-            pad: 0,
++            pad: u32::from(nearest),
+             grayscale: grayscale.into(),
+             bounds: visible_bounds_snapped,
+             content_mask,
+diff --git a/zed/crates/gpui_apple/src/shaders.metal b/zed/crates/gpui_apple/src/shaders.metal
+index 2b52bb9..fe014e7 100644
+--- a/zed/crates/gpui_apple/src/shaders.metal
++++ b/zed/crates/gpui_apple/src/shaders.metal
+@@ -715,8 +715,12 @@ fragment float4 polychrome_sprite_fragment(
+   PolychromeSprite sprite = sprites[input.sprite_id];
+   constexpr sampler atlas_texture_sampler(mag_filter::linear,
+                                           min_filter::linear);
+-  float4 sample =
+-      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
++  float4 sample = atlas_texture.sample(atlas_texture_sampler, input.tile_position);
++  if (sprite.pad != 0) {
++    uint2 dimensions = uint2(atlas_texture.get_width(), atlas_texture.get_height());
++    uint2 coordinates = min(uint2(input.tile_position * float2(dimensions)), dimensions - 1);
++    sample = atlas_texture.read(coordinates);
++  }
+   float distance =
+       quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+ 
+diff --git a/zed/crates/gpui_wgpu/src/shaders.wgsl b/zed/crates/gpui_wgpu/src/shaders.wgsl
+index 718cb75..e442a34 100644
+--- a/zed/crates/gpui_wgpu/src/shaders.wgsl
++++ b/zed/crates/gpui_wgpu/src/shaders.wgsl
+@@ -1293,13 +1293,18 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
+ 
+ @fragment
+ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
+-    let sample = textureSample(t_sprite, s_sprite, input.tile_position);
++    let sprite = load_poly_sprite(input.sprite_id);
++    var sample = textureSample(t_sprite, s_sprite, input.tile_position);
++    if (sprite.pad != 0u) {
++        let dimensions = textureDimensions(t_sprite);
++        let coordinates = min(vec2<i32>(input.tile_position * vec2<f32>(dimensions)), vec2<i32>(dimensions) - vec2<i32>(1));
++        sample = textureLoad(t_sprite, coordinates, 0);
++    }
+     // Alpha clip after using the derivatives.
+     if (any(input.clip_distances < vec4<f32>(0.0))) {
+         return vec4<f32>(0.0);
+     }
+ 
+-    let sprite = load_poly_sprite(input.sprite_id);
+     let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+ 
+     var color = sample;
+diff --git a/zed/crates/gpui_windows/src/shaders.hlsl b/zed/crates/gpui_windows/src/shaders.hlsl
+index d20cb31..7a83b9c 100644
+--- a/zed/crates/gpui_windows/src/shaders.hlsl
++++ b/zed/crates/gpui_windows/src/shaders.hlsl
+@@ -1256,6 +1256,13 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
+ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
+     PolychromeSprite sprite = poly_sprites[input.sprite_id];
+     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
++    if (sprite.pad != 0u) {
++        uint width;
++        uint height;
++        t_sprite.GetDimensions(width, height);
++        int2 coordinates = min(int2(input.tile_position * float2(width, height)), int2(width - 1, height - 1));
++        sample = t_sprite.Load(int3(coordinates, 0));
++    }
+     float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+ 
+     float4 color = sample;

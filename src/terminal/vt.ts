@@ -40,6 +40,11 @@ function blankRow(cols: number): MutableCell[] {
   return Array.from({ length: cols }, () => emptyCell())
 }
 
+function csiParam(params: readonly number[], index: number, fallback: number): number {
+  const value = params[index] ?? 0
+  return value === 0 ? fallback : value
+}
+
 function cellWidth(code: number): number {
   if (code === 0 || code < 32 || (code >= 0x7f && code < 0xa0)) return 0
   if (code >= 0x300 && code <= 0x36f) return 0
@@ -110,11 +115,17 @@ export class VtEmulator {
   #attrs = 0
   #state: ParserState = 'ground'
   #osc = ''
-  #csi = ''
+  #csiParams: number[] = []
+  #csiValue = 0
+  #csiHasValue = false
+  #csiPrivate = false
   #utf8 = new TextDecoder('utf-8', { fatal: false })
   #synchronizedOutput = false
   #rowVersions = new WeakMap<MutableCell[], number>()
   #rowSnapshots = new WeakMap<MutableCell[], { cols: number; version: number; row: TerminalRow }>()
+  #writeVersion = 0
+  #lastTouchedRow: MutableCell[] | undefined
+  #lastTouchedVersion = -1
   onOutput?: (data: string) => void
 
   constructor(cols = 80, rows = 24) {
@@ -154,6 +165,7 @@ export class VtEmulator {
 
   write(input: string | Uint8Array): void {
     const text = typeof input === 'string' ? input : this.#utf8.decode(input, { stream: true })
+    this.#writeVersion += 1
     for (const char of text) this.#feed(char)
   }
 
@@ -238,10 +250,21 @@ export class VtEmulator {
       return
     }
     if (this.#state === 'csi') {
-      this.#csi += char
-      if (code >= 0x40 && code <= 0x7e) {
-        this.#dispatchCsi(this.#csi)
-        this.#csi = ''
+      if (code >= 0x30 && code <= 0x39) {
+        this.#csiValue = this.#csiValue * 10 + code - 0x30
+        this.#csiHasValue = true
+      } else if (code === 0x3b || code === 0x3a) {
+        this.#csiParams.push(this.#csiHasValue ? this.#csiValue : 0)
+        this.#csiValue = 0
+        this.#csiHasValue = false
+      } else if (code === 0x3f && this.#csiParams.length === 0 && !this.#csiHasValue) {
+        this.#csiPrivate = true
+      } else if (code >= 0x40 && code <= 0x7e) {
+        if (this.#csiHasValue || this.#csiParams.length > 0) {
+          this.#csiParams.push(this.#csiHasValue ? this.#csiValue : 0)
+        }
+        this.#dispatchCsi(char, this.#csiParams, this.#csiPrivate)
+        this.#resetCsi()
         this.#state = 'ground'
       }
       return
@@ -306,7 +329,7 @@ export class VtEmulator {
   #escape(char: string, code: number): void {
     if (char === '[') {
       this.#state = 'csi'
-      this.#csi = ''
+      this.#resetCsi()
       return
     }
     if (char === ']') {
@@ -354,7 +377,7 @@ export class VtEmulator {
   }
 
   #print(char: string, code: number): void {
-    const width = cellWidth(code)
+    const width = code < 0x300 ? (code < 0x7f || code >= 0xa0 ? 1 : 0) : cellWidth(code)
     if (width === 0) {
       if (this.#x > 0) {
         const row = this.#screen[this.#y]!
@@ -381,9 +404,17 @@ export class VtEmulator {
     }
     if (this.#insert) this.#insertBlanks(width)
     const row = this.#screen[this.#y]!
-    row[this.#x] = { ch: char, fg: this.#fg, bg: this.#bg, attrs: this.#attrs | (width === 2 ? CELL_WIDE : 0) }
+    const target = row[this.#x]!
+    target.ch = char
+    target.fg = this.#fg
+    target.bg = this.#bg
+    target.attrs = this.#attrs | (width === 2 ? CELL_WIDE : 0)
     if (width === 2 && this.#x + 1 < this.#cols) {
-      row[this.#x + 1] = { ch: ' ', fg: this.#fg, bg: this.#bg, attrs: this.#attrs | CELL_SPACER }
+      const spacer = row[this.#x + 1]!
+      spacer.ch = ' '
+      spacer.fg = this.#fg
+      spacer.bg = this.#bg
+      spacer.attrs = this.#attrs | CELL_SPACER
     }
     this.#touchRow(row)
     this.#x += width
@@ -393,59 +424,53 @@ export class VtEmulator {
     }
   }
 
-  #dispatchCsi(body: string): void {
-    const final = body.at(-1) ?? ''
-    const raw = body.slice(0, -1)
-    const interrogate = raw.startsWith('?')
-    const paramsText = interrogate ? raw.slice(1) : raw
-    const params = paramsText.split(';').map((part) => {
-      if (!part) return 0
-      const value = Number.parseInt(part, 10)
-      return Number.isFinite(value) ? value : 0
-    })
-    const p = (index: number, fallback: number) => {
-      const value = params[index] ?? 0
-      return value === 0 ? fallback : value
-    }
+  #resetCsi(): void {
+    this.#csiParams.length = 0
+    this.#csiValue = 0
+    this.#csiHasValue = false
+    this.#csiPrivate = false
+  }
+
+  #dispatchCsi(final: string, params: readonly number[], interrogate: boolean): void {
     if (final === 'A') {
       this.#wrapPending = false
-      this.#y = Math.max(this.#scrollTop, this.#y - p(0, 1))
+      this.#y = Math.max(this.#scrollTop, this.#y - csiParam(params, 0, 1))
       return
     }
     if (final === 'B') {
       this.#wrapPending = false
-      this.#y = Math.min(this.#scrollBottom, this.#y + p(0, 1))
+      this.#y = Math.min(this.#scrollBottom, this.#y + csiParam(params, 0, 1))
       return
     }
     if (final === 'C') {
       this.#wrapPending = false
-      this.#x = Math.min(this.#cols - 1, this.#x + p(0, 1))
+      this.#x = Math.min(this.#cols - 1, this.#x + csiParam(params, 0, 1))
       return
     }
     if (final === 'D') {
       this.#wrapPending = false
-      this.#x = Math.max(0, this.#x - p(0, 1))
+      this.#x = Math.max(0, this.#x - csiParam(params, 0, 1))
       return
     }
     if (final === 'E') {
       this.#x = 0
-      this.#y = Math.min(this.#scrollBottom, this.#y + p(0, 1))
+      this.#y = Math.min(this.#scrollBottom, this.#y + csiParam(params, 0, 1))
       return
     }
     if (final === 'F') {
       this.#x = 0
-      this.#y = Math.max(this.#scrollTop, this.#y - p(0, 1))
+      this.#y = Math.max(this.#scrollTop, this.#y - csiParam(params, 0, 1))
       return
     }
     if (final === 'G' || final === '`') {
       this.#wrapPending = false
-      this.#x = Math.max(0, Math.min(this.#cols - 1, p(0, 1) - 1))
+      this.#x = Math.max(0, Math.min(this.#cols - 1, csiParam(params, 0, 1) - 1))
       return
     }
     if (final === 'H' || final === 'f') {
       this.#wrapPending = false
-      const row = p(0, 1) - 1
-      const col = p(1, 1) - 1
+      const row = csiParam(params, 0, 1) - 1
+      const col = csiParam(params, 1, 1) - 1
       const origin = this.#origin ? this.#scrollTop : 0
       this.#y = Math.max(0, Math.min(this.#rows - 1, origin + row))
       this.#x = Math.max(0, Math.min(this.#cols - 1, col))
@@ -453,19 +478,19 @@ export class VtEmulator {
     }
     if (final === 'J') this.#eraseDisplay(params[0] ?? 0)
     else if (final === 'K') this.#eraseLine(params[0] ?? 0)
-    else if (final === 'L') this.#insertLines(p(0, 1))
-    else if (final === 'M') this.#deleteLines(p(0, 1))
-    else if (final === 'P') this.#deleteChars(p(0, 1))
-    else if (final === '@') this.#insertBlanks(p(0, 1))
-    else if (final === 'X') this.#eraseChars(p(0, 1))
-    else if (final === 'S') this.#scrollUp(p(0, 1))
-    else if (final === 'T') this.#scrollDown(p(0, 1))
-    else if (final === 'd') this.#y = Math.max(0, Math.min(this.#rows - 1, p(0, 1) - 1))
+    else if (final === 'L') this.#insertLines(csiParam(params, 0, 1))
+    else if (final === 'M') this.#deleteLines(csiParam(params, 0, 1))
+    else if (final === 'P') this.#deleteChars(csiParam(params, 0, 1))
+    else if (final === '@') this.#insertBlanks(csiParam(params, 0, 1))
+    else if (final === 'X') this.#eraseChars(csiParam(params, 0, 1))
+    else if (final === 'S') this.#scrollUp(csiParam(params, 0, 1))
+    else if (final === 'T') this.#scrollDown(csiParam(params, 0, 1))
+    else if (final === 'd') this.#y = Math.max(0, Math.min(this.#rows - 1, csiParam(params, 0, 1) - 1))
     else if (final === 'm') this.#sgr(params)
     else if (final === 'n') this.#deviceStatus(params[0] ?? 0)
     else if (final === 'c') this.onOutput?.(String.fromCharCode(27) + '[?1;0c')
     else if (final === 'r') {
-      const top = p(0, 1) - 1
+      const top = csiParam(params, 0, 1) - 1
       const bottom = (params[1] ? params[1] : this.#rows) - 1
       this.#scrollTop = Math.max(0, Math.min(this.#rows - 1, top))
       this.#scrollBottom = Math.max(this.#scrollTop, Math.min(this.#rows - 1, bottom))
@@ -483,7 +508,7 @@ export class VtEmulator {
     if (code === '0' || code === '2' || code === '1') this.#title = value.replaceAll('\u0007', '')
   }
 
-  #sgr(params: number[]): void {
+  #sgr(params: readonly number[]): void {
     if (params.length === 0) {
       this.#resetPen()
       return
@@ -523,7 +548,7 @@ export class VtEmulator {
     }
   }
 
-  #parseExtendedColor(params: number[], index: number): { color: TerminalColor; next: number } | undefined {
+  #parseExtendedColor(params: readonly number[], index: number): { color: TerminalColor; next: number } | undefined {
     const mode = params[index + 1]
     if (mode === 5 && params[index + 2] !== undefined) {
       return { color: { kind: 'indexed', index: Math.max(0, Math.min(255, params[index + 2]!)) }, next: index + 2 }
@@ -542,7 +567,7 @@ export class VtEmulator {
     return undefined
   }
 
-  #setModes(params: number[], privateMode: boolean, enable: boolean): void {
+  #setModes(params: readonly number[], privateMode: boolean, enable: boolean): void {
     for (const param of params.length === 0 ? [0] : params) {
       if (!privateMode) {
         if (param === 4) this.#insert = enable
@@ -597,15 +622,30 @@ export class VtEmulator {
     if (code === 6) this.onOutput?.(String.fromCharCode(27) + '[' + String(this.#y + 1) + ';' + String(Math.min(this.#x, this.#cols - 1) + 1) + 'R')
   }
 
+  #eraseCell(): MutableCell {
+    return { ch: ' ', fg: this.#fg, bg: this.#bg, attrs: this.#attrs & ~(CELL_WIDE | CELL_SPACER) }
+  }
+
+  #applyErase(cell: MutableCell): void {
+    cell.ch = ' '
+    cell.fg = this.#fg
+    cell.bg = this.#bg
+    cell.attrs = this.#attrs & ~(CELL_WIDE | CELL_SPACER)
+  }
+
+  #eraseRow(): MutableCell[] {
+    return Array.from({ length: this.#cols }, () => this.#eraseCell())
+  }
+
   #eraseDisplay(mode: number): void {
     if (mode === 0) {
       this.#eraseLine(0)
-      for (let row = this.#y + 1; row < this.#rows; row += 1) this.#screen[row] = blankRow(this.#cols)
+      for (let row = this.#y + 1; row < this.#rows; row += 1) this.#screen[row] = this.#eraseRow()
     } else if (mode === 1) {
-      for (let row = 0; row < this.#y; row += 1) this.#screen[row] = blankRow(this.#cols)
+      for (let row = 0; row < this.#y; row += 1) this.#screen[row] = this.#eraseRow()
       this.#eraseLine(1)
     } else {
-      this.#screen = Array.from({ length: this.#rows }, () => blankRow(this.#cols))
+      this.#screen = Array.from({ length: this.#rows }, () => this.#eraseRow())
       if (mode === 3) this.#scrollback = []
     }
   }
@@ -616,19 +656,19 @@ export class VtEmulator {
     const end = mode === 1 ? this.#x : this.#cols - 1
     const from = mode === 2 ? 0 : start
     const to = mode === 2 ? this.#cols - 1 : end
-    for (let col = from; col <= to; col += 1) row[col] = emptyCell()
+    for (let col = from; col <= to; col += 1) this.#applyErase(row[col]!)
     this.#touchRow(row)
   }
 
   #eraseChars(count: number): void {
     const row = this.#screen[this.#y]!
-    for (let index = 0; index < count && this.#x + index < this.#cols; index += 1) row[this.#x + index] = emptyCell()
+    for (let index = 0; index < count && this.#x + index < this.#cols; index += 1) this.#applyErase(row[this.#x + index]!)
     this.#touchRow(row)
   }
 
   #insertBlanks(count: number): void {
     const row = this.#screen[this.#y]!
-    for (let index = 0; index < count; index += 1) row.splice(this.#x, 0, emptyCell())
+    for (let index = 0; index < count; index += 1) row.splice(this.#x, 0, this.#eraseCell())
     row.length = this.#cols
     this.#touchRow(row)
   }
@@ -636,12 +676,12 @@ export class VtEmulator {
   #deleteChars(count: number): void {
     const row = this.#screen[this.#y]!
     row.splice(this.#x, count)
-    while (row.length < this.#cols) row.push(emptyCell())
+    while (row.length < this.#cols) row.push(this.#eraseCell())
     this.#touchRow(row)
   }
 
   #insertLines(count: number): void {
-    for (let index = 0; index < count; index += 1) this.#screen.splice(this.#y, 0, blankRow(this.#cols))
+    for (let index = 0; index < count; index += 1) this.#screen.splice(this.#y, 0, this.#eraseRow())
     this.#screen.splice(this.#scrollBottom + 1, count)
     this.#screen.length = this.#rows
   }
@@ -649,16 +689,16 @@ export class VtEmulator {
   #deleteLines(count: number): void {
     this.#screen.splice(this.#y, count)
     while (this.#screen.length < this.#rows) {
-      this.#screen.splice(this.#scrollBottom + 1 - (this.#rows - this.#screen.length), 0, blankRow(this.#cols))
+      this.#screen.splice(this.#scrollBottom + 1 - (this.#rows - this.#screen.length), 0, this.#eraseRow())
     }
     this.#screen.length = this.#rows
   }
 
   #scrollUp(count: number): void {
     for (let index = 0; index < count; index += 1) {
-      const removed = this.#screen.splice(this.#scrollTop, 1)[0] ?? blankRow(this.#cols)
+      const removed = this.#screen.splice(this.#scrollTop, 1)[0] ?? this.#eraseRow()
       if (this.#scrollTop === 0 && !this.#alt) this.#pushScrollback(removed)
-      this.#screen.splice(this.#scrollBottom, 0, blankRow(this.#cols))
+      this.#screen.splice(this.#scrollBottom, 0, this.#eraseRow())
     }
     this.#screen.length = this.#rows
   }
@@ -666,7 +706,7 @@ export class VtEmulator {
   #scrollDown(count: number): void {
     for (let index = 0; index < count; index += 1) {
       this.#screen.splice(this.#scrollBottom + 1, 1)
-      this.#screen.splice(this.#scrollTop, 0, blankRow(this.#cols))
+      this.#screen.splice(this.#scrollTop, 0, this.#eraseRow())
     }
     this.#screen.length = this.#rows
   }
@@ -689,7 +729,10 @@ export class VtEmulator {
   }
 
   #touchRow(row: MutableCell[]): void {
-    this.#rowVersions.set(row, (this.#rowVersions.get(row) ?? 0) + 1)
+    if (this.#lastTouchedRow === row && this.#lastTouchedVersion === this.#writeVersion) return
+    this.#rowVersions.set(row, this.#writeVersion)
+    this.#lastTouchedRow = row
+    this.#lastTouchedVersion = this.#writeVersion
   }
 
   #resetPen(): void {

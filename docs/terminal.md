@@ -25,7 +25,9 @@ Heddlework follows the important invariants from Localterm without moving browse
 4. User input can preempt a held synchronized frame, preserving interactive latency.
 5. A detached scrollback viewport is anchored as new rows arrive. Explicit terminal input returns to the live tail.
 
-`VtEmulator.snapshot()` caches immutable rows by mutable-row revision. A one-cell update only freezes that row; all unchanged row objects retain identity. On a patched GPUIX runtime, `TerminalView` projects the visible snapshot to a deduplicated style table plus compact `[row, column, columns, style, text]` tuples and updates one native host element. Stock GPUIX 0.6 uses the memoized React-run fallback.
+`VtEmulator` parses numeric CSI parameters incrementally, reuses mutable cells, and invalidates each sequentially written row once per PTY chunk. Erase operations retain the active rendition (BCE), so inverse and explicit-background TUI rows reach the final column. `snapshot()` caches immutable rows by mutable-row revision: a one-cell update freezes only that row and unchanged row objects retain identity.
+
+On a patched GPUIX runtime, `TerminalView` projects the visible snapshot into a versioned binary frame: each cell is one 16-byte little-endian record containing a glyph reference, final foreground/background RGB, and flags. Multi-codepoint graphemes live in a small side table. The base64 payload crosses React/NAPI as one prop and updates one native host element. Stock GPUIX 0.6 uses the memoized React-run fallback.
 
 Run the repeatable hot-path benchmark with:
 
@@ -33,7 +35,7 @@ Run the repeatable hot-path benchmark with:
 bun run benchmark:terminal
 ```
 
-It reports incremental snapshots, a 5 MiB ANSI parse, full row-style projection, unchanged-row identity reuse, and a synchronized 160×50 high-churn TUI frame through VT parsing, React, NAPI, GPUI layout, and paint. The native benchmark also reports retained-node count. On the development machine after glyph warmup, the complete animated frame measured 1.21 ms median / 3.84 ms p95 with three retained nodes, compared with the previous 6,054-node React surface at roughly 72 ms per frame. Treat timings as hardware-dependent; node count and row reuse are structural guards.
+It reports incremental snapshots, a 5 MiB ANSI parse, packed-frame projection, unchanged-row identity reuse, and a synchronized 160×50 high-churn TUI frame through VT parsing, React, NAPI, GPUI layout, and paint. The native benchmark also reports retained-node count. On the development machine after glyph warmup, the complete animated frame measured 0.57 ms median / 3.63 ms p95 with three retained nodes, compared with the previous 6,054-node React surface at roughly 72 ms per frame. Treat timings as hardware-dependent; the packed payload size, node count, and row reuse are structural guards.
 
 ## Native rendering versus xterm.js
 
@@ -41,14 +43,15 @@ The xterm.js/WebGL fork in Localterm is not copied into the desktop bundle. Inst
 
 The native surface preserves terminal geometry rather than treating the grid as flexbox text:
 
-- every text run is shaped with GPUI's `force_width` cell advance, including long box-drawing runs, so the first and rightmost columns stay attached;
-- double-width glyphs carry explicit column counts and force the following cell into a new run;
-- backgrounds, cursor, underline, strike, and block elements are painted at exact fractional grid coordinates;
-- same-style cells remain one shaped run, preserving programming ligatures without per-cell retained nodes;
+- one nearest-sampled `cols × rows` BGRA texture paints every cell background, including BCE highlights through the rightmost column;
+- ordinary and double-width glyphs retain explicit column positions at fractional cell coordinates;
+- shaping is cached by text and font geometry, not ANSI color, then cached glyph-atlas masks are painted directly with the current foreground;
+- adjacent compatible cells remain one shaped run, preserving programming ligatures without per-cell retained nodes;
+- cursor, underline, and strike are exact grid quads, while block elements are folded into the background texture;
 - disabling ligatures inserts zero-width non-joiners; Nerd Font ranges can use a separate family;
 - bold base ANSI colors resolve to bright variants, and muted emoji requests text presentation (`VS15`).
 
-This is also the Localterm alpha-mask optimization in native form. GPUI's text system caches ordinary glyphs as `MonochromeSprite` coverage in an R8/A8 atlas, then applies terminal foreground color during GPU composition. There is no browser canvas polarity to reconstruct and no second xterm/WebGL atlas to maintain. Emoji that remain color presentation use GPUI's polychrome atlas; `VS15` routes supported muted forms through the monochrome coverage path. Platform color-font fallback can still override unsupported text-presentation sequences.
+This is the Localterm alpha-mask optimization in native form. GPUI caches ordinary glyph coverage in its monochrome atlas and applies terminal foreground color during GPU composition; changing ANSI color does not reshape text or create another atlas entry. There is no browser canvas polarity to reconstruct and no second xterm/WebGL atlas to maintain. Emoji that remain color presentation use GPUI's polychrome atlas; `VS15` routes supported muted forms through the monochrome coverage path. Platform color-font fallback can still override unsupported text-presentation sequences.
 
 ## Fonts and live settings
 
@@ -85,6 +88,6 @@ Keep the current split for companion clients:
 
 1. a host process owns the PTY and transports ordered bytes plus resize/input events;
 2. Ghostty's VT core, compiled natively or to WASM, can replace `VtEmulator` behind the snapshot/session boundary;
-3. each platform owns its painter: GPUI on desktop, a browser renderer on web, and a platform view on mobile. The compact terminal frame contract is platform-neutral, and the Rust painter has no desktop-only text API, so a GPUIX WebAssembly renderer can expose the same host element.
+3. each platform owns its painter: GPUI on desktop, a browser renderer on web, and a platform view on mobile. The packed cell contract is platform-neutral, uses a WASM-compatible decoder, and has validated WGPU/WebGL shader paths, so a GPUIX WebAssembly renderer can expose the same host element.
 
 The Localterm xterm/WebGL work remains an appropriate browser implementation when GPUIX/WASM is not the UI host. Heddlework shares pacing, color, font, frame, and accessibility policy rather than importing browser renderer internals into desktop.

@@ -26,6 +26,30 @@ describe('VtEmulator', () => {
     expect(trueCell?.fg).toEqual({ kind: 'rgb', r: 10, g: 20, b: 30 })
   })
 
+  it('parses numeric CSI state incrementally across arbitrary chunks', () => {
+    const vt = new VtEmulator(10, 2)
+    vt.write(ESC + '[38;2;10')
+    vt.write(';20;30mX' + ESC + '[;5HY')
+    vt.write('Z')
+    const snap = vt.snapshot()
+    expect(snap.viewport[0]?.cells[0]?.fg).toEqual({ kind: 'rgb', r: 10, g: 20, b: 30 })
+    expect(snap.viewport[0]?.cells[4]?.ch).toBe('Y')
+    expect(snap.viewport[0]?.cells[5]?.ch).toBe('Z')
+  })
+
+  it('erases through the final column with the active background rendition', () => {
+    const vt = new VtEmulator(8, 2)
+    vt.write(ESC + '[44mX' + ESC + '[K')
+    let row = vt.snapshot().viewport[0]!.cells
+    expect(row[1]?.bg).toEqual({ kind: 'indexed', index: 4 })
+    expect(row[7]?.bg).toEqual({ kind: 'indexed', index: 4 })
+
+    vt.write(ESC + '[2;1H' + ESC + '[0;7mY' + ESC + '[K')
+    row = vt.snapshot().viewport[1]!.cells
+    expect(row[1]?.attrs).toBe(1 << 5)
+    expect(row[7]?.attrs).toBe(1 << 5)
+  })
+
   it('clears the display, moves the cursor, and sets the title', () => {
     const vt = new VtEmulator(10, 4)
     vt.write('abcd' + ESC + '[H' + ESC + '[2J' + ESC + ']0;Shell' + String.fromCharCode(7) + ESC + '[2;3Hxy')

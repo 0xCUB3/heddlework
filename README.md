@@ -111,7 +111,7 @@ The installer uses the standalone executable, a square scalable icon, and an abs
 
 ### Native terminal
 
-The bottom dock and right workbench surface share in-process PTY sessions, an incremental VT grid, and one fixed-cell native GPUI host. Compact frame tuples replace thousands of React text nodes; forced cell advances keep the first/right TUI columns attached, while GPUI’s monochrome glyph atlas supplies the Localterm-style reusable alpha-mask path without xterm.js. Output is parsed immediately but deadline-paced for presentation; DEC synchronized output is atomic and detached scrollback stays anchored. Runtime settings cover installed fonts, ligatures, Nerd Font fallback, muted emoji, and contrast-safe light/dark palettes. `bun run benchmark:terminal` measures the complete 160×50 VT → React → NAPI → GPUI frame. See [Terminal architecture and rendering](docs/terminal.md).
+The bottom dock and right workbench surface share in-process PTY sessions, an incremental VT grid, and one fixed-cell native GPUI host. A versioned 16-byte cell buffer replaces thousands of React nodes and large style graphs; GPUI uploads cell backgrounds as one nearest-sampled texture, caches shaping without ANSI colors, and paints glyph-atlas masks directly. Fractional cell advances keep the first and right TUI columns attached without xterm.js. Output is parsed immediately but deadline-paced for presentation; DEC synchronized output is atomic and detached scrollback stays anchored. Runtime settings cover installed fonts, ligatures, Nerd Font fallback, muted emoji, and contrast-safe light/dark palettes. `bun run benchmark:terminal` measures the complete 160×50 VT → React → NAPI → GPUI frame. See [Terminal architecture and rendering](docs/terminal.md).
 
 ### Queue behavior
 
