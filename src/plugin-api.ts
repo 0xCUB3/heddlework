@@ -15,6 +15,18 @@ export {
 } from './workbench/plugins.ts'
 export type { SessionCatalogService, WorkspaceDiffService } from './workbench/services.ts'
 export { workbenchUiRegistryToken } from './ui/extensions.ts'
+export { terminalSessionToken, createTerminalPlugin } from './terminal/plugin.ts'
+export { TerminalSessionService } from './terminal/service.ts'
+export { BunPtyBackend, MemoryTerminalBackend, bunTerminalAvailable } from './terminal/backend.ts'
+export type { TerminalBackend, TerminalProcess } from './terminal/backend.ts'
+export type {
+  TerminalGridSnapshot,
+  TerminalPlacement,
+  TerminalServiceSnapshot,
+  TerminalSessionId,
+  TerminalSessionInfo,
+  TerminalSpawnRequest,
+} from './terminal/types.ts'
 export { createFlowRuntimePlugin, flowRuntimeToken } from './flows/plugin.ts'
 export type { FlowRuntime, FlowRuntimeHost, FlowRuntimeOptions } from './flows/runtime.ts'
 export type { FlowLaunch, FlowMode, FlowRuntimeSnapshot, FlowSchedule, FlowScheduleInput, FlowScheduleTiming, FlowTemplate } from './flows/types.ts'

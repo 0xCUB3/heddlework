@@ -21,6 +21,7 @@ import {
   localWorkspaceDiffPlugin,
   workbenchControllerToken,
 } from './workbench/plugins.ts'
+import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
 
 interface RuntimeHandle {
   kernel: WorkbenchKernel
@@ -48,6 +49,7 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath() }))
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
+kernel.mount(createTerminalPlugin({ cwd: workspacePath }))
 kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
 kernel.mount(localWorkspaceDiffPlugin)
 kernel.mount(createAgentTransportPlugin({
@@ -60,6 +62,7 @@ kernel.mount(createAgentTransportPlugin({
 const controller = kernel.get(workbenchControllerToken)
 const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
+const terminals = kernel.get(terminalSessionToken)
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
   if (isGpuixWindowCloseRace(error)) process.exit(0)
@@ -86,7 +89,7 @@ const shutdown = () => {
 }
 
 render(
-  <WorkbenchApp controller={controller} flows={flows} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
+  <WorkbenchApp controller={controller} flows={flows} terminals={terminals} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   createWindowOptions(process.platform, debugOverlay()),
 )
 

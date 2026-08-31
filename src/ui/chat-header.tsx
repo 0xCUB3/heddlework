@@ -14,14 +14,18 @@ export function ChatHeader({
   state,
   controller,
   diffOpen,
+  terminalOpen = false,
   leftSidebarProgress,
   onToggleDiff,
+  onToggleTerminal,
 }: {
   state: WorkbenchState
   controller: WorkbenchController
   diffOpen: boolean
+  terminalOpen?: boolean
   leftSidebarProgress: number
   onToggleDiff(): void
+  onToggleTerminal?(): void
 }) {
   const projectName = basename(state.workspacePath) || state.workspacePath
   const title = activeThreadTitle(state)
@@ -52,6 +56,7 @@ export function ChatHeader({
             <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
           </>
         ))}
+        {onToggleTerminal && <IconButton icon="panelBottom" label="Toggle terminal panel" testId="toggle-terminal" active={terminalOpen} onClick={onToggleTerminal} />}
         <IconButton icon="panel" label="Toggle Diff panel" testId="toggle-diff" active={diffOpen} onClick={onToggleDiff} />
       </div>
     </div>

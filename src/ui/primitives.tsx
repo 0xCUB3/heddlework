@@ -64,6 +64,7 @@ export function IconButton({
   active = false,
   disabled = false,
   testId,
+  tabIndex,
 }: {
   icon: IconName
   label: string
@@ -71,7 +72,9 @@ export function IconButton({
   active?: boolean
   disabled?: boolean
   testId?: string
+  tabIndex?: number
 }) {
+  const resolvedTabIndex = disabled ? -1 : tabIndex ?? 0
   const handlers = disabled || !onClick ? {} : {
     onClick,
     onKeyDown: (event: { key?: string }) => {
@@ -81,7 +84,7 @@ export function IconButton({
   return (
     <div
       {...(testId ? { testId } : {})}
-      tabIndex={disabled ? -1 : 0}
+      tabIndex={resolvedTabIndex}
       style={{
         width: 30,
         height: 30,

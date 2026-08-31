@@ -1,0 +1,112 @@
+import React from 'react'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { connectTest } from '@gpuix/react/automation'
+import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { DemoTransport } from '../src/pi/demo-transport.ts'
+import { MemoryTerminalBackend } from '../src/terminal/backend.ts'
+import { TerminalSessionService } from '../src/terminal/service.ts'
+import { WorkbenchApp } from '../src/ui/app.tsx'
+import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
+import { WorkbenchController } from '../src/workbench/controller.ts'
+import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
+
+const describeNative = hasNativeTestRenderer ? describe : describe.skip
+const services: TerminalSessionService[] = []
+const controllers: WorkbenchController[] = []
+
+afterEach(async () => {
+  await Promise.all(controllers.splice(0).map((controller) => controller.dispose()))
+  await Promise.all(services.splice(0).map((service) => service.dispose()))
+})
+
+function createHarness() {
+  const controller = new WorkbenchController(new DemoTransport(), '/tmp/heddlework-terminal-ui', testControllerDependencies())
+  const terminals = new TerminalSessionService({ cwd: '/tmp/heddlework-terminal-ui', backend: new MemoryTerminalBackend('prompt> ') })
+  controllers.push(controller)
+  services.push(terminals)
+  return { controller, terminals }
+}
+
+describeNative('terminal panels', () => {
+  it('opens the layout-owned bottom dock and the right terminal surface', async () => {
+    const { controller, terminals } = createHarness()
+    const root = createTestRoot({ width: 1_280, height: 720 })
+    root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} terminals={terminals} />)
+    const automation = await connectTest(root.renderer)
+    try {
+      await controller.start()
+      root.renderer.flush()
+      expect(await automation.getByTestId('toggle-terminal').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-dock').count()).toBe(0)
+
+      await automation.getByTestId('toggle-terminal').click()
+      await Bun.sleep(SPRING_SETTLE_MS)
+      root.renderer.flush()
+      expect(await automation.getByTestId('terminal-dock').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-view-bottom').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-input-bottom').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-dock-fullscreen').count()).toBe(1)
+      expect(root.renderer.getPaintedText().some((text) => text.includes('prompt>'))).toBe(true)
+      const activeBottomId = terminals.getSnapshot().activeBottomId
+      expect(activeBottomId).toBeDefined()
+      const dockedSize = terminals.getSnapshot().sessions.find((session) => session.id === activeBottomId)!
+      await automation.getByTestId('terminal-input-bottom').click()
+      const nativeTabCapture = root.renderer.findByTestId('terminal-input-bottom')?.customProps?.captureTab === true
+      if (process.env.HEDDLEWORK_REQUIRE_GPUIX_CAPTURE_TAB === '1') expect(nativeTabCapture).toBe(true)
+      root.renderer.simulateKeystrokes(nativeTabCapture ? 'tab x shift-tab y' : 'x y')
+      root.renderer.flush()
+      const terminalText = terminals.grid(activeBottomId)?.viewport.map((row) => row.text).join('\n') ?? ''
+      expect(terminalText).toContain('x')
+      expect(terminalText).toContain('y')
+      const dockBounds = await automation.getByTestId('terminal-dock').bounds()
+      const sidebarBounds = await automation.getByTestId('left-sidebar-host').bounds()
+      expect(sidebarBounds.width).toBeGreaterThan(100)
+      expect(await automation.getByTestId('toggle-left-sidebar').count()).toBe(1)
+      await automation.getByTestId('terminal-dock-fullscreen').click()
+      await Bun.sleep(SPRING_SETTLE_MS * 2)
+      root.renderer.flush()
+      const fullDockBounds = await automation.getByTestId('terminal-dock').bounds()
+      const fullscreenSize = terminals.getSnapshot().sessions.find((session) => session.id === activeBottomId)!
+      expect(fullDockBounds.height).toBeGreaterThan(dockBounds.height + 80)
+      expect(fullscreenSize.cols).toBeGreaterThan(dockedSize.cols)
+      expect(fullscreenSize.rows).toBeGreaterThan(dockedSize.rows)
+      expect((await automation.getByTestId('left-sidebar-host').bounds()).width).toBeLessThanOrEqual(1)
+      expect(await automation.getByTestId('toggle-left-sidebar').count()).toBe(0)
+      await automation.getByTestId('terminal-dock-restore').click()
+      await Bun.sleep(SPRING_SETTLE_MS * 2)
+      root.renderer.flush()
+      expect(await automation.getByTestId('toggle-left-sidebar').count()).toBe(1)
+
+      await automation.getByTestId('toggle-diff').click()
+      await Bun.sleep(SPRING_SETTLE_MS)
+      root.renderer.flush()
+      await automation.getByTestId('right-panel-new-tab').click()
+      await Bun.sleep(40)
+      root.renderer.flush()
+      await automation.getByTestId('surface-option-terminal').click()
+      await Bun.sleep(40)
+      root.renderer.flush()
+      expect(await automation.getByTestId('terminal-panel').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-view-right').count()).toBe(1)
+      expect(await automation.getByTestId('surface-placeholder').count()).toBe(0)
+      const activeRightId = terminals.getSnapshot().activeRightId
+      expect(activeRightId).toBeDefined()
+      root.renderer.simulateKeystrokes('z')
+      root.renderer.flush()
+      expect(terminals.grid(activeRightId)?.viewport.map((row) => row.text).join('\n')).toContain('z')
+
+      await automation.getByTestId('close-surface').click()
+      await Bun.sleep(SPRING_SETTLE_MS * 2)
+      root.renderer.flush()
+      expect(await automation.getByTestId('terminal-panel').count()).toBe(0)
+
+      await automation.getByTestId('close-terminal-dock').click()
+      await Bun.sleep(SPRING_SETTLE_MS * 2)
+      root.renderer.flush()
+      expect(await automation.getByTestId('terminal-dock').count()).toBe(0)
+    } finally {
+      await automation.close()
+      root.unmount()
+    }
+  }, 15_000)
+})

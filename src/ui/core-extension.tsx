@@ -11,6 +11,8 @@ import {
 } from './extensions.ts'
 import type { IconName } from './icons.tsx'
 import { SurfacePlaceholderPanel } from './surface-picker.tsx'
+import { useOptionalTerminalService } from './terminal-context.tsx'
+import { TerminalPanel } from './terminal-panel.tsx'
 
 export function createCoreUiExtensionPlugin(): WorkbenchPlugin {
   return {
@@ -22,6 +24,37 @@ export function createCoreUiExtensionPlugin(): WorkbenchPlugin {
       ctx.effect(() => registry.register(createCoreUiExtension(controller)))
     },
   }
+}
+
+function TerminalSurface(props: WorkbenchSurfaceProps) {
+  const service = useOptionalTerminalService()
+  if (!service) {
+    return (
+      <SurfacePlaceholderPanel
+        descriptor={{ id: 'terminal', title: 'Terminal', description: 'Start a shell in this workspace.', icon: 'terminal' }}
+        fullscreen={props.fullscreen}
+        fullscreenProgress={props.fullscreenProgress}
+        {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
+        panelWidth={props.panelWidth}
+        onToggleFullscreen={props.onToggleFullscreen}
+        onNew={props.onNewSurface}
+        onClose={props.onClose}
+      />
+    )
+  }
+  return (
+    <TerminalPanel
+      service={service}
+      fullscreen={props.fullscreen}
+      fullscreenProgress={props.fullscreenProgress}
+      {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
+      panelWidth={props.panelWidth}
+      {...(props.appearance ? { appearance: props.appearance } : {})}
+      onToggleFullscreen={props.onToggleFullscreen}
+      onNewSurface={props.onNewSurface}
+      onClose={props.onClose}
+    />
+  )
 }
 
 export function createCoreUiExtension(controller: WorkbenchController): WorkbenchUiExtension {
@@ -47,7 +80,14 @@ export function createCoreUiExtension(controller: WorkbenchController): Workbenc
     id: 'heddlework.core',
     surfaces: [
       placeholder('browser', 'Browser', 'Open a local app or URL.', 'globe', 10),
-      placeholder('terminal', 'Terminal', 'Start a shell in this workspace.', 'terminal', 20),
+      {
+        id: 'terminal',
+        title: 'Terminal',
+        description: 'Start a shell in this workspace.',
+        icon: 'terminal',
+        order: 20,
+        component: TerminalSurface,
+      },
       placeholder('files', 'Files', 'Browse and read workspace files.', 'files', 30),
       {
         id: 'diff',
