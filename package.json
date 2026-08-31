@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "A native, harness-neutral workspace for agent sessions, task graphs, diffs, and durable work.",
   "private": true,
-  "packageManager": "pnpm@11.24.0",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -30,7 +29,7 @@
     "demo": "HEDDLEWORK_DEMO=1 bun --hot src/main.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "check": "pnpm run typecheck && pnpm run test",
+    "check": "bun run typecheck && bun run test",
     "build": "bun scripts/build.ts"
   },
   "dependencies": {
@@ -43,5 +42,8 @@
     "@types/node": "26.4.0",
     "@types/react": "19.2.18",
     "typescript": "7.0.2"
-  }
+  },
+  "workspaces": [
+    "."
+  ]
 }

@@ -7,7 +7,7 @@ Heddlework does not ship a signed Linux package yet. This directory provides a d
 Build the standalone executable, then run the installer from the repository root:
 
 ```bash
-pnpm build
+bun run build
 HEDDLEWORK_PI="$(command -v pi)" ./packaging/linux/install-user.sh
 ```
 

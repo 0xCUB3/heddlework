@@ -76,26 +76,26 @@ Requirements:
 ```bash
 git clone https://github.com/monotykamary/heddlework.git
 cd heddlework
-pnpm install --frozen-lockfile
-pnpm start -- /path/to/repository
+bun install --frozen-lockfile
+bun run start -- /path/to/repository
 ```
 
 For UI development without credentials or a Pi process:
 
 ```bash
-pnpm demo -- /path/to/repository
+bun run demo -- /path/to/repository
 ```
 
 For hot reload:
 
 ```bash
-pnpm dev -- /path/to/repository
+bun run dev -- /path/to/repository
 ```
 
 Build the current unsigned executable:
 
 ```bash
-pnpm build
+bun run build
 ./dist/heddlework /path/to/repository
 ```
 
@@ -104,11 +104,11 @@ pnpm build
 Linux users can install the current unsigned build into their user application menu:
 
 ```bash
-pnpm build
+bun run build
 HEDDLEWORK_PI="$(command -v pi)" ./packaging/linux/install-user.sh
 ```
 
-The installer uses the standalone executable, a square scalable icon, and an absolute-path launcher so app-grid launches do not depend on the GUI session inheriting Bun, pnpm, or Pi from shell startup files. See [Linux desktop integration](packaging/linux/README.md) for installed paths, GNOME cache guidance, removal, and diagnostic-log precautions.
+The installer uses the standalone executable, a square scalable icon, and an absolute-path launcher so app-grid launches do not depend on the GUI session inheriting Bun or Pi from shell startup files. See [Linux desktop integration](packaging/linux/README.md) for installed paths, GNOME cache guidance, removal, and diagnostic-log precautions.
 
 ### Queue behavior
 
@@ -162,7 +162,7 @@ The desktop application remains the primary environment for local repositories, 
 If Pi is not discoverable from the desktop application environment:
 
 ```bash
-HEDDLEWORK_PI=/absolute/path/to/pi pnpm start -- /path/to/repository
+HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
 ```
 
 | Variable | Purpose |
@@ -227,10 +227,10 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 ## Development
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
 ```
 
 The native test suite exercises the real GPUIX reconciler and covers shell interactions, session paging, transcript following, clipboard media, extension dialogs, notifications, native diff virtualization, deep-scroll performance, and spring panel geometry.

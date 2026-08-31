@@ -56,7 +56,7 @@ absolute_path_only() {
 require_absolute XDG_DATA_HOME "$data_home"
 require_absolute HEDDLEWORK_BIN_DIR "$bin_dir"
 require_absolute HEDDLEWORK_APP_DIR "$app_dir"
-[ -x "$source_binary" ] || fail "build the executable first with 'pnpm build' (missing $source_binary)"
+[ -x "$source_binary" ] || fail "build the executable first with 'bun run build' (missing $source_binary)"
 [ -f "$template" ] || fail "desktop template is missing: $template"
 
 pi_executable=${HEDDLEWORK_PI:-}
