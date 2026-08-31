@@ -68,8 +68,7 @@ Heddlework currently launches Pi as an RPC sidecar. The transport boundary in `s
 
 Requirements:
 
-- [pnpm](https://pnpm.io) 11+
-- [Bun](https://bun.sh) 1.3+ as the application runtime
+- [Bun](https://bun.sh) 1.3+
 - a working `pi` executable on `PATH`
 - a platform supported by GPUIX: macOS, Linux, or Windows
 
@@ -86,7 +85,7 @@ For UI development without credentials or a Pi process:
 bun run demo -- /path/to/repository
 ```
 
-For hot reload:
+For native UI development with reload-on-save (the process restarts so GPUIX rebuilds its input state):
 
 ```bash
 bun run dev -- /path/to/repository

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { delimiter, join, resolve } from 'node:path'
-import { PiRpcTransport, resolvePiExecutable } from '../src/pi/rpc-transport.ts'
+import { PiRpcTransport, piProcessEnvironment, resolvePiExecutable } from '../src/pi/rpc-transport.ts'
 import { heddleworkFabricBridgePath } from '../src/pi/fabric-bridge.ts'
 import type { RpcRecord } from '../src/pi/types.ts'
 
@@ -12,6 +12,24 @@ describe('PiRpcTransport', () => {
     const existing = new Set([shim, generic])
     expect(resolvePiExecutable({ home, path: ['/generic-bin'].join(delimiter), exists: (path) => existing.has(path) })).toBe(shim)
     expect(resolvePiExecutable({ configured: '/explicit/pi', home, path: '', exists: () => false })).toBe('/explicit/pi')
+  })
+
+  it('keeps Bun package bins from shadowing Pi behind the LocalTerm shim', () => {
+    const cwd = join('/workspace', 'packages', 'app')
+    const shim = join('/fixture-home', '.localterm', 'shims', process.platform === 'win32' ? 'pi.exe' : 'pi')
+    const packageBins = [
+      join('/workspace', 'node_modules', '.bin'),
+      join(cwd, 'node_modules', '.bin'),
+    ]
+    const userBins = [
+      join('/toolchains', 'pnpm', 'node_modules', '.bin'),
+      join('/fixture-home', '.bun', 'bin'),
+      join('/usr', 'bin'),
+    ]
+    const inherited = { PATH: [...packageBins, ...userBins].join(delimiter) }
+
+    expect(piProcessEnvironment(shim, inherited, cwd).PATH).toBe(userBins.join(delimiter))
+    expect(piProcessEnvironment('/explicit/pi', inherited, cwd)).toBe(inherited)
   })
 
   it('correlates responses while forwarding interleaved events', async () => {

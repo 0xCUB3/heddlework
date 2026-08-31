@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { attachJsonlReader, serializeJsonLine } from './jsonl.ts'
 import {
   encodeTreeNavigateBridgeRequest,
@@ -59,9 +59,10 @@ export class PiRpcTransport implements AgentTransport {
     const command = this.#options.command ?? resolvePiExecutable()
     const bridgeArgs = this.#options.fabricBridge === false ? [] : ['--extension', heddleworkFabricBridgePath()]
     const args = [...(this.#options.commandArgs ?? []), '--mode', 'rpc', ...bridgeArgs, ...(this.#options.piArgs ?? [])]
+    const env = piProcessEnvironment(command, { ...process.env, ...this.#options.env })
     const child = spawn(command, args, {
       cwd: this.#options.cwd,
-      env: { ...process.env, ...this.#options.env },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     this.#process = child
@@ -265,6 +266,31 @@ export class PiRpcTransport implements AgentTransport {
   #emitStatus(status: TransportStatus): void {
     for (const listener of this.#statusListeners) listener(status)
   }
+}
+
+export function piProcessEnvironment(command: string, env: NodeJS.ProcessEnv, cwd = process.cwd()): NodeJS.ProcessEnv {
+  if (!/[\\/]\.localterm[\\/]shims[\\/]pi(?:\.exe)?$/i.test(command) || env.PATH === undefined) return env
+
+  // Bun lifecycle scripts prepend node_modules/.bin for the package directory and
+  // every ancestor. LocalTerm resolves Pi again, so those entries can shadow the
+  // user's installed executable.
+  const packageBins = new Set<string>()
+  let directory = resolve(cwd)
+  while (true) {
+    packageBins.add(comparablePath(join(directory, 'node_modules', '.bin')))
+    const parent = dirname(directory)
+    if (parent === directory) break
+    directory = parent
+  }
+  const path = env.PATH
+    .split(delimiter)
+    .filter((entry) => !entry || !packageBins.has(comparablePath(resolve(entry))))
+    .join(delimiter)
+  return path === env.PATH ? env : { ...env, PATH: path }
+}
+
+function comparablePath(path: string): string {
+  return process.platform === 'win32' ? path.toLowerCase() : path
 }
 
 export interface PiExecutableResolutionOptions {

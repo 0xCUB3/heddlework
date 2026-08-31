@@ -24,9 +24,9 @@
     "bun": ">=1.3.0"
   },
   "scripts": {
-    "dev": "bun --hot src/main.tsx",
+    "dev": "bun --watch src/main.tsx",
     "start": "bun src/main.tsx",
-    "demo": "HEDDLEWORK_DEMO=1 bun --hot src/main.tsx",
+    "demo": "HEDDLEWORK_DEMO=1 bun --watch src/main.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "check": "bun run typecheck && bun run test",
