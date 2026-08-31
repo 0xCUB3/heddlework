@@ -109,6 +109,10 @@ HEDDLEWORK_PI="$(command -v pi)" ./packaging/linux/install-user.sh
 
 The installer uses the standalone executable, a square scalable icon, and an absolute-path launcher so app-grid launches do not depend on the GUI session inheriting Bun or Pi from shell startup files. See [Linux desktop integration](packaging/linux/README.md) for installed paths, GNOME cache guidance, removal, and diagnostic-log precautions.
 
+### Native terminal
+
+The bottom dock and right workbench surface share in-process PTY sessions, an incremental VT grid, and one fixed-cell native GPUI host. Compact frame tuples replace thousands of React text nodes; forced cell advances keep the first/right TUI columns attached, while GPUI’s monochrome glyph atlas supplies the Localterm-style reusable alpha-mask path without xterm.js. Output is parsed immediately but deadline-paced for presentation; DEC synchronized output is atomic and detached scrollback stays anchored. Runtime settings cover installed fonts, ligatures, Nerd Font fallback, muted emoji, and contrast-safe light/dark palettes. `bun run benchmark:terminal` measures the complete 160×50 VT → React → NAPI → GPUI frame. See [Terminal architecture and rendering](docs/terminal.md).
+
 ### Queue behavior
 
 Submitting while an agent run is active stages the input in Heddlework's editable queue instead of immediately surrendering it to Pi's immutable RPC queue. **Enter** creates a steering row for the next healthy turn boundary; the visible **Queue** action and **Option/Alt+Enter** create a follow-up for `agent_settled`. While idle, ordinary **Enter** still starts immediately, **Queue** parks work in a paused plan, and **Enter** on an empty composer—or the primary action—resumes its oldest row. The collapsed strip is inset like an upside-down checkout bar and tucks behind the composer; expanding it springs upward into a single bounded scroll surface where rows can be edited, held, removed, moved between lanes, explicitly steered, or reordered from their left drag handles.

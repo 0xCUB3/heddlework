@@ -1,17 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react'
+import React, { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useGpuix } from '@gpuix/react'
-import type { TerminalGridSnapshot, TerminalPlacement, TerminalSessionId } from '../terminal/types.ts'
+import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
 import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { colors } from './theme.ts'
-import { TERMINAL_CELL_WIDTH, TERMINAL_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, TERMINAL_PADDING_X, TERMINAL_PADDING_Y, terminalGridSize } from './terminal-metrics.ts'
+import { TERMINAL_CELL_WIDTH, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, TERMINAL_PADDING_X, TERMINAL_PADDING_Y, terminalGridSize } from './terminal-metrics.ts'
+import { terminalNativeFrame } from './terminal-native.ts'
 import { terminalPaintTheme, terminalRowRuns, type TerminalPaintTheme, type TerminalRunStyle } from './terminal-theme.ts'
 import type { ResolvedTheme } from './theme.ts'
 
 const CAPTURE_TAB_PROPS = { captureTab: true } as const
+type TerminalCapableRenderer = { supportsNativeTerminal?: () => boolean }
 
-export function TerminalView({
+export const TerminalView = memo(function TerminalView({
   service,
   sessionId,
   placement,
@@ -28,12 +30,15 @@ export function TerminalView({
   appearance: ResolvedTheme
   focusSerial?: number
 }) {
+  const serviceSnapshot = useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const rendering = serviceSnapshot.appearance
   const snapshot = sessionId ? service.grid(sessionId) : undefined
   const theme = useMemo(() => terminalPaintTheme(appearance), [appearance])
   const size = terminalGridSize(width, height)
   const sizeRef = useRef(size)
   sizeRef.current = size
   const gpuix = useGpuix()
+  const nativeTerminal = (gpuix?.renderer as TerminalCapableRenderer | undefined)?.supportsNativeTerminal?.() === true
   const inputId = useRef<number | undefined>(undefined)
 
   useEffect(() => {
@@ -109,7 +114,10 @@ export function TerminalView({
       onClick={focusInput}
       onScroll={onScroll}
     >
-      {snapshot ? <TerminalGrid snapshot={snapshot} theme={theme} /> : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
+      {snapshot ? (nativeTerminal
+        ? <NativeTerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
+        : <TerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
+      ) : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
       <div
         ref={(instance: { id: number } | null) => { inputId.current = instance?.id }}
         testId={'terminal-input-' + placement}
@@ -134,34 +142,58 @@ export function TerminalView({
       />
     </div>
   )
-}
+})
 
-function TerminalGrid({ snapshot, theme }: { snapshot: TerminalGridSnapshot; theme: TerminalPaintTheme }) {
+const NativeTerminalGrid = memo(function NativeTerminalGrid({ snapshot, theme, rendering }: { snapshot: TerminalGridSnapshot; theme: TerminalPaintTheme; rendering: TerminalAppearance }) {
+  const frame = useMemo(() => terminalNativeFrame(snapshot, theme, rendering), [rendering, snapshot, theme])
+  return React.createElement('terminal', {
+    testId: 'terminal-grid',
+    frame,
+    style: {
+      position: 'relative',
+      width: snapshot.cols * TERMINAL_CELL_WIDTH,
+      height: snapshot.rows * TERMINAL_LINE_HEIGHT,
+      overflow: 'hidden',
+    },
+  })
+})
+
+function TerminalGrid({ snapshot, theme, rendering }: { snapshot: TerminalGridSnapshot; theme: TerminalPaintTheme; rendering: TerminalAppearance }) {
   return (
     <div testId="terminal-grid" style={{ position: 'relative', width: snapshot.cols * TERMINAL_CELL_WIDTH, height: snapshot.rows * TERMINAL_LINE_HEIGHT, display: 'flex', flexDirection: 'column' }}>
       {snapshot.viewport.map((row, rowIndex) => (
-        <div key={rowIndex} style={{ height: TERMINAL_LINE_HEIGHT, flexShrink: 0, display: 'flex', flexDirection: 'row' }}>
-          {terminalRowRuns(row.cells, theme).map((run, runIndex) => <TerminalRun key={runIndex} run={run} theme={theme} />)}
-        </div>
+        <TerminalRow key={rowIndex} row={row} theme={theme} rendering={rendering} />
       ))}
       {snapshot.cursorVisible ? <TerminalCursor x={snapshot.cursorX} y={snapshot.cursorY} color={theme.cursor} /> : null}
     </div>
   )
 }
 
+const TerminalRow = memo(function TerminalRow({ row, theme, rendering }: { row: TerminalGridRow; theme: TerminalPaintTheme; rendering: TerminalAppearance }) {
+  const runs = useMemo(() => terminalRowRuns(row.cells, theme, rendering), [rendering, row, theme])
+  return (
+    <div style={{ height: TERMINAL_LINE_HEIGHT, flexShrink: 0, display: 'flex', flexDirection: 'row' }}>
+      {runs.map((run, runIndex) => <TerminalRun key={runIndex} run={run} theme={theme} />)}
+    </div>
+  )
+})
+
 function TerminalRun({ run, theme }: { run: TerminalRunStyle; theme: TerminalPaintTheme }) {
   const width = run.columns * TERMINAL_CELL_WIDTH
   const backgroundColor = run.fill ? run.color : run.backgroundColor === theme.background ? colors.transparent : run.backgroundColor
+  const fontFamily = run.fontStyle === 'italic' ? `${run.fontFamily} Italic` : run.fontFamily
   return (
-    <div style={{ width, height: TERMINAL_LINE_HEIGHT, flexShrink: 0, backgroundColor }}>
+    <div style={{ position: 'relative', width, height: TERMINAL_LINE_HEIGHT, flexShrink: 0, backgroundColor }}>
       {run.fill ? null : (
-        <text style={{ color: run.color, fontSize: TERMINAL_FONT_SIZE, lineHeight: TERMINAL_LINE_HEIGHT, fontFamily: TERMINAL_FONT_FAMILY, whiteSpace: 'nowrap' }}>{run.text}</text>
+        <text style={{ color: run.color, fontSize: TERMINAL_FONT_SIZE, lineHeight: TERMINAL_LINE_HEIGHT, fontFamily, ...(run.fontWeight ? { fontWeight: run.fontWeight } : {}), whiteSpace: 'nowrap' }}>{run.text}</text>
       )}
+      {!run.fill && run.underline ? <div style={{ position: 'absolute', left: 0, right: 0, bottom: 1, height: 1, backgroundColor: run.color, pointerEvents: 'none' }} /> : null}
+      {!run.fill && run.strike ? <div style={{ position: 'absolute', left: 0, right: 0, top: Math.floor(TERMINAL_LINE_HEIGHT * 0.52), height: 1, backgroundColor: run.color, pointerEvents: 'none' }} /> : null}
     </div>
   )
 }
 
-function TerminalCursor({ x, y, color }: { x: number; y: number; color: string }) {
+const TerminalCursor = memo(function TerminalCursor({ x, y, color }: { x: number; y: number; color: string }) {
   return (
     <div
       testId="terminal-cursor"
@@ -177,7 +209,7 @@ function TerminalCursor({ x, y, color }: { x: number; y: number; color: string }
       }}
     />
   )
-}
+})
 
 async function pasteClipboardText(): Promise<string | undefined> {
   try {

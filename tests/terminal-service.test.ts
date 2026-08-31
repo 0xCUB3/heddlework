@@ -1,6 +1,32 @@
 import { describe, expect, it } from 'bun:test'
-import { MemoryTerminalBackend } from '../src/terminal/backend.ts'
+import { MemoryTerminalBackend, type TerminalBackend, type TerminalProcess } from '../src/terminal/backend.ts'
+import type { TerminalProcessStatus, TerminalSpawnRequest } from '../src/terminal/types.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
+
+const ESC = String.fromCharCode(27)
+
+class PushTerminalBackend implements TerminalBackend {
+  readonly writes: Array<string | Uint8Array> = []
+  #dataListener: ((chunk: Uint8Array) => void) | undefined
+
+  async spawn(_request: TerminalSpawnRequest & { cols: number; rows: number; cwd: string }): Promise<TerminalProcess> {
+    const writes = this.writes
+    return {
+      write(data) { writes.push(data) },
+      resize() {},
+      kill() {},
+      onData: (listener) => {
+        this.#dataListener = listener
+        return () => { if (this.#dataListener === listener) this.#dataListener = undefined }
+      },
+      onExit(_listener: (status: TerminalProcessStatus) => void) { return () => {} },
+    }
+  }
+
+  emit(data: string): void {
+    this.#dataListener?.(new TextEncoder().encode(data))
+  }
+}
 
 describe('TerminalSessionService', () => {
   it('spawns, writes, resizes, and keeps sessions after a viewer closes', async () => {
@@ -37,6 +63,55 @@ describe('TerminalSessionService', () => {
 
     await service.close(id)
     expect(service.getSnapshot().sessions.map((session) => session.id)).toEqual([second])
+    await service.dispose()
+  })
+
+  it('holds partial synchronized frames and releases a complete frame atomically', async () => {
+    const backend = new PushTerminalBackend()
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend })
+    const id = await service.spawn({ cols: 30, rows: 3 })
+    const committed = service.grid(id)
+
+    backend.emit(ESC + '[?2026hpartial')
+    expect(service.grid(id)).toBe(committed)
+    expect(service.grid(id)?.viewport.some((row) => row.text.includes('partial'))).toBe(false)
+
+    backend.emit(' frame' + ESC + '[?2026l')
+    expect(service.grid(id)?.viewport.some((row) => row.text.includes('partial frame'))).toBe(true)
+    await service.dispose()
+  })
+
+  it('parses PTY output immediately while coalescing ordinary paints per frame', async () => {
+    const backend = new PushTerminalBackend()
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend })
+    const id = await service.spawn({ cols: 80, rows: 8 })
+    let notifications = 0
+    const unsubscribe = service.subscribe(() => { notifications += 1 })
+
+    for (let index = 0; index < 64; index += 1) backend.emit(String(index % 10))
+    expect(service.grid(id)?.viewport.some((row) => row.text.length > 0)).toBe(true)
+    await Bun.sleep(25)
+    expect(notifications).toBe(1)
+
+    backend.emit(ESC + '[6n')
+    expect(backend.writes.some((write) => typeof write === 'string' && write.startsWith(ESC + '['))).toBe(true)
+    unsubscribe()
+    await service.dispose()
+  })
+
+  it('anchors a detached viewport while new output extends scrollback', async () => {
+    const backend = new PushTerminalBackend()
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend })
+    const id = await service.spawn({ cols: 20, rows: 3 })
+    backend.emit('one\r\ntwo\r\nthree\r\nfour')
+    service.setScrollOffset(id, 1)
+    const before = service.grid(id)?.viewport.map((row) => row.text)
+
+    backend.emit('\r\nfive')
+    const after = service.grid(id)?.viewport.map((row) => row.text)
+
+    expect(after).toEqual(before)
+    expect(service.grid(id)?.scrollOffset).toBe(2)
     await service.dispose()
   })
 

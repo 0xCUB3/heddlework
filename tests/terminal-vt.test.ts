@@ -44,6 +44,33 @@ describe('VtEmulator', () => {
     expect(snap.viewport[0]?.text).toBe('main')
   })
 
+  it('reuses immutable rows until their mutable source row changes', () => {
+    const vt = new VtEmulator(12, 3)
+    vt.write('first' + ESC + '[2;1Hsecond')
+    const before = vt.snapshot()
+
+    vt.write(ESC + '[2;7HX')
+    const after = vt.snapshot()
+
+    expect(after.viewport[0]).toBe(before.viewport[0])
+    expect(after.viewport[1]).not.toBe(before.viewport[1])
+    expect(after.viewport[2]).toBe(before.viewport[2])
+    vt.write(ESC + '[H')
+    const cursorOnly = vt.snapshot()
+    expect(cursorOnly.viewport[1]).toBe(after.viewport[1])
+  })
+
+  it('tracks DEC synchronized-output boundaries across writes', () => {
+    const vt = new VtEmulator(20, 2)
+    vt.write(ESC + '[?2026hframe')
+    expect(vt.synchronizedOutput).toBe(true)
+    vt.write(ESC + '[?202')
+    expect(vt.synchronizedOutput).toBe(true)
+    vt.write('6l')
+    expect(vt.synchronizedOutput).toBe(false)
+    expect(vt.snapshot().viewport[0]?.text).toBe('frame')
+  })
+
   it('scrolls lines into scrollback and answers device status', () => {
     const replies: string[] = []
     const vt = new VtEmulator(4, 2)

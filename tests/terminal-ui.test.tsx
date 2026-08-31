@@ -46,6 +46,8 @@ describeNative('terminal panels', () => {
       expect(await automation.getByTestId('terminal-view-bottom').count()).toBe(1)
       expect(await automation.getByTestId('terminal-input-bottom').count()).toBe(1)
       expect(await automation.getByTestId('terminal-dock-fullscreen').count()).toBe(1)
+      const nativeTerminal = (root.renderer as unknown as { supportsNativeTerminal?: () => boolean }).supportsNativeTerminal?.() === true
+      if (nativeTerminal) expect(root.renderer.findByType('terminal')).toHaveLength(1)
       expect(root.renderer.getPaintedText().some((text) => text.includes('prompt>'))).toBe(true)
       const activeBottomId = terminals.getSnapshot().activeBottomId
       expect(activeBottomId).toBeDefined()
@@ -109,4 +111,48 @@ describeNative('terminal panels', () => {
       root.unmount()
     }
   }, 15_000)
+
+  it('applies terminal font and renderer preferences from Settings at runtime', async () => {
+    const { controller, terminals } = createHarness()
+    const root = createTestRoot({ width: 1_280, height: 820 })
+    root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} terminals={terminals} />)
+    const automation = await connectTest(root.renderer)
+    try {
+      await controller.start()
+      await controller.submit('/settings')
+      await Bun.sleep(30)
+      root.renderer.flush()
+
+      expect(await automation.getByTestId('terminal-font-family').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-ligatures').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-nerd-font').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-muted-emoji').count()).toBe(1)
+
+      await automation.getByTestId('terminal-font-family').fill('Fira Code')
+      await automation.getByTestId('terminal-font-family-apply').click()
+      await automation.getByTestId('terminal-ligatures-off').click()
+      await automation.getByTestId('terminal-nerd-font-on').click()
+      const settingsScroll = root.renderer.findByTestId('settings-scroll')!
+      const settingsBounds = await automation.getByTestId('settings-scroll').bounds()
+      const mutedBounds = await automation.getByTestId('terminal-muted-emoji-off').bounds()
+      const overflow = mutedBounds.y + mutedBounds.height - settingsBounds.y - settingsBounds.height
+      if (overflow > 0) {
+        const offset = root.renderer.getScrollOffset(settingsScroll.id)?.[1] ?? 0
+        root.renderer.scrollTo(settingsScroll.id, 0, offset - Math.ceil(overflow) - 48)
+        root.renderer.flush()
+      }
+      await automation.getByTestId('terminal-muted-emoji-off').click()
+      root.renderer.flush()
+
+      expect(terminals.getSnapshot().appearance).toMatchObject({
+        fontFamily: 'Fira Code',
+        ligaturesEnabled: false,
+        nerdFontEnabled: true,
+        muteEmojiColors: false,
+      })
+    } finally {
+      await automation.close()
+      root.unmount()
+    }
+  }, 10_000)
 })

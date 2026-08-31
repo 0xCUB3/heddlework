@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { DEFAULT_TERMINAL_APPEARANCE, readTerminalAppearance, resolveTerminalAppearance, writeTerminalAppearance } from './appearance.ts'
 import { BunPtyBackend, MemoryTerminalBackend, type TerminalBackend, type TerminalProcess } from './backend.ts'
 import type {
+  TerminalAppearance,
   TerminalCleanup,
   TerminalGridSnapshot,
   TerminalPlacement,
@@ -19,8 +21,14 @@ interface LiveSession {
   scrollOffset: number
   sizeOwner: TerminalPlacement | undefined
   cachedGrid: TerminalGridSnapshot | undefined
+  gridDirty: boolean
+  synchronizedHold: boolean
+  synchronizedTimer: ReturnType<typeof setTimeout> | undefined
   cleanups: TerminalCleanup[]
 }
+
+const TERMINAL_FRAME_MS = 16
+const SYNCHRONIZED_OUTPUT_STALE_MS = 150
 
 export class TerminalSessionService {
   readonly #backend: TerminalBackend
@@ -28,16 +36,29 @@ export class TerminalSessionService {
   readonly #sessions = new Map<TerminalSessionId, LiveSession>()
   readonly #listeners = new Set<() => void>()
   #snapshot: TerminalServiceSnapshot
+  readonly #appearancePath: string | false
+  #appearance: TerminalAppearance
   #activeBottomId: TerminalSessionId | undefined
   #activeRightId: TerminalSessionId | undefined
   #generation = 0
+  #lastFrameAt = 0
   #frame: ReturnType<typeof setTimeout> | undefined
   #disposed = false
   #seq = 0
 
-  constructor(options: { cwd: string; backend?: TerminalBackend }) {
+  constructor(options: {
+    cwd: string
+    backend?: TerminalBackend
+    appearance?: Partial<TerminalAppearance>
+    appearancePath?: string | false
+  }) {
     this.#cwd = options.cwd
     this.#backend = options.backend ?? new BunPtyBackend()
+    this.#appearancePath = options.appearancePath ?? false
+    this.#appearance = resolveTerminalAppearance(
+      options.appearance,
+      readTerminalAppearance(this.#appearancePath) ?? DEFAULT_TERMINAL_APPEARANCE,
+    )
     this.#snapshot = this.#publish(false)
   }
 
@@ -52,10 +73,23 @@ export class TerminalSessionService {
     if (!id) return undefined
     const session = this.#sessions.get(id)
     if (!session) return undefined
-    if (session.cachedGrid && session.cachedGrid.scrollOffset === session.scrollOffset) return session.cachedGrid
+    if (!session.gridDirty && session.cachedGrid?.scrollOffset === session.scrollOffset) return session.cachedGrid
     const snap = session.vt.snapshot(session.scrollOffset)
     session.cachedGrid = snap
+    session.gridDirty = false
     return snap
+  }
+
+  setAppearance(patch: Partial<TerminalAppearance>): void {
+    const next = resolveTerminalAppearance(patch, this.#appearance)
+    if (terminalAppearancesEqual(next, this.#appearance)) return
+    this.#appearance = next
+    writeTerminalAppearance(this.#appearancePath, next)
+    this.#schedule(true)
+  }
+
+  resetAppearance(): void {
+    this.setAppearance(DEFAULT_TERMINAL_APPEARANCE)
   }
 
   async spawn(request: TerminalSpawnRequest = {}): Promise<TerminalSessionId> {
@@ -75,19 +109,33 @@ export class TerminalSessionService {
       vt,
       scrollOffset: 0,
       sizeOwner: undefined,
-      cachedGrid: undefined,
+      cachedGrid: vt.snapshot(),
+      gridDirty: false,
+      synchronizedHold: false,
+      synchronizedTimer: undefined,
       cleanups: [],
     }
     session.cleanups.push(process.onData((chunk) => {
+      const wasSynchronized = session.vt.synchronizedOutput
+      const previousScrollback = session.vt.scrollbackLength
       session.vt.write(chunk)
-      session.scrollOffset = 0
-      session.cachedGrid = undefined
+      this.#anchorDetachedViewport(session, previousScrollback)
       if (session.vt.title && session.vt.title !== session.info.title) session.info = { ...session.info, title: session.vt.title }
-      this.#schedule()
+      if (session.vt.synchronizedOutput) {
+        session.synchronizedHold = true
+        this.#holdSynchronizedOutput(session)
+        return
+      }
+      const completedSynchronizedFrame = wasSynchronized || session.synchronizedHold
+      this.#releaseSynchronizedOutput(session)
+      session.gridDirty = true
+      this.#schedule(completedSynchronizedFrame)
     }))
     session.cleanups.push(process.onExit((status) => {
+      this.#releaseSynchronizedOutput(session)
+      session.gridDirty = true
       session.info = { ...session.info, status }
-      this.#schedule()
+      this.#schedule(true)
     }))
     this.#sessions.set(id, session)
     if (!this.#activeBottomId) this.#activeBottomId = id
@@ -117,8 +165,12 @@ export class TerminalSessionService {
   write(id: TerminalSessionId, data: string): void {
     const session = this.#sessions.get(id)
     if (!session || session.info.status.kind === 'exited' || !data) return
-    session.process.write(data)
     session.scrollOffset = 0
+    if (session.synchronizedHold) {
+      session.gridDirty = true
+      this.#schedule(true)
+    }
+    session.process.write(data)
   }
 
   claimSize(id: TerminalSessionId, owner: TerminalPlacement): void {
@@ -137,7 +189,7 @@ export class TerminalSessionService {
     if (session.info.cols === nextCols && session.info.rows === nextRows) return
     session.vt.resize(nextCols, nextRows)
     session.info = { ...session.info, cols: nextCols, rows: nextRows }
-    session.cachedGrid = undefined
+    session.gridDirty = true
     this.#schedule(true)
   }
 
@@ -147,13 +199,14 @@ export class TerminalSessionService {
     const next = Math.max(0, Math.min(session.vt.scrollbackLength, Math.floor(offset)))
     if (next === session.scrollOffset) return
     session.scrollOffset = next
-    session.cachedGrid = undefined
+    session.gridDirty = true
     this.#schedule()
   }
 
   async close(id: TerminalSessionId): Promise<void> {
     const session = this.#sessions.get(id)
     if (!session) return
+    this.#releaseSynchronizedOutput(session)
     for (const cleanup of session.cleanups.splice(0)) cleanup()
     session.process.kill()
     this.#sessions.delete(id)
@@ -181,24 +234,58 @@ export class TerminalSessionService {
       return
     }
     if (this.#frame) return
+    const elapsed = performance.now() - this.#lastFrameAt
+    const delay = Math.max(0, TERMINAL_FRAME_MS - elapsed)
     this.#frame = setTimeout(() => {
       this.#frame = undefined
       this.#publish(true)
-    }, 16)
+    }, delay)
+  }
+
+  #holdSynchronizedOutput(session: LiveSession): void {
+    if (session.synchronizedTimer) return
+    session.synchronizedTimer = setTimeout(() => {
+      session.synchronizedTimer = undefined
+      if (!this.#sessions.has(session.info.id)) return
+      session.gridDirty = true
+      this.#schedule()
+    }, SYNCHRONIZED_OUTPUT_STALE_MS)
+  }
+
+  #anchorDetachedViewport(session: LiveSession, previousScrollback: number): void {
+    if (session.scrollOffset === 0) return
+    const appendedRows = Math.max(0, session.vt.scrollbackLength - previousScrollback)
+    session.scrollOffset = Math.min(session.vt.scrollbackLength, session.scrollOffset + appendedRows)
+  }
+
+  #releaseSynchronizedOutput(session: LiveSession): void {
+    if (session.synchronizedTimer) clearTimeout(session.synchronizedTimer)
+    session.synchronizedTimer = undefined
+    session.synchronizedHold = false
   }
 
   #publish(notify: boolean): TerminalServiceSnapshot {
+    if (notify) this.#lastFrameAt = performance.now()
     this.#generation += 1
     const sessions: TerminalSessionInfo[] = [...this.#sessions.values()].map((session) => session.info)
     this.#snapshot = {
       sessions,
       activeBottomId: this.#activeBottomId,
       activeRightId: this.#activeRightId,
+      appearance: this.#appearance,
       generation: this.#generation,
     }
     if (notify) for (const listener of this.#listeners) listener()
     return this.#snapshot
   }
+}
+
+function terminalAppearancesEqual(left: TerminalAppearance, right: TerminalAppearance): boolean {
+  return left.fontFamily === right.fontFamily
+    && left.nerdFontFamily === right.nerdFontFamily
+    && left.ligaturesEnabled === right.ligaturesEnabled
+    && left.nerdFontEnabled === right.nerdFontEnabled
+    && left.muteEmojiColors === right.muteEmojiColors
 }
 
 export { MemoryTerminalBackend, BunPtyBackend }

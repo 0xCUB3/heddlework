@@ -1,0 +1,853 @@
+diff --git a/.changeset/quiet-terminals-capture-tabs.md b/.changeset/quiet-terminals-capture-tabs.md
+new file mode 100644
+index 0000000..05c9408
+--- /dev/null
++++ b/.changeset/quiet-terminals-capture-tabs.md
+@@ -0,0 +1,6 @@
++---
++"@gpuix/native": patch
++"@gpuix/react": patch
++---
++
++Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a compact fixed-cell terminal element backed by GPUI glyph-atlas painting.
+diff --git a/README.md b/README.md
+index 0eb922b..bbb004a 100644
+--- a/README.md
++++ b/README.md
+@@ -41,7 +41,7 @@ bun add -d @types/react typescript
+ ### 1. Point TypeScript at the GPUIX JSX types
+ 
+ **`jsxImportSource` is required.** Without it TypeScript uses DOM types, so
+-`<virtual-list>`, `<markdown>`, `<code>` and `style.hover` all fail to
++`<virtual-list>`, `<markdown>`, `<code>`, `<terminal>` and `style.hover` all fail to
+ typecheck.
+ 
+ ```json
+@@ -1749,6 +1749,42 @@ assert the geometry without a screenshot. Zed's own editor paints search
+ highlights manually for the same reason.
+ </details>
+ 
++## Native terminal surface
++
++`<terminal>` is a low-level fixed-cell painter for applications that already own a VT parser and PTY. A whole terminal frame crosses the React bridge as one `frame` prop and remains one retained host node. GPUI paints exact background rectangles and shapes each style run with a forced cell advance, so long box-drawing runs cannot drift away from the final column.
++
++```tsx
++<terminal
++  frame={{
++    cols: 80,
++    rows: 24,
++    cellWidth: 7.83,
++    lineHeight: 17,
++    fontSize: 13,
++    background: '#0b0c0c',
++    cursorColor: '#e7e7e7',
++    cursorX: 0,
++    cursorY: 0,
++    cursorVisible: true,
++    styles: [{
++      color: '#e7e7e7',
++      backgroundColor: '#0b0c0c',
++      fontFamily: 'Menlo',
++      fontWeight: 400,
++      italic: false,
++      underline: false,
++      strike: false,
++      fill: false,
++    }],
++    // row, column, column count, style index, text
++    runs: [[0, 0, 6, 0, 'prompt']],
++  }}
++  style={{ width: 626.4, height: 408, overflow: 'hidden' }}
++/>
++```
++
++The painter uses GPUI's cached monochrome glyph atlas (`MonochromeSprite`) for ordinary text, so foreground colour is applied to reusable alpha coverage on the GPU. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries.
++
+ ## Native text components
+ 
+ Three elements render text with Syntect syntax highlighting computed in
+@@ -2011,6 +2047,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
+ automatically. A listener alone does not put a `div` in the Tab order; add
+ `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
+ 
++Set `captureTab` on a focused element that uses Tab itself, such as a terminal
++or editor. Its `onKeyDown` still receives Tab and Shift+Tab, but the focus
++navigation actions stop there instead of moving to another control:
++
++```tsx
++<div tabIndex={0} captureTab onKeyDown={(event) => terminal.write(event)} />
++```
++
+ A node that listens for both `onMouseDown` and `onMouseMove` **captures the
+ pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
+ `onMouseMove` and `onMouseUp` keep firing after the pointer leaves the hitbox,
+@@ -2556,6 +2600,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
+ - [x] Image and SVG elements (`<img>`, `<svg>`)
+ - [x] Virtual lists (`<virtual-list>`)
+ - [x] Native text components (`<code>`, `<diff>`, `<markdown>`)
++- [x] Fixed-cell GPU terminal surface (`<terminal>`)
+ - [x] Cross-element text selection
+ - [x] Text highlighting and search (`highlight`, `useTextSearch`)
+ - [x] Headless Select, Combobox, and Tooltip
+diff --git a/packages/native/Cargo.toml b/packages/native/Cargo.toml
+index c23c69f..c16a227 100644
+--- a/packages/native/Cargo.toml
++++ b/packages/native/Cargo.toml
+@@ -75,6 +75,7 @@ gpui_macos = { path = "../../zed/crates/gpui_macos", default-features = false, f
+ # letting users write GPU-backed tests for their apps.
+ default = ["test-support"]
+ test-support = ["gpui/test-support", "gpui_platform/test-support", "gpui_macos/test-support", "gpui_macos/font-kit"]
++runtime-shaders = ["gpui_macos/runtime_shaders"]
+ 
+ [build-dependencies]
+ napi-build = "2"
+diff --git a/packages/native/index.d.ts b/packages/native/index.d.ts
+index 2d9b6e6..dd97a79 100644
+--- a/packages/native/index.d.ts
++++ b/packages/native/index.d.ts
+@@ -31,6 +31,7 @@ export declare class GpuixRenderer {
+   isInitialized(): boolean
+   /** Whether JavaScript must drive the native event loop with tick(). */
+   requiresTick(): boolean
++  supportsNativeTerminal(): boolean
+   /**
+    * The paintable size of the window in logical pixels, excluding any
+    * platform title bar. This used to answer a hardcoded 800x600, so anything
+@@ -316,6 +317,7 @@ export declare class TestGpuixRenderer {
+   advanceTime(milliseconds: number): void
+   /** Get the root element ID, or null if no root is set. */
+   getRootId(): number | null
++  supportsNativeTerminal(): boolean
+   /**
+    * The offscreen window size, so `useWindowSize()` reports the same numbers
+    * under test as in a real window instead of falling back to a default.
+diff --git a/packages/native/src/custom_elements/mod.rs b/packages/native/src/custom_elements/mod.rs
+index b3811c1..6cd7461 100644
+--- a/packages/native/src/custom_elements/mod.rs
++++ b/packages/native/src/custom_elements/mod.rs
+@@ -19,6 +19,7 @@ pub mod diff;
+ pub mod img;
+ pub mod input;
+ pub mod markdown;
++pub mod terminal;
+ 
+ // ── Render context ───────────────────────────────────────────────────
+ 
+@@ -285,6 +286,7 @@ impl CustomElementRegistry {
+         registry.register(Box::new(code::CodeFactory));
+         registry.register(Box::new(diff::DiffFactory));
+         registry.register(Box::new(markdown::MarkdownFactory));
++        registry.register(Box::new(terminal::TerminalFactory));
+         registry
+     }
+ 
+diff --git a/packages/native/src/custom_elements/terminal.rs b/packages/native/src/custom_elements/terminal.rs
+new file mode 100644
+index 0000000..e5f13cd
+--- /dev/null
++++ b/packages/native/src/custom_elements/terminal.rs
+@@ -0,0 +1,338 @@
++use serde::Deserialize;
++
++use super::{CustomElement, CustomElementFactory, CustomRenderContext};
++
++pub struct TerminalFactory;
++
++impl CustomElementFactory for TerminalFactory {
++    fn element_type(&self) -> &str {
++        "terminal"
++    }
++
++    fn create(&self, _id: u64) -> Box<dyn CustomElement> {
++        Box::new(TerminalElement::default())
++    }
++}
++
++#[derive(Clone, Debug, Deserialize)]
++#[serde(rename_all = "camelCase")]
++struct WireStyle {
++    color: String,
++    background_color: String,
++    font_family: String,
++    #[serde(default = "normal_weight")]
++    font_weight: f32,
++    #[serde(default)]
++    italic: bool,
++    #[serde(default)]
++    underline: bool,
++    #[serde(default)]
++    strike: bool,
++    #[serde(default)]
++    fill: bool,
++}
++
++fn normal_weight() -> f32 {
++    400.0
++}
++
++#[derive(Clone, Debug, Deserialize)]
++#[serde(rename_all = "camelCase")]
++struct WireFrame {
++    cols: usize,
++    rows: usize,
++    cell_width: f32,
++    line_height: f32,
++    font_size: f32,
++    background: String,
++    cursor_color: String,
++    cursor_x: usize,
++    cursor_y: usize,
++    cursor_visible: bool,
++    styles: Vec<WireStyle>,
++    runs: Vec<(usize, usize, usize, usize, String)>,
++}
++
++#[derive(Clone, Debug)]
++struct PaintStyle {
++    color: gpui::Hsla,
++    background_color: gpui::Hsla,
++    font: gpui::Font,
++    underline: bool,
++    strike: bool,
++    fill: bool,
++}
++
++#[derive(Clone, Debug)]
++struct PaintRun {
++    row: usize,
++    column: usize,
++    columns: usize,
++    style: usize,
++    text: gpui::SharedString,
++}
++
++#[derive(Clone, Debug)]
++struct TerminalFrame {
++    cols: usize,
++    rows: usize,
++    cell_width: f32,
++    line_height: f32,
++    font_size: f32,
++    background: gpui::Hsla,
++    cursor_color: gpui::Hsla,
++    cursor_x: usize,
++    cursor_y: usize,
++    cursor_visible: bool,
++    styles: Vec<PaintStyle>,
++    runs: Vec<PaintRun>,
++}
++
++impl TerminalFrame {
++    fn from_wire(frame: WireFrame) -> Self {
++        let background = parse_color(&frame.background, gpui::transparent_black());
++        let styles = frame
++            .styles
++            .into_iter()
++            .map(|style| {
++                let color = parse_color(&style.color, gpui::white());
++                let mut font = gpui::font(style.font_family);
++                font.weight = gpui::FontWeight(style.font_weight.clamp(100.0, 900.0));
++                font.style = if style.italic {
++                    gpui::FontStyle::Italic
++                } else {
++                    gpui::FontStyle::Normal
++                };
++                PaintStyle {
++                    color,
++                    background_color: parse_color(&style.background_color, background),
++                    font,
++                    underline: style.underline,
++                    strike: style.strike,
++                    fill: style.fill,
++                }
++            })
++            .collect();
++        let runs = frame
++            .runs
++            .into_iter()
++            .map(|(row, column, columns, style, text)| PaintRun {
++                row,
++                column,
++                columns,
++                style,
++                text: text.into(),
++            })
++            .collect();
++        Self {
++            cols: frame.cols,
++            rows: frame.rows,
++            cell_width: frame.cell_width.max(1.0),
++            line_height: frame.line_height.max(1.0),
++            font_size: frame.font_size.max(1.0),
++            background,
++            cursor_color: parse_color(&frame.cursor_color, gpui::white()),
++            cursor_x: frame.cursor_x,
++            cursor_y: frame.cursor_y,
++            cursor_visible: frame.cursor_visible,
++            styles,
++            runs,
++        }
++    }
++}
++
++fn parse_color(value: &str, fallback: gpui::Hsla) -> gpui::Hsla {
++    crate::color::parse_color_rgba(value)
++        .map(Into::into)
++        .unwrap_or(fallback)
++}
++
++#[derive(Clone)]
++struct ShapedRun {
++    line: gpui::ShapedLine,
++    x: f32,
++    y: f32,
++}
++
++#[derive(Clone)]
++struct PaintRect {
++    x: f32,
++    y: f32,
++    width: f32,
++    height: f32,
++    color: gpui::Hsla,
++}
++
++struct PaintState {
++    frame: TerminalFrame,
++    text: Vec<ShapedRun>,
++    rects: Vec<PaintRect>,
++}
++
++#[derive(Default)]
++pub struct TerminalElement {
++    frame: Option<TerminalFrame>,
++}
++
++impl CustomElement for TerminalElement {
++    fn render(
++        &mut self,
++        ctx: CustomRenderContext,
++        _window: &mut gpui::Window,
++        _cx: &mut gpui::Context<crate::renderer::GpuixView>,
++    ) -> gpui::AnyElement {
++        use gpui::prelude::*;
++
++        let Some(frame) = self.frame.clone() else {
++            let empty = super::custom_surface(
++                gpui::div().id(gpui::SharedString::from(format!("__gpuix_terminal_{}", ctx.id))),
++                &ctx,
++            );
++            return empty.into_any_element();
++        };
++
++        let canvas = gpui::canvas(
++            move |_bounds, window, _cx| {
++                let mut text = Vec::with_capacity(frame.runs.len());
++                let mut rects = Vec::new();
++                for run in &frame.runs {
++                    if run.row >= frame.rows || run.column >= frame.cols || run.columns == 0 {
++                        continue;
++                    }
++                    let Some(style) = frame.styles.get(run.style) else {
++                        continue;
++                    };
++                    let x = run.column as f32 * frame.cell_width;
++                    let y = run.row as f32 * frame.line_height;
++                    let width = run.columns.min(frame.cols - run.column) as f32 * frame.cell_width;
++                    if style.fill || style.background_color != frame.background {
++                        rects.push(PaintRect {
++                            x,
++                            y,
++                            width,
++                            height: frame.line_height,
++                            color: if style.fill { style.color } else { style.background_color },
++                        });
++                    }
++                    if style.fill
++                        || run.text.is_empty()
++                        || (run.text.chars().all(char::is_whitespace)
++                            && !style.underline
++                            && !style.strike)
++                        || (style.color == style.background_color
++                            && !style.underline
++                            && !style.strike)
++                    {
++                        continue;
++                    }
++                    let text_run = gpui::TextRun {
++                        len: run.text.len(),
++                        font: style.font.clone(),
++                        color: style.color,
++                        background_color: None,
++                        underline: style.underline.then_some(gpui::UnderlineStyle {
++                            thickness: gpui::px(1.0),
++                            color: Some(style.color),
++                            wavy: false,
++                        }),
++                        strikethrough: style.strike.then_some(gpui::StrikethroughStyle {
++                            thickness: gpui::px(1.0),
++                            color: Some(style.color),
++                        }),
++                    };
++                    let line = window.text_system().shape_line(
++                        run.text.clone(),
++                        gpui::px(frame.font_size),
++                        &[text_run],
++                        Some(gpui::px(frame.cell_width)),
++                    );
++                    text.push(ShapedRun { line, x, y });
++                }
++                PaintState {
++                    frame,
++                    text,
++                    rects,
++                }
++            },
++            move |bounds, state, window, cx| {
++                window.paint_quad(gpui::fill(bounds, state.frame.background));
++                for rect in state.rects {
++                    window.paint_quad(gpui::fill(
++                        gpui::Bounds::new(
++                            gpui::point(
++                                bounds.origin.x + gpui::px(rect.x),
++                                bounds.origin.y + gpui::px(rect.y),
++                            ),
++                            gpui::size(gpui::px(rect.width), gpui::px(rect.height)),
++                        ),
++                        rect.color,
++                    ));
++                }
++                for run in state.text {
++                    crate::text::paint::log_painted_text(run.line.text.clone());
++                    let _ = run.line.paint(
++                        gpui::point(
++                            bounds.origin.x + gpui::px(run.x),
++                            bounds.origin.y + gpui::px(run.y),
++                        ),
++                        gpui::px(state.frame.line_height),
++                        gpui::TextAlign::Left,
++                        None,
++                        window,
++                        cx,
++                    );
++                }
++                if state.frame.cursor_visible
++                    && state.frame.cursor_x < state.frame.cols
++                    && state.frame.cursor_y < state.frame.rows
++                {
++                    window.paint_quad(gpui::fill(
++                        gpui::Bounds::new(
++                            gpui::point(
++                                bounds.origin.x
++                                    + gpui::px(state.frame.cursor_x as f32 * state.frame.cell_width),
++                                bounds.origin.y
++                                    + gpui::px(state.frame.cursor_y as f32 * state.frame.line_height),
++                            ),
++                            gpui::size(
++                                gpui::px(state.frame.cell_width),
++                                gpui::px(state.frame.line_height),
++                            ),
++                        ),
++                        state.frame.cursor_color.opacity(0.35),
++                    ));
++                }
++            },
++        )
++        .absolute()
++        .size_full();
++
++        let surface = super::custom_surface(
++            gpui::div()
++                .id(gpui::SharedString::from(format!("__gpuix_terminal_{}", ctx.id)))
++                .overflow_hidden(),
++            &ctx,
++        );
++        surface.child(canvas).into_any_element()
++    }
++
++    fn set_prop(&mut self, key: &str, value: serde_json::Value) {
++        if key == "frame" {
++            self.frame = serde_json::from_value::<WireFrame>(value)
++                .ok()
++                .map(TerminalFrame::from_wire);
++        }
++    }
++
++    fn supported_props(&self) -> &'static [&'static str] {
++        &["frame"]
++    }
++
++    fn supported_events(&self) -> &'static [&'static str] {
++        &[]
++    }
++
++    fn destroy(&mut self) {
++        self.frame = None;
++    }
++}
+diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
+index 9620967..ffa6901 100644
+--- a/packages/native/src/renderer.rs
++++ b/packages/native/src/renderer.rs
+@@ -1183,6 +1183,11 @@ impl GpuixRenderer {
+         cfg!(target_os = "macos")
+     }
+ 
++    #[napi]
++    pub fn supports_native_terminal(&self) -> bool {
++        true
++    }
++
+     /// The paintable size of the window in logical pixels, excluding any
+     /// platform title bar. This used to answer a hardcoded 800x600, so anything
+     /// that turned a mouse position into layout coordinates pointed at the
+@@ -2257,6 +2262,11 @@ impl WebGpuixRenderer {
+ 
+     pub fn tick(&self) {}
+ 
++    #[wasm_bindgen::prelude::wasm_bindgen(js_name = supportsNativeTerminal)]
++    pub fn supports_native_terminal(&self) -> bool {
++        true
++    }
++
+     #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
+     pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+         let window = web_sys::window()
+@@ -4096,6 +4106,19 @@ pub(crate) fn build_host_container(
+     {
+         el = el.tab_index(tab_index).tab_stop(tab_index >= 0);
+     }
++    if element
++        .custom_props
++        .get("captureTab")
++        .and_then(|value| value.as_bool())
++        == Some(true)
++    {
++        // GPUI actions stop bubbling unless a handler explicitly propagates.
++        // Keep both focus-navigation actions on this focused element while its
++        // keyDown listener still receives Tab and Shift+Tab.
++        el = el
++            .on_action(|_: &FocusNext, _window, _cx| {})
++            .on_action(|_: &FocusPrevious, _window, _cx| {});
++    }
+ 
+     // Wire up events.
+     // Some events (on_hover, on_click) require a stateful element (.id()),
+diff --git a/packages/native/src/test_renderer.rs b/packages/native/src/test_renderer.rs
+index a9b5d71..90aeea2 100644
+--- a/packages/native/src/test_renderer.rs
++++ b/packages/native/src/test_renderer.rs
+@@ -929,6 +929,11 @@ impl TestGpuixRenderer {
+         self.tree.lock().unwrap().root_id.map(|id| id as f64)
+     }
+ 
++    #[napi]
++    pub fn supports_native_terminal(&self) -> bool {
++        true
++    }
++
+     /// The offscreen window size, so `useWindowSize()` reports the same numbers
+     /// under test as in a real window instead of falling back to a default.
+     #[napi]
+diff --git a/packages/react/jsx-dev-runtime.d.ts b/packages/react/jsx-dev-runtime.d.ts
+index e987c1f..d0613c2 100644
+--- a/packages/react/jsx-dev-runtime.d.ts
++++ b/packages/react/jsx-dev-runtime.d.ts
+@@ -13,6 +13,7 @@ import type {
+   MarkdownProps,
+   Props,
+   SvgProps,
++  TerminalProps,
+   TextareaProps,
+   VirtualListProps,
+ } from "./dist/types/host"
+@@ -40,6 +41,7 @@ export namespace JSX {
+     code: CodeProps
+     diff: DiffProps
+     markdown: MarkdownProps
++    terminal: TerminalProps
+     "virtual-list": VirtualListProps
+   }
+ }
+diff --git a/packages/react/jsx-runtime.d.ts b/packages/react/jsx-runtime.d.ts
+index 1c005b1..a57db33 100644
+--- a/packages/react/jsx-runtime.d.ts
++++ b/packages/react/jsx-runtime.d.ts
+@@ -14,6 +14,7 @@ import type {
+   MarkdownProps,
+   Props,
+   SvgProps,
++  TerminalProps,
+   TextareaProps,
+   VirtualListProps,
+ } from "./dist/types/host"
+@@ -41,6 +42,7 @@ export namespace JSX {
+     code: CodeProps
+     diff: DiffProps
+     markdown: MarkdownProps
++    terminal: TerminalProps
+     "virtual-list": VirtualListProps
+   }
+ }
+diff --git a/packages/react/src/__tests__/floating-controls.test.tsx b/packages/react/src/__tests__/floating-controls.test.tsx
+index 2a93c7a..fa461d2 100644
+--- a/packages/react/src/__tests__/floating-controls.test.tsx
++++ b/packages/react/src/__tests__/floating-controls.test.tsx
+@@ -479,6 +479,44 @@ describeNative("floating controls", () => {
+     expect(testRoot.renderer.getAllText()).toContain("Focused: second")
+   })
+ 
++  it("keeps Tab and Shift+Tab on a control that captures them", () => {
++    const received: string[] = []
++    function Demo() {
++      return (
++        <div style={{ width: 400, height: 160 }}>
++          <div
++            autoFocus
++            tabIndex={0}
++            captureTab
++            style={{ width: 100, height: 32 }}
++            onKeyDown={(event) => received.push(`terminal:${event.key}`)}
++          >
++            Terminal
++          </div>
++          <div
++            tabIndex={0}
++            style={{ width: 100, height: 32 }}
++            onKeyDown={(event) => received.push(`outside:${event.key}`)}
++          >
++            Outside
++          </div>
++        </div>
++      )
++    }
++
++    testRoot.render(<Demo />)
++    testRoot.renderer.simulateKeystrokes("tab a")
++    expect(received.at(-1)).toBe("terminal:a")
++
++    const terminal = testRoot.renderer
++      .findByType("div")
++      .find((element) => element.events.has("keyDown"))!
++    testRoot.renderer.focusElement(terminal.id)
++    received.length = 0
++    testRoot.renderer.simulateKeystrokes("shift-tab b")
++    expect(received.at(-1)).toBe("terminal:b")
++  })
++
+   it("removes an element from tab order when tabIndex is removed", () => {
+     function Demo() {
+       const [secondEnabled, setSecondEnabled] = useState(true)
+diff --git a/packages/react/src/__tests__/terminal.test.tsx b/packages/react/src/__tests__/terminal.test.tsx
+new file mode 100644
+index 0000000..e8f7922
+--- /dev/null
++++ b/packages/react/src/__tests__/terminal.test.tsx
+@@ -0,0 +1,73 @@
++import { afterEach, beforeEach, describe, expect, it } from "vitest"
++import { createTestRoot, hasNativeTestRenderer, type TestRoot } from "../testing.js"
++
++const describeNative = hasNativeTestRenderer ? describe : describe.skip
++
++function frame(text: string, color = "#e7e7e7") {
++  return {
++    cols: 100,
++    rows: 2,
++    cellWidth: 7.83,
++    lineHeight: 17,
++    fontSize: 13,
++    background: "#0b0c0c",
++    cursorColor: "#e7e7e7",
++    cursorX: 0,
++    cursorY: 1,
++    cursorVisible: true,
++    styles: [{
++      color,
++      backgroundColor: "#0b0c0c",
++      fontFamily: "Menlo",
++      fontWeight: 400,
++      italic: false,
++      underline: false,
++      strike: false,
++      fill: false,
++    }],
++    runs: [[0, 0, 100, 0, text]],
++  }
++}
++
++describeNative("custom element: terminal", () => {
++  let root: TestRoot
++
++  beforeEach(() => {
++    root = createTestRoot({ width: 800, height: 50 })
++  })
++
++  afterEach(() => {
++    root.unmount()
++  })
++
++  it("paints a compact fixed-cell frame through one native host", () => {
++    const line = `┌${"─".repeat(98)}┐`
++    root.render(
++      <terminal
++        testId="terminal"
++        frame={frame(line)}
++        style={{ width: 783, height: 34, overflow: "hidden" }}
++      />
++    )
++    root.renderer.flush()
++
++    expect(root.renderer.supportsNativeTerminal()).toBe(true)
++    expect(root.renderer.findByType("terminal")).toHaveLength(1)
++    expect(root.renderer.getPaintedText()).toContain(line)
++    expect(root.renderer.getRetainedElementCount()).toBe(1)
++  })
++
++  it("updates text and style without creating per-cell retained nodes", () => {
++    root.render(
++      <terminal frame={frame("A".repeat(100), "#ff6369")} style={{ width: 783, height: 34 }} />
++    )
++    root.renderer.flush()
++    root.render(
++      <terminal frame={frame("B".repeat(100), "#70d083")} style={{ width: 783, height: 34 }} />
++    )
++    root.renderer.flush()
++
++    expect(root.renderer.getPaintedText()).toContain("B".repeat(100))
++    expect(root.renderer.getRetainedElementCount()).toBe(1)
++  })
++})
+diff --git a/packages/react/src/components/index.ts b/packages/react/src/components/index.ts
+index 548e7ea..fa23e61 100644
+--- a/packages/react/src/components/index.ts
++++ b/packages/react/src/components/index.ts
+@@ -10,6 +10,7 @@ export const gpuixComponents = {
+   img: "img",
+   svg: "svg",
+   canvas: "canvas",
++  terminal: "terminal",
+   input: "input",
+   textarea: "textarea",
+   anchored: "anchored",
+diff --git a/packages/react/src/index.ts b/packages/react/src/index.ts
+index 9e88b09..76a8436 100644
+--- a/packages/react/src/index.ts
++++ b/packages/react/src/index.ts
+@@ -91,6 +91,10 @@ export type {
+   NativeWindowInsets,
+   PublicInstance,
+   StyleDesc,
++  TerminalFrame,
++  TerminalFrameRun,
++  TerminalFrameStyle,
++  TerminalProps,
+ } from "./types/host.js"
+ export { handleGpuixEvent } from "./reconciler/event-registry.js"
+ export {
+diff --git a/packages/react/src/reconciler/host-config.ts b/packages/react/src/reconciler/host-config.ts
+index 471b60a..280bdd9 100644
+--- a/packages/react/src/reconciler/host-config.ts
++++ b/packages/react/src/reconciler/host-config.ts
+@@ -142,6 +142,7 @@ const BUILT_IN_TYPES = new Set(["div", "text"])
+ const UNIVERSAL_PROPS = new Set([
+   "autoFocus",
+   "tabIndex",
++  "captureTab",
+   "motion",
+   "testId",
+   // `highlight` is scoped by where it sits in the tree, so it has to reach a
+diff --git a/packages/react/src/testing.ts b/packages/react/src/testing.ts
+index 064174b..7f0aa33 100644
+--- a/packages/react/src/testing.ts
++++ b/packages/react/src/testing.ts
+@@ -62,6 +62,7 @@ interface NativeTestRendererApi extends NativeRenderer {
+   advanceTime(milliseconds: number): void
+   getRootId(): number | null
+   getWindowSize(): { width: number; height: number }
++  supportsNativeTerminal(): boolean
+   getAllText(): string[]
+   scrollTo(elementId: number, x: number, y: number): void
+   scrollToItem(elementId: number, index: number, offsetInItem?: number): void
+@@ -447,6 +448,10 @@ export class TestRenderer implements NativeRenderer {
+     return this.native.getWindowSize()
+   }
+ 
++  supportsNativeTerminal(): boolean {
++    return this.native.supportsNativeTerminal()
++  }
++
+   // ── Scroll API ──────────────────────────────────────────────────
+ 
+   /** Set the scroll offset of a scrollable element (overflow: "scroll").
+diff --git a/packages/react/src/types/host.ts b/packages/react/src/types/host.ts
+index 022ef20..9d48b5b 100644
+--- a/packages/react/src/types/host.ts
++++ b/packages/react/src/types/host.ts
+@@ -185,6 +185,7 @@ export type ElementType =
+   | "code"
+   | "diff"
+   | "markdown"
++  | "terminal"
+   | "virtual-list"
+ 
+ // ── Theme ────────────────────────────────────────────────────────────
+@@ -417,6 +418,8 @@ export interface Props {
+   autoFocus?: boolean
+   /** Native GPUI tab order. Use 0 for normal keyboard focus. */
+   tabIndex?: number
++  /** Keep Tab and Shift+Tab on this element so its key handler can use them. */
++  captureTab?: boolean
+   /** Stable locator id for automation. */
+   testId?: string
+   /** Internal native animation description used by motion components. */
+@@ -480,6 +483,41 @@ export interface SvgProps extends Props {
+   source?: string
+ }
+ 
++/** One deduplicated style used by a native terminal frame. */
++export interface TerminalFrameStyle {
++  color: string
++  backgroundColor: string
++  fontFamily: string
++  fontWeight?: number
++  italic?: boolean
++  underline?: boolean
++  strike?: boolean
++  fill?: boolean
++}
++
++/** row, column, column count, style index, text */
++export type TerminalFrameRun = readonly [number, number, number, number, string]
++
++/** A complete visible grid painted by the native GPU terminal surface. */
++export interface TerminalFrame {
++  cols: number
++  rows: number
++  cellWidth: number
++  lineHeight: number
++  fontSize: number
++  background: string
++  cursorColor: string
++  cursorX: number
++  cursorY: number
++  cursorVisible: boolean
++  styles: readonly TerminalFrameStyle[]
++  runs: readonly TerminalFrameRun[]
++}
++
++export interface TerminalProps extends Props {
++  frame?: TerminalFrame
++}
++
+ /**
+  * Props for the <code> custom element — a syntax-highlighted code block.
+  *
+@@ -598,6 +636,8 @@ export interface NativeRenderer {
+ 
+   // ── Window API ─────────────────────────────────────────────────
+   getWindowSize?(): { width: number; height: number }
++  /** Whether this renderer includes the single-surface native terminal painter. */
++  supportsNativeTerminal?(): boolean
+   getWindowInsets?(): NativeWindowInsets
+   setWindowTitle?(title: string): void
+   /** Bring the window forward and focus it. Reveals a `show: false` window. */

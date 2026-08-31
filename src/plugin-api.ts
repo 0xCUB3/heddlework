@@ -17,9 +17,11 @@ export type { SessionCatalogService, WorkspaceDiffService } from './workbench/se
 export { workbenchUiRegistryToken } from './ui/extensions.ts'
 export { terminalSessionToken, createTerminalPlugin } from './terminal/plugin.ts'
 export { TerminalSessionService } from './terminal/service.ts'
+export { DEFAULT_TERMINAL_APPEARANCE, terminalAppearancePreferencePath } from './terminal/appearance.ts'
 export { BunPtyBackend, MemoryTerminalBackend, bunTerminalAvailable } from './terminal/backend.ts'
 export type { TerminalBackend, TerminalProcess } from './terminal/backend.ts'
 export type {
+  TerminalAppearance,
   TerminalGridSnapshot,
   TerminalPlacement,
   TerminalServiceSnapshot,

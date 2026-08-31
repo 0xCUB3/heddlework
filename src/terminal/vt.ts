@@ -74,7 +74,7 @@ function freezeCell(cell: MutableCell): TerminalCell {
   return { ch: cell.ch, fg: cloneColor(cell.fg), bg: cloneColor(cell.bg), attrs: cell.attrs }
 }
 
-function rowText(row: readonly MutableCell[]): string {
+function rowText(row: readonly { ch: string; attrs: number }[]): string {
   let text = ''
   for (const cell of row) {
     if (cell.attrs & CELL_SPACER) continue
@@ -112,6 +112,9 @@ export class VtEmulator {
   #osc = ''
   #csi = ''
   #utf8 = new TextDecoder('utf-8', { fatal: false })
+  #synchronizedOutput = false
+  #rowVersions = new WeakMap<MutableCell[], number>()
+  #rowSnapshots = new WeakMap<MutableCell[], { cols: number; version: number; row: TerminalRow }>()
   onOutput?: (data: string) => void
 
   constructor(cols = 80, rows = 24) {
@@ -145,6 +148,10 @@ export class VtEmulator {
     return this.#bracketedPaste
   }
 
+  get synchronizedOutput(): boolean {
+    return this.#synchronizedOutput
+  }
+
   write(input: string | Uint8Array): void {
     const text = typeof input === 'string' ? input : this.#utf8.decode(input, { stream: true })
     for (const char of text) this.#feed(char)
@@ -173,9 +180,7 @@ export class VtEmulator {
       const source = sourceIndex < this.#scrollback.length
         ? this.#scrollback[sourceIndex]!
         : this.#screen[sourceIndex - this.#scrollback.length] ?? blankRow(this.#cols)
-      const cells = source.map((cell) => freezeCell(cell))
-      while (cells.length < this.#cols) cells.push(freezeCell(emptyCell()))
-      viewport.push({ cells: cells.slice(0, this.#cols), text: rowText(source) })
+      viewport.push(this.#snapshotRow(source))
     }
     return {
       cols: this.#cols,
@@ -190,6 +195,17 @@ export class VtEmulator {
       scrollback: this.#scrollback.length,
       scrollOffset: offset,
     }
+  }
+
+  #snapshotRow(source: MutableCell[]): TerminalRow {
+    const version = this.#rowVersions.get(source) ?? 0
+    const cached = this.#rowSnapshots.get(source)
+    if (cached && cached.cols === this.#cols && cached.version === version) return cached.row
+    const cells = source.slice(0, this.#cols).map((cell) => freezeCell(cell))
+    while (cells.length < this.#cols) cells.push(freezeCell(emptyCell()))
+    const row: TerminalRow = { cells, text: rowText(cells) }
+    this.#rowSnapshots.set(source, { cols: this.#cols, version, row })
+    return row
   }
 
   #resizeBuffer(buffer: MutableCell[][], cols: number, rows: number): void {
@@ -341,8 +357,12 @@ export class VtEmulator {
     const width = cellWidth(code)
     if (width === 0) {
       if (this.#x > 0) {
-        const cell = this.#screen[this.#y]![this.#x - 1]!
-        if (!(cell.attrs & CELL_SPACER)) cell.ch += char
+        const row = this.#screen[this.#y]!
+        const cell = row[this.#x - 1]!
+        if (!(cell.attrs & CELL_SPACER)) {
+          cell.ch += char
+          this.#touchRow(row)
+        }
       }
       return
     }
@@ -365,6 +385,7 @@ export class VtEmulator {
     if (width === 2 && this.#x + 1 < this.#cols) {
       row[this.#x + 1] = { ch: ' ', fg: this.#fg, bg: this.#bg, attrs: this.#attrs | CELL_SPACER }
     }
+    this.#touchRow(row)
     this.#x += width
     if (this.#x >= this.#cols) {
       this.#x = this.#cols
@@ -532,6 +553,7 @@ export class VtEmulator {
       else if (param === 7) this.#wrap = enable
       else if (param === 25) this.#cursorVisible = enable
       else if (param === 2004) this.#bracketedPaste = enable
+      else if (param === 2026) this.#synchronizedOutput = enable
       else if (param === 47 || param === 1047) this.#setAltScreen(enable, false)
       else if (param === 1048) {
         if (enable) {
@@ -595,23 +617,27 @@ export class VtEmulator {
     const from = mode === 2 ? 0 : start
     const to = mode === 2 ? this.#cols - 1 : end
     for (let col = from; col <= to; col += 1) row[col] = emptyCell()
+    this.#touchRow(row)
   }
 
   #eraseChars(count: number): void {
     const row = this.#screen[this.#y]!
     for (let index = 0; index < count && this.#x + index < this.#cols; index += 1) row[this.#x + index] = emptyCell()
+    this.#touchRow(row)
   }
 
   #insertBlanks(count: number): void {
     const row = this.#screen[this.#y]!
     for (let index = 0; index < count; index += 1) row.splice(this.#x, 0, emptyCell())
     row.length = this.#cols
+    this.#touchRow(row)
   }
 
   #deleteChars(count: number): void {
     const row = this.#screen[this.#y]!
     row.splice(this.#x, count)
     while (row.length < this.#cols) row.push(emptyCell())
+    this.#touchRow(row)
   }
 
   #insertLines(count: number): void {
@@ -662,6 +688,10 @@ export class VtEmulator {
     if (this.#scrollback.length > MAX_SCROLLBACK) this.#scrollback.splice(0, this.#scrollback.length - MAX_SCROLLBACK)
   }
 
+  #touchRow(row: MutableCell[]): void {
+    this.#rowVersions.set(row, (this.#rowVersions.get(row) ?? 0) + 1)
+  }
+
   #resetPen(): void {
     this.#fg = DEFAULT_FG
     this.#bg = DEFAULT_BG
@@ -681,6 +711,7 @@ export class VtEmulator {
     this.#cursorVisible = true
     this.#applicationCursor = false
     this.#bracketedPaste = false
+    this.#synchronizedOutput = false
     this.#insert = false
     this.#resetPen()
     this.#state = 'ground'

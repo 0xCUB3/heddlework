@@ -29,6 +29,14 @@ export interface TerminalRow {
   readonly text: string
 }
 
+export interface TerminalAppearance {
+  readonly fontFamily: string
+  readonly nerdFontFamily: string
+  readonly ligaturesEnabled: boolean
+  readonly nerdFontEnabled: boolean
+  readonly muteEmojiColors: boolean
+}
+
 export interface TerminalGridSnapshot {
   readonly cols: number
   readonly rows: number
@@ -61,6 +69,7 @@ export interface TerminalServiceSnapshot {
   readonly sessions: readonly TerminalSessionInfo[]
   readonly activeBottomId: TerminalSessionId | undefined
   readonly activeRightId: TerminalSessionId | undefined
+  readonly appearance: TerminalAppearance
   readonly generation: number
 }
 

@@ -1,7 +1,8 @@
-export const TERMINAL_FONT_FAMILY = 'Menlo'
 export const TERMINAL_FONT_SIZE = 13
 export const TERMINAL_LINE_HEIGHT = 17
-export const TERMINAL_CELL_WIDTH = 8
+// Menlo 13 px advances by 7.83 logical pixels in GPUI. Keep PTY sizing and
+// forced-cell native shaping on the same fractional grid to prevent edge drift.
+export const TERMINAL_CELL_WIDTH = 7.83
 export const TERMINAL_PADDING_X = 8
 export const TERMINAL_PADDING_Y = 6
 export const TERMINAL_DOCK_DEFAULT_HEIGHT = 240
