@@ -26,6 +26,9 @@ const DEFAULT_FG_COLOR: TerminalColor = { kind: 'default-fg' }
 const DEFAULT_BG_COLOR: TerminalColor = { kind: 'default-bg' }
 const DEFAULT_FG = TERMINAL_PACKED_COLOR_DEFAULT_FG
 const DEFAULT_BG = TERMINAL_PACKED_COLOR_DEFAULT_BG
+const SYNCHRONIZED_OUTPUT_ENABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68])
+const SYNCHRONIZED_OUTPUT_DISABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c])
+const FRAMEBUFFER_BLOCK_GLYPHS = Array.from({ length: 0x20 }, (_, index) => String.fromCharCode(0x2580 + index))
 
 type ParserState = 'ground' | 'escape' | 'csi' | 'osc' | 'dcs' | 'charset'
 
@@ -205,8 +208,24 @@ export class VtEmulator {
   }
 
   write(input: string | Uint8Array): void {
-    const text = typeof input === 'string' ? input : this.#utf8.decode(input, { stream: true })
     this.#writeVersion += 1
+    if (typeof input !== 'string'
+      && this.#state === 'ground'
+      && input.byteLength >= SYNCHRONIZED_OUTPUT_ENABLE.byteLength
+      && SYNCHRONIZED_OUTPUT_ENABLE.every((byte, index) => input[index] === byte)) {
+      const pending = this.#utf8.decode()
+      if (pending) this.#writeText(pending)
+      const consumed = this.#fastFramebufferBytes(input)
+      if (consumed < input.byteLength) {
+        this.#writeText(this.#utf8.decode(input.subarray(consumed), { stream: true }))
+      }
+      return
+    }
+    const text = typeof input === 'string' ? input : this.#utf8.decode(input, { stream: true })
+    this.#writeText(text)
+  }
+
+  #writeText(text: string): void {
     for (let index = 0; index < text.length;) {
       if (this.#state === 'ground'
         && text.charCodeAt(index) === 0x1b
@@ -528,6 +547,197 @@ export class VtEmulator {
       this.#x = this.#cols
       this.#wrapPending = this.#wrap
     }
+  }
+
+  // Dense synchronized frames are ASCII control records plus three-byte block glyphs.
+  // Parsing those bytes in place avoids decoding several megabytes to a transient UTF-16 string.
+  #fastFramebufferBytes(input: Uint8Array): number {
+    if (this.#insert) return 0
+    this.#synchronizedOutput = true
+    const origin = this.#origin ? this.#scrollTop : 0
+    let index = SYNCHRONIZED_OUTPUT_ENABLE.byteLength
+    let matched = false
+    let attrs = this.#attrs
+    let touchedRow: MutableCell[] | undefined
+    let finalX = this.#x
+    let finalY = this.#y
+
+    records: while (index < input.byteLength) {
+      if (input[index] !== 0x1b || input[index + 1] !== 0x5b) break
+      let scan = index + 2
+      let byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let rowNumber = 0
+      do {
+        rowNumber = rowNumber * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x3b) break
+
+      scan += 1
+      byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let colNumber = 0
+      do {
+        colNumber = colNumber * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x48) break
+      scan += 1
+
+      if (input[scan] !== 0x1b
+        || input[scan + 1] !== 0x5b
+        || input[scan + 2] !== 0x33
+        || input[scan + 3] !== 0x38
+        || input[scan + 4] !== 0x3b
+        || input[scan + 5] !== 0x32
+        || input[scan + 6] !== 0x3b) break
+      scan += 7
+
+      byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let foregroundRed = 0
+      do {
+        foregroundRed = foregroundRed * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x3b) break
+
+      scan += 1
+      byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let foregroundGreen = 0
+      do {
+        foregroundGreen = foregroundGreen * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x3b) break
+
+      scan += 1
+      byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let foregroundBlue = 0
+      do {
+        foregroundBlue = foregroundBlue * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x6d) break
+      scan += 1
+
+      if (input[scan] !== 0x1b
+        || input[scan + 1] !== 0x5b
+        || input[scan + 2] !== 0x34
+        || input[scan + 3] !== 0x38
+        || input[scan + 4] !== 0x3b
+        || input[scan + 5] !== 0x32
+        || input[scan + 6] !== 0x3b) break
+      scan += 7
+
+      byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let backgroundRed = 0
+      do {
+        backgroundRed = backgroundRed * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x3b) break
+
+      scan += 1
+      byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let backgroundGreen = 0
+      do {
+        backgroundGreen = backgroundGreen * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x3b) break
+
+      scan += 1
+      byte = input[scan] ?? -1
+      if (byte < 0x30 || byte > 0x39) break
+      let backgroundBlue = 0
+      do {
+        backgroundBlue = backgroundBlue * 10 + byte - 0x30
+        scan += 1
+        byte = input[scan] ?? -1
+      } while (byte >= 0x30 && byte <= 0x39)
+      if (byte !== 0x6d) break
+      scan += 1
+
+      const glyphStart = scan
+      let runLength = 0
+      while (input[scan] === 0xe2
+        && input[scan + 1] === 0x96
+        && (input[scan + 2] ?? 0) >= 0x80
+        && (input[scan + 2] ?? 0) <= 0x9f) {
+        runLength += 1
+        scan += 3
+      }
+      if (runLength === 0
+        || input[scan] !== 0x1b
+        || input[scan + 1] !== 0x5b
+        || input[scan + 2] !== 0x30
+        || input[scan + 3] !== 0x6d) break
+
+      rowNumber ||= 1
+      colNumber ||= 1
+      let y = origin + rowNumber - 1
+      if (y < 0) y = 0
+      else if (y >= this.#rows) y = this.#rows - 1
+      let x = colNumber - 1
+      if (x < 0) x = 0
+      else if (x >= this.#cols) x = this.#cols - 1
+      if (x + runLength > this.#cols) break records
+
+      if (foregroundRed > 255) foregroundRed = 255
+      if (foregroundGreen > 255) foregroundGreen = 255
+      if (foregroundBlue > 255) foregroundBlue = 255
+      if (backgroundRed > 255) backgroundRed = 255
+      if (backgroundGreen > 255) backgroundGreen = 255
+      if (backgroundBlue > 255) backgroundBlue = 255
+      const foreground = (foregroundRed << 16) | (foregroundGreen << 8) | foregroundBlue
+      const background = (backgroundRed << 16) | (backgroundGreen << 8) | backgroundBlue
+      const row = this.#screen[y]!
+      if (touchedRow && touchedRow !== row) this.#touchRow(touchedRow)
+      touchedRow = row
+      for (let offset = 0; offset < runLength; offset += 1) {
+        const target = row[x + offset]!
+        target.ch = FRAMEBUFFER_BLOCK_GLYPHS[(input[glyphStart + offset * 3 + 2] ?? 0x80) - 0x80]!
+        target.fg = foreground
+        target.bg = background
+        target.attrs = attrs
+      }
+
+      attrs = 0
+      finalY = y
+      finalX = x + runLength
+      index = scan + 4
+      matched = true
+    }
+
+    if (matched) {
+      if (touchedRow) this.#touchRow(touchedRow)
+      this.#y = finalY
+      this.#x = finalX
+      this.#wrapPending = this.#wrap && finalX >= this.#cols
+      this.#resetPen()
+    }
+    let disablesSynchronizedOutput = index + SYNCHRONIZED_OUTPUT_DISABLE.byteLength <= input.byteLength
+    for (let offset = 0; disablesSynchronizedOutput && offset < SYNCHRONIZED_OUTPUT_DISABLE.byteLength; offset += 1) {
+      disablesSynchronizedOutput = input[index + offset] === SYNCHRONIZED_OUTPUT_DISABLE[offset]
+    }
+    if (disablesSynchronizedOutput) {
+      this.#synchronizedOutput = false
+      return index + SYNCHRONIZED_OUTPUT_DISABLE.byteLength
+    }
+    return index
   }
 
   #fastFramebufferRun(text: string, start: number): number {

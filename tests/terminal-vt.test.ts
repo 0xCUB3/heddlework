@@ -56,6 +56,41 @@ describe('VtEmulator', () => {
     expect(complete.snapshot().viewport[2]!.cells[1]?.attrs).toBe(0)
   })
 
+  it('matches synchronized byte-native framebuffer parsing with text and fragmented input', () => {
+    const output = ESC + '[?2026h'
+      + ESC + '[2;3H' + ESC + '[38;2;1;2;3m' + ESC + '[48;2;4;5;6m' + '▀██▖' + ESC + '[0m'
+      + ESC + '[3;2H' + ESC + '[38;2;250;240;230m' + ESC + '[48;2;20;30;40m' + '▙▛' + ESC + '[0m'
+      + ESC + '[?2026l'
+    const text = new VtEmulator(8, 4)
+    const bytes = new VtEmulator(8, 4)
+    const fragmented = new VtEmulator(8, 4)
+    for (const emulator of [text, bytes, fragmented]) emulator.write(ESC + '[1m')
+    text.write(output)
+    const encoded = new TextEncoder().encode(output)
+    bytes.write(encoded)
+    for (let offset = 0; offset < encoded.byteLength; offset += 5) {
+      fragmented.write(encoded.subarray(offset, offset + 5))
+    }
+
+    expect(bytes.snapshot()).toEqual(text.snapshot())
+    expect(fragmented.snapshot()).toEqual(text.snapshot())
+    expect(bytes.synchronizedOutput).toBe(false)
+  })
+
+  it('falls back from byte-native framebuffer parsing at the first unmatched record', () => {
+    const output = ESC + '[?2026h'
+      + ESC + '[1;1H' + ESC + '[38;2;1;2;3m' + ESC + '[48;2;4;5;6m' + '█' + ESC + '[0m'
+      + ESC + '[3;2Hfallback'
+      + ESC + '[?2026l'
+    const text = new VtEmulator(12, 4)
+    const bytes = new VtEmulator(12, 4)
+    text.write(output)
+    bytes.write(new TextEncoder().encode(output))
+
+    expect(bytes.snapshot()).toEqual(text.snapshot())
+    expect(bytes.synchronizedOutput).toBe(false)
+  })
+
   it('parses numeric CSI state incrementally across arbitrary chunks', () => {
     const vt = new VtEmulator(10, 2)
     vt.write(ESC + '[38;2;10')
