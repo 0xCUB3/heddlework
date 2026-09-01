@@ -524,14 +524,17 @@ function startReporter(
     const ptyMbps = (current.ptyBytes - previous.ptyBytes) / MEBIBYTE / elapsedSeconds
     const serviceFps = (current.serviceFrames - previous.serviceFrames) / elapsedSeconds
     const stageFps = (current.nativeStages - previous.nativeStages) / elapsedSeconds
-    const drawFps = (debug.frames - previousDrawFrames) / elapsedSeconds
+    const drawDelta = debug.frames - previousDrawFrames
+    const stageDelta = current.nativeStages - previous.nativeStages
+    const drawFps = drawDelta / elapsedSeconds
+    const stableLayerPercent = stageDelta > 0 ? Math.max(0, 1 - drawDelta / stageDelta) * 100 : 0
     const tickFps = (current.ticks - previous.ticks) / elapsedSeconds
     const tickWallPercent = (current.tickWallMs - previous.tickWallMs) / (elapsedSeconds * 1_000) * 100
     const distributions = telemetry.distributions()
     console.log(
       `[gpuix-terminal] pty=${ptyFps.toFixed(1)}fps/${ptyMbps.toFixed(1)}MiB/s` +
       ` service=${serviceFps.toFixed(1)} stage=${stageFps.toFixed(1)} draw=${drawFps.toFixed(1)}fps` +
-      ` tick=${tickFps.toFixed(1)}Hz/${tickWallPercent.toFixed(1)}%-wall cpu=${cpuPercent.toFixed(1)}%` +
+      ` stable-layer=${stableLayerPercent.toFixed(0)}% tick=${tickFps.toFixed(1)}Hz/${tickWallPercent.toFixed(1)}%-wall cpu=${cpuPercent.toFixed(1)}%` +
       ` project-p90=${(distributions.serviceToStageStartMs?.p90Ms ?? 0).toFixed(2)}ms` +
       ` napi-p90=${(distributions.nativeStageCallMs?.p90Ms ?? 0).toFixed(2)}ms` +
       ` gpui-p90=${(debug.p90Ms ?? 0).toFixed(2)}ms` +
@@ -558,6 +561,8 @@ function createReport(
   const counts = telemetry.counts()
   const debug = safeDebugStats(renderer, drawFrameBaseline)
   const drawFrames = Math.max(0, debug.frames - drawFrameBaseline)
+  const gpuiDrawsPerNativeStage = drawFrames / Math.max(1, counts.nativeStages)
+  const stableLayerDrawAvoidance = counts.nativeStages > 0 ? Math.max(0, 1 - gpuiDrawsPerNativeStage) : 0
   const window = safeWindowSize(renderer, { width: config.width, height: config.height })
   const session = service.getStateSnapshot().sessions.find((candidate) => candidate.id === sessionId)
   const finalGrid = service.grid(sessionId)
@@ -626,11 +631,13 @@ function createReport(
     ratios: {
       serviceFramesPerPtyCallback: round(counts.serviceFrames / Math.max(1, counts.ptyCallbacks)),
       nativeStagesPerServiceFrame: round(counts.nativeStages / Math.max(1, counts.serviceFrames)),
-      gpuiDrawsPerNativeStage: round(drawFrames / Math.max(1, counts.nativeStages)),
+      gpuiDrawsPerNativeStage: round(gpuiDrawsPerNativeStage),
+      stableLayerDrawAvoidance: round(stableLayerDrawAvoidance),
     },
     diagnostics: {
       serviceToNativeOneToOne: counts.serviceFrames === counts.nativeStages,
       nativeToGpuiOneToOne: counts.nativeStages === drawFrames,
+      stableLayerActive: counts.nativeStages > 0 && stableLayerDrawAvoidance > 0,
       animationDetachedFromReact: counts.reactCommits === 0,
       macTickWallStarved: renderer.requiresTick() && counts.tickWallMs / elapsedMs >= 0.5,
       gpuiDrawP90Within16_7Ms: (debug.p90Ms ?? 0) <= 16.7,

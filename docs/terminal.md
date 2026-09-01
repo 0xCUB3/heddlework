@@ -112,7 +112,15 @@ Light mode enforces a 4.5:1 minimum foreground/background contrast ratio using W
 
 ## GPUIX focus boundary
 
-GPUI resolves a matching `FocusNext`/`FocusPrevious` action before raw `keyDown` dispatch. Merely swallowing that action keeps focus in the terminal but also loses the Tab byte. The terminal input therefore sets the native `captureTab` host prop, whose action handler both suppresses traversal and emits an equivalent Tab or Shift+Tab `keyDown` payload. `patches/gpuix-0.6.0-heddlework.patch` contains the tested GPUIX 0.6.0 bridge and terminal primitive, including native/React typings, direct binary frame staging, renderer capability detection, documentation, and regressions that assert the captured key itself. The application feature-detects both `supportsNativeTerminal()` and `setTerminalFrame()` and remains buildable against an unpatched package.
+GPUI resolves a matching `FocusNext`/`FocusPrevious` action before raw `keyDown` dispatch. Merely swallowing that action keeps focus in the terminal but also loses the Tab byte. The terminal input therefore sets the native `captureTab` host prop, whose action handler both suppresses traversal and emits an equivalent Tab or Shift+Tab `keyDown` payload. `patches/gpuix-0.6.0-heddlework.patch` contains the tested GPUIX 0.6.0 bridge and terminal primitive, including native/React typings, direct binary frame staging, stable atlas presentation, the nonblocking AppKit pump, renderer capability detection, documentation, and regressions that assert the captured key itself. The application feature-detects both `supportsNativeTerminal()` and `setTerminalFrame()` and remains buildable against an unpatched package.
+
+## Native frame pipeline
+
+The desktop renderer keeps framebuffer backgrounds and block graphics in one stable nearest-sampled atlas image. After the first paint, GPUIX prepares the newest packed frame at the NAPI boundary and compares only primitives that remain in the GPUI scene: shaped text, visible cursor, dimensions, and text geometry. Box-drawing backgrounds are excluded because the updated image already owns those pixels; foreground and glyph changes are not.
+
+When that overlay is unchanged on macOS, GPUIX updates the existing atlas tile and presents the current scene directly. The terminal frame therefore avoids React commits, root invalidation, retained-tree conversion, layout, prepaint, paint, and scene rebuilding. Overlay changes and failed atlas updates use the full path, and the latest prepared frame remains available for any unrelated redraw.
+
+The embedded AppKit pump drains pending native events and ready CoreFoundation sources without waiting for a display-link wake. This matters because a blocking 8 ms polling loop previously occupied about 91% of Bun's wall time and reduced the Golden Star workload to roughly 13 staged frames per second. The nonblocking pump returns in well under a millisecond in the same harness and lets the terminal track the raw PTY producer ceiling. `bun run benchmark:terminal:gpuix -- --fullscreen --frame-ms 8 --duration 8` reports PTY, service, native-stage, GPUI-draw, stable-layer avoidance, tick-wall, and CPU rates for regressions.
 
 ## Web and mobile path
 

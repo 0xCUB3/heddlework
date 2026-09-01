@@ -1,6 +1,6 @@
 diff --git a/.changeset/quiet-terminals-capture-tabs.md b/.changeset/quiet-terminals-capture-tabs.md
 new file mode 100644
-index 0000000..c87c492
+index 0000000..810a694
 --- /dev/null
 +++ b/.changeset/quiet-terminals-capture-tabs.md
 @@ -0,0 +1,6 @@
@@ -9,9 +9,9 @@ index 0000000..c87c492
 +"@gpuix/react": patch
 +---
 +
-+Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a packed fixed-cell terminal element backed by a persistent nearest-sampled quarter-cell texture, cached shaping, direct GPUI glyph-atlas painting, and a latest-raw-frame binary mailbox.
++Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, add a packed fixed-cell terminal with stable atlas updates and cached-scene presentation, and keep the embedded macOS AppKit pump nonblocking for PTY and timer callbacks.
 diff --git a/README.md b/README.md
-index 0eb922b..264cc8d 100644
+index 0eb922b..d0b8403 100644
 --- a/README.md
 +++ b/README.md
 @@ -41,7 +41,7 @@ bun add -d @types/react typescript
@@ -23,7 +23,21 @@ index 0eb922b..264cc8d 100644
  typecheck.
  
  ```json
-@@ -1749,6 +1749,40 @@ assert the geometry without a screenshot. Zed's own editor paints search
+@@ -672,8 +672,11 @@ This is a remount, not React Refresh. Keeping hook state needs Bun to inject
+ Native `.node` edits still need a rebuild. See [Developing the Rust side](#developing-the-rust-side).
+ 
+ On **macOS**, `startFrameLoop` calls `renderer.tick()` at a fixed rate (~125fps by
+-default). This pumps AppKit on the process main thread without blocking Node. Pass
+-`{ frameMs }` to change the rate, and call `.stop()` on the returned handle to end it.
++default). Each tick drains pending NSEvents and ready CoreFoundation sources without
++entering AppKit's blocking run loop, so Bun can continue servicing PTYs, timers,
++promises, and sockets between polls. Pass `{ frameMs }` to change the rate, and call
++`.stop()` on the returned handle to end it. Even an unexpectedly long tick yields at
++least 4ms before the next poll.
+ 
+ On **Windows and Linux**, GPUI runs its normal blocking native event loop on one
+ dedicated Rust UI thread. Node sends in-process commands to that thread, so
+@@ -1749,6 +1752,42 @@ assert the geometry without a screenshot. Zed's own editor paints search
  highlights manually for the same reason.
  </details>
  
@@ -57,14 +71,16 @@ index 0eb922b..264cc8d 100644
 +/>
 +```
 +
-+Native applications can avoid base64 and React mutation JSON by rendering the host without a `frame` prop, retaining its host ID, and calling `renderer.setTerminalFrame(id, JSON.stringify(metadata), cells)`. `cells` is the raw buffer (a Node `Buffer` for the NAPI renderer, or `Uint8Array` through the React renderer contract); `metadata` contains every field above except `cells`. Feature-detect the optional method and use the complete prop as fallback. The native mailbox validates and copies each arrival but retains only its latest raw payload. Cell decoding, block rasterization, and text-run construction happen once when GPUI consumes that payload, so superseded source frames do not build a CPU, upload, or presentation backlog.
++Native applications can avoid base64 and React mutation JSON by rendering the host without a `frame` prop, retaining its host ID, and calling `renderer.setTerminalFrame(id, JSON.stringify(metadata), cells)`. `cells` is the raw buffer (a Node `Buffer` for the NAPI renderer, or `Uint8Array` through the React renderer contract); `metadata` contains every field above except `cells`. Feature-detect the optional method and use the complete prop as fallback. Before the element's first paint, the mailbox validates and copies arrivals while retaining only the latest raw payload. Once the element is active, staging prepares only the latest decoded frame and compares its visible text/cursor overlay with the frame already in the scene.
 +
-+The painter decodes the frame once and uploads one nearest-sampled texture at two pixels per cell axis. Animated direct frames retain their image identity and update a same-sized Metal, WGPU, or DirectX atlas tile in place instead of deallocating and reallocating it every paint. Backgrounds occupy all four quarter-cell pixels; half blocks, quadrants, and shades replace the corresponding pixels with the foreground, bypassing text shaping for framebuffer graphics. Remaining text is shaped independently of ANSI colour and paints GPUI's cached monochrome glyph-atlas coverage directly with each run's foreground, so colour animation does not reshape text or create a second atlas. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries; feature-detect `renderer.setTerminalFrame()` independently because older native-terminal builds support only the base64 prop.
++The painter uploads one nearest-sampled texture at two pixels per cell axis. Animated direct frames retain their image identity and update a same-sized Metal, WGPU, or DirectX atlas tile in place instead of deallocating and reallocating it every paint. Backgrounds occupy all four quarter-cell pixels; half blocks, quadrants, and shades replace the corresponding pixels with the foreground, bypassing text shaping for framebuffer graphics. Remaining text is shaped independently of ANSI colour and paints GPUI's cached monochrome glyph-atlas coverage directly with each run's foreground, so colour animation does not reshape text or create a second atlas. Box-drawing runs ignore cell backgrounds that are already owned by the texture, while visible foreground or glyph changes remain part of the overlay identity. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph.
++
++On macOS, an unchanged overlay lets `setTerminalFrame` overwrite the stable atlas tile and present the current scene directly. It does not invalidate the root, rebuild retained views, run layout/prepaint/paint, or clone the workbench scene. Text, cursor, geometry, or dimension changes fall back to a normal full draw, as does an atlas update failure. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries; feature-detect `renderer.setTerminalFrame()` independently because older native-terminal builds support only the base64 prop.
 +
  ## Native text components
  
  Three elements render text with Syntect syntax highlighting computed in
-@@ -2011,6 +2045,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
+@@ -2011,6 +2050,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
  automatically. A listener alone does not put a `div` in the Tab order; add
  `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
  
@@ -79,7 +95,7 @@ index 0eb922b..264cc8d 100644
  A node that listens for both `onMouseDown` and `onMouseMove` **captures the
  pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
  `onMouseMove` and `onMouseUp` keep firing after the pointer leaves the hitbox,
-@@ -2556,6 +2598,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
+@@ -2556,6 +2603,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
  - [x] Image and SVG elements (`<img>`, `<svg>`)
  - [x] Virtual lists (`<virtual-list>`)
  - [x] Native text components (`<code>`, `<diff>`, `<markdown>`)
@@ -163,16 +179,16 @@ index b3811c1..6cd7461 100644
  
 diff --git a/packages/native/src/custom_elements/terminal.rs b/packages/native/src/custom_elements/terminal.rs
 new file mode 100644
-index 0000000..012e1ed
+index 0000000..4eafff2
 --- /dev/null
 +++ b/packages/native/src/custom_elements/terminal.rs
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,960 @@
 +use std::{
 +    collections::HashMap,
 +    sync::{Arc, Mutex, OnceLock},
 +};
 +
-+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
++use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 +use serde::Deserialize;
 +
 +use super::{CustomElement, CustomElementFactory, CustomRenderContext};
@@ -232,7 +248,7 @@ index 0000000..012e1ed
 +    flags: u16,
 +}
 +
-+#[derive(Clone, Debug)]
++#[derive(Clone, Debug, PartialEq)]
 +struct PaintRun {
 +    row: usize,
 +    column: usize,
@@ -242,18 +258,49 @@ index 0000000..012e1ed
 +    flags: u16,
 +    font_family: String,
 +    text: String,
++    box_drawing: bool,
 +}
 +
 +impl PaintRun {
-+    fn can_append(&self, cell: PackedCell, column: usize, font_family: &str) -> bool {
++    fn can_append(
++        &self,
++        cell: PackedCell,
++        column: usize,
++        font_family: &str,
++        box_drawing: bool,
++    ) -> bool {
 +        self.column + self.columns == column
 +            && self.foreground == cell.foreground
-+            && self.background == cell.background
++            && (box_drawing || self.background == cell.background)
 +            && self.flags == cell.flags
 +            && self.flags & CELL_WIDE == 0
 +            && cell.flags & CELL_WIDE == 0
 +            && self.font_family == font_family
++            && self.box_drawing == box_drawing
 +    }
++}
++
++#[derive(Debug, PartialEq)]
++struct OverlayCell {
++    row: usize,
++    column: usize,
++    columns: usize,
++    glyph: u32,
++    foreground: u32,
++    background: Option<u32>,
++    flags: u16,
++    font_family: String,
++    text: String,
++}
++
++#[derive(Debug, PartialEq)]
++struct OverlayKey {
++    cell_width: u32,
++    line_height: u32,
++    font_size: u32,
++    ligatures_enabled: bool,
++    cursor: Option<(usize, usize, String)>,
++    cells: Vec<OverlayCell>,
 +}
 +
 +struct TerminalFrame {
@@ -267,7 +314,8 @@ index 0000000..012e1ed
 +    cursor_x: usize,
 +    cursor_y: usize,
 +    cursor_visible: bool,
-+    runs: Vec<PaintRun>,
++    runs: Arc<Vec<PaintRun>>,
++    overlay_key: Arc<OverlayKey>,
 +    background_image: Arc<gpui::RenderImage>,
 +}
 +
@@ -295,7 +343,18 @@ index 0000000..012e1ed
 +            background_image.id = image_id;
 +        }
 +        let background_image = Arc::new(background_image);
-+        let runs = build_runs(&frame, &cells);
++        let runs = Arc::new(build_runs(&frame, &cells));
++        let cursor =
++            (frame.cursor_visible && frame.cursor_x < frame.cols && frame.cursor_y < frame.rows)
++                .then(|| (frame.cursor_x, frame.cursor_y, frame.cursor_color.clone()));
++        let overlay_key = Arc::new(OverlayKey {
++            cell_width: frame.cell_width.max(1.0).to_bits(),
++            line_height: frame.line_height.max(1.0).to_bits(),
++            font_size: frame.font_size.max(1.0).to_bits(),
++            ligatures_enabled: frame.ligatures_enabled,
++            cursor,
++            cells: build_overlay_cells(&frame, &cells),
++        });
 +        Some(Self {
 +            cols: frame.cols,
 +            rows: frame.rows,
@@ -308,6 +367,7 @@ index 0000000..012e1ed
 +            cursor_y: frame.cursor_y,
 +            cursor_visible: frame.cursor_visible,
 +            runs,
++            overlay_key,
 +            background_image,
 +        })
 +    }
@@ -335,17 +395,35 @@ index 0000000..012e1ed
 +    )
 +}
 +
-+struct StagedFrame {
-+    metadata: WireFrame,
-+    cells: Vec<u8>,
++enum StagedFrame {
++    Raw { metadata: WireFrame, cells: Vec<u8> },
++    Prepared(TerminalFrame),
 +}
 +
 +impl StagedFrame {
 +    fn into_frame(self, image_id: Option<gpui::ImageId>) -> Option<TerminalFrame> {
-+        let count = self.metadata.cols.checked_mul(self.metadata.rows)?;
-+        let cells = decode_cell_bytes(&self.cells, count)?;
-+        TerminalFrame::from_cells(self.metadata, cells, image_id)
++        match self {
++            Self::Raw { metadata, cells } => {
++                let count = metadata.cols.checked_mul(metadata.rows)?;
++                let cells = decode_cell_bytes(&cells, count)?;
++                TerminalFrame::from_cells(metadata, cells, image_id)
++            }
++            Self::Prepared(frame) => Some(frame),
++        }
 +    }
++}
++
++#[derive(Clone)]
++struct ActiveFrame {
++    image_id: gpui::ImageId,
++    cols: usize,
++    rows: usize,
++    overlay_key: Arc<OverlayKey>,
++}
++
++pub(crate) enum FrameUpdate {
++    Invalidate,
++    Repaint(Arc<gpui::RenderImage>),
 +}
 +
 +fn staged_frames() -> &'static Mutex<HashMap<u64, StagedFrame>> {
@@ -353,7 +431,12 @@ index 0000000..012e1ed
 +    FRAMES.get_or_init(|| Mutex::new(HashMap::new()))
 +}
 +
-+pub(crate) fn stage_frame(id: u64, metadata: &str, bytes: &[u8]) -> Result<(), String> {
++fn active_frames() -> &'static Mutex<HashMap<u64, ActiveFrame>> {
++    static FRAMES: OnceLock<Mutex<HashMap<u64, ActiveFrame>>> = OnceLock::new();
++    FRAMES.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++pub(crate) fn stage_frame(id: u64, metadata: &str, bytes: &[u8]) -> Result<FrameUpdate, String> {
 +    let metadata: WireFrame = serde_json::from_str(metadata)
 +        .map_err(|error| format!("Invalid terminal frame metadata: {error}"))?;
 +    if metadata.version != 2 || metadata.cols == 0 || metadata.rows == 0 {
@@ -380,14 +463,33 @@ index 0000000..012e1ed
 +        })
 +        .and_then(|pixels| pixels.checked_mul(4))
 +        .ok_or_else(|| "Terminal frame dimensions overflow".to_string())?;
-+    staged_frames().lock().unwrap().insert(
-+        id,
-+        StagedFrame {
-+            metadata,
-+            cells: bytes.to_vec(),
-+        },
-+    );
-+    Ok(())
++
++    let active = active_frames().lock().unwrap().get(&id).cloned();
++    let (staged, update) = if let Some(active) = active {
++        let cells = decode_cell_bytes(bytes, count)
++            .ok_or_else(|| "Terminal frame cell payload is invalid".to_string())?;
++        let frame = TerminalFrame::from_cells(metadata, cells, Some(active.image_id))
++            .ok_or_else(|| "Terminal frame could not be prepared".to_string())?;
++        let can_repaint = active.cols == frame.cols
++            && active.rows == frame.rows
++            && active.overlay_key.as_ref() == frame.overlay_key.as_ref();
++        let update = if can_repaint {
++            FrameUpdate::Repaint(frame.background_image.clone())
++        } else {
++            FrameUpdate::Invalidate
++        };
++        (StagedFrame::Prepared(frame), update)
++    } else {
++        (
++            StagedFrame::Raw {
++                metadata,
++                cells: bytes.to_vec(),
++            },
++            FrameUpdate::Invalidate,
++        )
++    };
++    staged_frames().lock().unwrap().insert(id, staged);
++    Ok(update)
 +}
 +
 +fn cell_image(frame: &WireFrame, cells: &[PackedCell]) -> Option<gpui::RenderImage> {
@@ -479,8 +581,9 @@ index 0000000..012e1ed
 +            } else {
 +                frame.font_family.as_str()
 +            };
-+            if let Some(index) =
-+                last_run.filter(|index| runs[*index].can_append(cell, column, font_family))
++            let box_drawing = is_box_drawing(cell.glyph);
++            if let Some(index) = last_run
++                .filter(|index| runs[*index].can_append(cell, column, font_family, box_drawing))
 +            {
 +                if !frame.ligatures_enabled {
 +                    runs[index].text.push('\u{200c}');
@@ -493,10 +596,11 @@ index 0000000..012e1ed
 +                    column,
 +                    columns,
 +                    foreground: cell.foreground,
-+                    background: cell.background,
++                    background: if box_drawing { 0 } else { cell.background },
 +                    flags: cell.flags,
 +                    font_family: font_family.to_string(),
 +                    text,
++                    box_drawing,
 +                });
 +                last_run = Some(runs.len() - 1);
 +            }
@@ -504,6 +608,56 @@ index 0000000..012e1ed
 +        }
 +    }
 +    runs
++}
++
++fn build_overlay_cells(frame: &WireFrame, cells: &[PackedCell]) -> Vec<OverlayCell> {
++    let mut overlay = Vec::new();
++    for row in 0..frame.rows {
++        let mut column = 0;
++        while column < frame.cols {
++            let cell = cells[row * frame.cols + column];
++            if cell.flags & CELL_SPACER != 0 {
++                column += 1;
++                continue;
++            }
++            let columns = if cell.flags & CELL_WIDE != 0 { 2 } else { 1 };
++            let decorated = cell.flags & (CELL_UNDERLINE | CELL_STRIKE) != 0;
++            if cell.flags & CELL_FILL != 0 || block_mask(cell.glyph).is_some() {
++                column += columns;
++                continue;
++            }
++            let text = glyph_text(cell.glyph, &frame.graphemes);
++            if text.is_empty()
++                || (text.chars().all(char::is_whitespace) && !decorated)
++                || (cell.foreground == cell.background && !decorated)
++            {
++                column += columns;
++                continue;
++            }
++            let font_family = if cell.flags & CELL_NERD_FONT != 0 {
++                frame.nerd_font_family.clone()
++            } else {
++                frame.font_family.clone()
++            };
++            overlay.push(OverlayCell {
++                row,
++                column,
++                columns,
++                glyph: cell.glyph,
++                foreground: cell.foreground,
++                background: (!is_box_drawing(cell.glyph)).then_some(cell.background),
++                flags: cell.flags,
++                font_family,
++                text,
++            });
++            column += columns;
++        }
++    }
++    overlay
++}
++
++fn is_box_drawing(glyph: u32) -> bool {
++    (0x2500..=0x257f).contains(&glyph)
 +}
 +
 +fn glyph_text(glyph: u32, graphemes: &[String]) -> String {
@@ -593,6 +747,7 @@ index 0000000..012e1ed
 +            let _ = window.drop_image(image);
 +        }
 +        let Some(frame) = self.frame.clone() else {
++            active_frames().lock().unwrap().remove(&self.id);
 +            let empty = super::custom_surface(
 +                gpui::div().id(gpui::SharedString::from(format!(
 +                    "__gpuix_terminal_{}",
@@ -602,6 +757,15 @@ index 0000000..012e1ed
 +            );
 +            return empty.into_any_element();
 +        };
++        active_frames().lock().unwrap().insert(
++            self.id,
++            ActiveFrame {
++                image_id: frame.background_image.id,
++                cols: frame.cols,
++                rows: frame.rows,
++                overlay_key: frame.overlay_key.clone(),
++            },
++        );
 +        let shape_cache = self.shape_cache.clone();
 +        let canvas = gpui::canvas(
 +            move |_bounds, window, _cx| {
@@ -610,7 +774,7 @@ index 0000000..012e1ed
 +                if cache.len() > SHAPE_CACHE_LIMIT {
 +                    cache.clear();
 +                }
-+                for run in &frame.runs {
++                for run in frame.runs.iter() {
 +                    let key = ShapeKey {
 +                        font_family: run.font_family.clone(),
 +                        font_weight: if run.flags & CELL_BOLD != 0 { 700 } else { 400 },
@@ -773,6 +937,7 @@ index 0000000..012e1ed
 +
 +    fn destroy(&mut self) {
 +        staged_frames().lock().unwrap().remove(&self.id);
++        active_frames().lock().unwrap().remove(&self.id);
 +        self.frame = None;
 +        self.stale_images.clear();
 +        self.shape_cache.lock().unwrap().clear();
@@ -781,11 +946,17 @@ index 0000000..012e1ed
 +
 +#[cfg(test)]
 +mod tests {
-+    use super::{block_mask, stage_frame, staged_frames, CELL_BYTES};
++    use super::{
++        ActiveFrame, CELL_BYTES, FrameUpdate, active_frames, block_mask, stage_frame, staged_frames,
++    };
 +
 +    fn metadata(cursor_x: usize) -> String {
++        metadata_with_cursor(cursor_x, true)
++    }
++
++    fn metadata_with_cursor(cursor_x: usize, cursor_visible: bool) -> String {
 +        format!(
-+            r##"{{"version":2,"cols":1,"rows":1,"cellWidth":8,"lineHeight":18,"fontSize":13,"background":"#000000","cursorColor":"#ffffff","cursorX":{cursor_x},"cursorY":0,"cursorVisible":true,"fontFamily":"Menlo","nerdFontFamily":"Symbols Nerd Font Mono","ligaturesEnabled":true,"graphemes":[]}}"##
++            r##"{{"version":2,"cols":1,"rows":1,"cellWidth":8,"lineHeight":18,"fontSize":13,"background":"#000000","cursorColor":"#ffffff","cursorX":{cursor_x},"cursorY":0,"cursorVisible":{cursor_visible},"fontFamily":"Menlo","nerdFontFamily":"Symbols Nerd Font Mono","ligaturesEnabled":true,"graphemes":[]}}"##
 +        )
 +    }
 +
@@ -798,6 +969,112 @@ index 0000000..012e1ed
 +        assert_eq!(block_mask('▙' as u32), Some(0b1101));
 +        assert_eq!(block_mask('▟' as u32), Some(0b1110));
 +        assert_eq!(block_mask('A' as u32), None);
++    }
++
++    #[test]
++    fn repaints_stable_text_overlays_without_invalidating_the_view_tree() {
++        const ID: u64 = u64::MAX - 8;
++        staged_frames().lock().unwrap().remove(&ID);
++        active_frames().lock().unwrap().remove(&ID);
++
++        let metadata = metadata_with_cursor(0, false).replace("\"cols\":1", "\"cols\":2");
++        let mut cells = vec![0; CELL_BYTES * 2];
++        cells[0..4].copy_from_slice(&(u32::from('A')).to_le_bytes());
++        cells[4..8].copy_from_slice(&0x00ff_ffff_u32.to_le_bytes());
++        cells[CELL_BYTES..CELL_BYTES + 4].copy_from_slice(&(u32::from('▀')).to_le_bytes());
++        cells[CELL_BYTES + 4..CELL_BYTES + 8].copy_from_slice(&0x0000_00ff_u32.to_le_bytes());
++
++        assert!(matches!(
++            stage_frame(ID, &metadata, &cells).unwrap(),
++            FrameUpdate::Invalidate
++        ));
++        let frame = staged_frames()
++            .lock()
++            .unwrap()
++            .remove(&ID)
++            .unwrap()
++            .into_frame(None)
++            .unwrap();
++        let image_id = frame.background_image.id;
++        active_frames().lock().unwrap().insert(
++            ID,
++            ActiveFrame {
++                image_id,
++                cols: frame.cols,
++                rows: frame.rows,
++                overlay_key: frame.overlay_key,
++            },
++        );
++
++        cells[CELL_BYTES + 4..CELL_BYTES + 8].copy_from_slice(&0x0000_ff00_u32.to_le_bytes());
++        match stage_frame(ID, &metadata, &cells).unwrap() {
++            FrameUpdate::Repaint(image) => assert_eq!(image.id, image_id),
++            FrameUpdate::Invalidate => panic!("unchanged text overlay invalidated the view tree"),
++        }
++
++        cells[0..4].copy_from_slice(&(u32::from('B')).to_le_bytes());
++        assert!(matches!(
++            stage_frame(ID, &metadata, &cells).unwrap(),
++            FrameUpdate::Invalidate
++        ));
++
++        staged_frames().lock().unwrap().remove(&ID);
++        active_frames().lock().unwrap().remove(&ID);
++    }
++
++    #[test]
++    fn ignores_texture_owned_background_changes_behind_box_glyphs() {
++        const ID: u64 = u64::MAX - 9;
++        staged_frames().lock().unwrap().remove(&ID);
++        active_frames().lock().unwrap().remove(&ID);
++
++        let metadata = metadata_with_cursor(0, false);
++        let mut cells = vec![0; CELL_BYTES];
++        cells[0..4].copy_from_slice(&(u32::from('═')).to_le_bytes());
++        cells[4..8].copy_from_slice(&0x00ff_ffff_u32.to_le_bytes());
++
++        stage_frame(ID, &metadata, &cells).unwrap();
++        let frame = staged_frames()
++            .lock()
++            .unwrap()
++            .remove(&ID)
++            .unwrap()
++            .into_frame(None)
++            .unwrap();
++        let image_id = frame.background_image.id;
++        let runs = frame.runs.clone();
++        active_frames().lock().unwrap().insert(
++            ID,
++            ActiveFrame {
++                image_id,
++                cols: frame.cols,
++                rows: frame.rows,
++                overlay_key: frame.overlay_key,
++            },
++        );
++
++        cells[8..12].copy_from_slice(&0x0000_00ff_u32.to_le_bytes());
++        assert!(matches!(
++            stage_frame(ID, &metadata, &cells).unwrap(),
++            FrameUpdate::Repaint(_)
++        ));
++        let replacement = staged_frames()
++            .lock()
++            .unwrap()
++            .remove(&ID)
++            .unwrap()
++            .into_frame(Some(image_id))
++            .unwrap();
++        assert_eq!(replacement.runs, runs);
++
++        cells[4..8].copy_from_slice(&0x0000_ff00_u32.to_le_bytes());
++        assert!(matches!(
++            stage_frame(ID, &metadata, &cells).unwrap(),
++            FrameUpdate::Invalidate
++        ));
++
++        staged_frames().lock().unwrap().remove(&ID);
++        active_frames().lock().unwrap().remove(&ID);
 +    }
 +
 +    #[test]
@@ -867,10 +1144,10 @@ index 0000000..012e1ed
 +    Ok(())
 +}
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
-index 9620967..19ce301 100644
+index 9620967..5da476c 100644
 --- a/packages/native/src/renderer.rs
 +++ b/packages/native/src/renderer.rs
-@@ -1183,6 +1183,24 @@ impl GpuixRenderer {
+@@ -1183,6 +1183,40 @@ impl GpuixRenderer {
          cfg!(target_os = "macos")
      }
  
@@ -887,15 +1164,31 @@ index 9620967..19ce301 100644
 +        cells: Buffer,
 +    ) -> Result<()> {
 +        let id = to_element_id(element_id)?;
-+        crate::custom_elements::terminal::stage_frame(id, &metadata, cells.as_ref())
++        let update = crate::custom_elements::terminal::stage_frame(id, &metadata, cells.as_ref())
 +            .map_err(Error::from_reason)?;
++
++        #[cfg(target_os = "macos")]
++        if let crate::custom_elements::terminal::FrameUpdate::Repaint(image) = update {
++            let updated = update_window_without_view(move |window, _cx| {
++                if window.update_image(image).is_ok() {
++                    window.present_cached_frame();
++                    true
++                } else {
++                    false
++                }
++            })?;
++            if updated {
++                return Ok(());
++            }
++        }
++
 +        self.request_invalidate()
 +    }
 +
      /// The paintable size of the window in logical pixels, excluding any
      /// platform title bar. This used to answer a hardcoded 800x600, so anything
      /// that turned a mouse position into layout coordinates pointed at the
-@@ -2257,6 +2275,11 @@ impl WebGpuixRenderer {
+@@ -2257,6 +2291,11 @@ impl WebGpuixRenderer {
  
      pub fn tick(&self) {}
  
@@ -907,7 +1200,7 @@ index 9620967..19ce301 100644
      #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
      pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
          let window = web_sys::window()
-@@ -4096,6 +4119,30 @@ pub(crate) fn build_host_container(
+@@ -4096,6 +4135,30 @@ pub(crate) fn build_host_container(
      {
          el = el.tab_index(tab_index).tab_stop(tab_index >= 0);
      }
@@ -938,7 +1231,7 @@ index 9620967..19ce301 100644
  
      // Wire up events.
      // Some events (on_hover, on_click) require a stateful element (.id()),
-@@ -4738,6 +4785,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
+@@ -4738,6 +4801,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
  /// caller customize it via a closure, then sends it through the callback.
  /// Production: queues on Node.js event loop via ThreadsafeFunction.
  /// Tests: pushes to a synchronous Vec for drainEvents().
@@ -961,10 +1254,10 @@ index 9620967..19ce301 100644
      callback: &Option<EventCallback>,
      element_id: u64,
 diff --git a/packages/native/src/test_renderer.rs b/packages/native/src/test_renderer.rs
-index a9b5d71..1672fd2 100644
+index a9b5d71..325356a 100644
 --- a/packages/native/src/test_renderer.rs
 +++ b/packages/native/src/test_renderer.rs
-@@ -929,6 +929,23 @@ impl TestGpuixRenderer {
+@@ -929,6 +929,24 @@ impl TestGpuixRenderer {
          self.tree.lock().unwrap().root_id.map(|id| id as f64)
      }
  
@@ -982,6 +1275,7 @@ index a9b5d71..1672fd2 100644
 +    ) -> Result<()> {
 +        let id = to_element_id(element_id)?;
 +        crate::custom_elements::terminal::stage_frame(id, &metadata, cells.as_ref())
++            .map(|_| ())
 +            .map_err(Error::from_reason)
 +    }
 +
@@ -1028,6 +1322,30 @@ index 1c005b1..a57db33 100644
      "virtual-list": VirtualListProps
    }
  }
+diff --git a/packages/react/src/__tests__/events.test.tsx b/packages/react/src/__tests__/events.test.tsx
+index d07c8ea..1fffe39 100644
+--- a/packages/react/src/__tests__/events.test.tsx
++++ b/packages/react/src/__tests__/events.test.tsx
+@@ -35,7 +35,7 @@ describe("frame loop", () => {
+     loop.stop()
+   })
+ 
+-  it("schedules the next tick immediately after a long tick", async () => {
++  it("still yields to JavaScript after a long tick", async () => {
+     let ticks = 0
+     const loop = startFrameLoop(
+       {
+@@ -50,7 +50,9 @@ describe("frame loop", () => {
+       },
+       { frameMs: 20 },
+     )
+-    await new Promise((resolve) => setTimeout(resolve, 8))
++    await new Promise((resolve) => setTimeout(resolve, 1))
++    expect(ticks).toBe(1)
++    await new Promise((resolve) => setTimeout(resolve, 7))
+     loop.stop()
+     expect(ticks).toBeGreaterThanOrEqual(2)
+   })
 diff --git a/packages/react/src/__tests__/floating-controls.test.tsx b/packages/react/src/__tests__/floating-controls.test.tsx
 index 2a93c7a..366c8ec 100644
 --- a/packages/react/src/__tests__/floating-controls.test.tsx
@@ -1223,6 +1541,44 @@ index 471b60a..280bdd9 100644
    "motion",
    "testId",
    // `highlight` is scoped by where it sits in the tree, so it has to reach a
+diff --git a/packages/react/src/reconciler/renderer.ts b/packages/react/src/reconciler/renderer.ts
+index e46224b..495b8a7 100644
+--- a/packages/react/src/reconciler/renderer.ts
++++ b/packages/react/src/reconciler/renderer.ts
+@@ -42,9 +42,10 @@ export function createRenderer(
+   return renderer
+ }
+ 
+-/** ~125fps. Above any common display refresh rate, so frames are never the
+- *  bottleneck, while still leaving the Node event loop almost entirely idle. */
++/** ~125Hz keeps native input polling above common display rates. The embedded
++ * AppKit pump is nonblocking, so the interval remains JavaScript yield time. */
+ const DEFAULT_FRAME_MS = 8
++const MIN_FRAME_YIELD_MS = 4
+ 
+ export interface FrameLoop {
+   stop: () => void
+@@ -68,8 +69,9 @@ export interface FrameLoop {
+  * Each frame is scheduled only after the previous one finishes, so a slow frame
+  * delays the next one instead of letting timers pile up.
+  *
+- * If `tick()` already used the whole budget, wait 0ms. A fixed 8ms sleep after a
+- * 10ms frame would cap scroll at ~55fps on a 120Hz display.
++ * `tick()` normally returns immediately. If an exceptional tick uses the whole
++ * budget, still yield briefly so PTY, timer, promise, and socket callbacks cannot
++ * be monopolized by consecutive native pumps.
+  *
+  * `tick()` returning false means the last window closed. The loop stops and
+  * `onTerminated` runs. `render()` uses that to exit the process.
+@@ -105,7 +107,7 @@ export function startFrameLoop(
+       options.onTerminated?.()
+       return
+     }
+-    const wait = Math.max(0, frameMs - (performance.now() - started))
++    const wait = Math.max(MIN_FRAME_YIELD_MS, frameMs - (performance.now() - started))
+     timer = setTimeout(loop, wait)
+   }
+   loop()
 diff --git a/packages/react/src/testing.ts b/packages/react/src/testing.ts
 index 064174b..445eb1d 100644
 --- a/packages/react/src/testing.ts
@@ -1372,10 +1728,25 @@ index 64a84df..bc366c0 100644
  
      #[cfg(any(test, feature = "test-support"))]
 diff --git a/zed/crates/gpui/src/window.rs b/zed/crates/gpui/src/window.rs
-index 25f98cd..b8cdf12 100644
+index 25f98cd..b255b93 100644
 --- a/zed/crates/gpui/src/window.rs
 +++ b/zed/crates/gpui/src/window.rs
-@@ -4538,6 +4538,48 @@ impl Window {
+@@ -3057,6 +3057,14 @@ impl Window {
+         profiling::finish_frame!();
+     }
+ 
++    /// Presents the current scene again without drawing or invalidating views.
++    ///
++    /// This is intended for stable scenes whose external GPU resources changed,
++    /// such as an atlas image updated in place.
++    pub fn present_cached_frame(&mut self) {
++        self.present();
++    }
++
+     /// Presents the most recently drawn frame if it hasn't been presented yet.
+     ///
+     /// Benchmarks drive drawing synchronously rather than through a platform
+@@ -4538,6 +4546,48 @@ impl Window {
          data: Arc<RenderImage>,
          frame_index: usize,
          grayscale: bool,
@@ -1424,7 +1795,7 @@ index 25f98cd..b8cdf12 100644
      ) -> Result<()> {
          self.invalidator.debug_assert_paint();
  
-@@ -4617,7 +4659,7 @@ impl Window {
+@@ -4617,7 +4667,7 @@ impl Window {
  
          self.next_frame.scene.insert_primitive(PolychromeSprite {
              order: 0,
@@ -1433,7 +1804,7 @@ index 25f98cd..b8cdf12 100644
              grayscale: grayscale.into(),
              bounds: visible_bounds_snapped,
              content_mask,
-@@ -4647,6 +4689,23 @@ impl Window {
+@@ -4647,6 +4697,23 @@ impl Window {
          });
      }
  
@@ -1504,6 +1875,97 @@ index 2b52bb9..fe014e7 100644
 +  }
    float distance =
        quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+ 
+diff --git a/zed/crates/gpui_macos/src/platform.rs b/zed/crates/gpui_macos/src/platform.rs
+index 9b6f5f2..1697921 100644
+--- a/zed/crates/gpui_macos/src/platform.rs
++++ b/zed/crates/gpui_macos/src/platform.rs
+@@ -20,15 +20,11 @@ use cocoa::{
+     },
+ };
+ use core_foundation::{
+-    base::{CFIndex, CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
++    base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
+     boolean::CFBoolean,
+     data::CFData,
+     dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
+-    runloop::{
+-        CFRunLoopActivity, CFRunLoopAddObserver, CFRunLoopGetMain, CFRunLoopObserverContext,
+-        CFRunLoopObserverCreate, CFRunLoopObserverRef, CFRunLoopRemoveObserver, CFRunLoopRun,
+-        kCFRunLoopAfterWaiting, kCFRunLoopCommonModes,
+-    },
++    runloop::{CFRunLoopRun, CFRunLoopRunInMode, kCFRunLoopDefaultMode},
+     string::{CFString, CFStringRef},
+ };
+ use ctor::ctor;
+@@ -300,7 +296,7 @@ impl MacPlatform {
+ 
+         unsafe {
+             let pool = NSAutoreleasePool::new(nil);
+-            run_app_through_wake();
++            pump_app_nonblocking();
+             pool.drain();
+         }
+ 
+@@ -625,39 +621,28 @@ fn assert_main_thread(operation: &str) {
+     );
+ }
+ 
+-unsafe fn run_app_through_wake() {
+-    // GPUI frame ticks use a main-queue source, which only runs after the run loop wakes.
+-    // Pre-posting an event makes that wake non-blocking; stopping before it starves frames.
+-    extern "C" fn observe_run_loop(_: CFRunLoopObserverRef, _: CFRunLoopActivity, _: *mut c_void) {
+-        unsafe { stop_app_immediately() };
+-    }
+-
++unsafe fn pump_app_nonblocking() {
+     unsafe {
+-        let run_loop = CFRunLoopGetMain();
+-        let mut context = CFRunLoopObserverContext {
+-            version: 0,
+-            info: ptr::null_mut(),
+-            retain: None,
+-            release: None,
+-            copyDescription: None,
+-        };
+-        let observer = CFRunLoopObserverCreate(
+-            ptr::null(),
+-            kCFRunLoopAfterWaiting,
+-            0,
+-            CFIndex::MIN,
+-            observe_run_loop,
+-            &mut context,
+-        );
+-        assert!(!observer.is_null(), "failed to create AppKit pump observer");
+-        CFRunLoopAddObserver(run_loop, observer, kCFRunLoopCommonModes);
+-
+-        post_wake_event();
++        // NSApplication::run sleeps until the next display-link wake, which
++        // blocks Bun and starves PTY output. Drain only work that is ready now.
+         let app: id = msg_send![APP_CLASS, sharedApplication];
+-        app.run();
+-
+-        CFRunLoopRemoveObserver(run_loop, observer, kCFRunLoopCommonModes);
+-        CFRelease(observer as CFTypeRef);
++        let distant_past: id = msg_send![class!(NSDate), distantPast];
++        let mode = kCFRunLoopDefaultMode as id;
++
++        for _ in 0..256 {
++            let event: id = msg_send![app,
++                nextEventMatchingMask: NSUInteger::MAX
++                untilDate: distant_past
++                inMode: mode
++                dequeue: YES
++            ];
++            if event == nil {
++                break;
++            }
++            let _: () = msg_send![app, sendEvent: event];
++        }
++        let _: () = msg_send![app, updateWindows];
++        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 1);
+     }
+ }
  
 diff --git a/zed/crates/gpui_wgpu/src/shaders.wgsl b/zed/crates/gpui_wgpu/src/shaders.wgsl
 index 718cb75..e442a34 100644
