@@ -94,10 +94,27 @@ describeNative('terminal panels', () => {
       expect(await automation.getByTestId('terminal-view-right').count()).toBe(1)
       expect(await automation.getByTestId('surface-placeholder').count()).toBe(0)
       const activeRightId = terminals.getSnapshot().activeRightId
-      expect(activeRightId).toBeDefined()
+      expect(activeRightId).toBe(activeBottomId)
       root.renderer.simulateKeystrokes('z')
       root.renderer.flush()
       expect(terminals.grid(activeRightId)?.viewport.map((row) => row.text).join('\n')).toContain('z')
+      const rightOwnedSize = terminals.getSnapshot().sessions.find((session) => session.id === activeRightId)!
+      if (nativeTerminal) expect(root.renderer.findByType('terminal')).toHaveLength(2)
+
+      await automation.getByTestId('terminal-dock-fullscreen').click()
+      root.renderer.flush()
+      expect(await automation.getByTestId('terminal-view-bottom').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-view-right').count()).toBe(1)
+      expect(await automation.getByTestId('terminal-grid').count()).toBe(1)
+      if (nativeTerminal) expect(root.renderer.findByType('terminal')).toHaveLength(1)
+
+      await automation.getByTestId('terminal-dock-restore').click()
+      await Bun.sleep(SPRING_SETTLE_MS * 2)
+      root.renderer.flush()
+      expect(await automation.getByTestId('terminal-view-right').count()).toBe(1)
+      if (nativeTerminal) expect(root.renderer.findByType('terminal')).toHaveLength(2)
+      const restoredBottomSize = terminals.getSnapshot().sessions.find((session) => session.id === activeBottomId)!
+      expect(restoredBottomSize.rows).toBeLessThan(rightOwnedSize.rows)
 
       await automation.getByTestId('close-surface').click()
       await Bun.sleep(SPRING_SETTLE_MS * 2)

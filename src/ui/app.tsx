@@ -20,7 +20,7 @@ import { colors } from './theme.ts'
 import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
 import { MotionDiv, SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
-import { TerminalServiceProvider } from './terminal-context.tsx'
+import { TerminalProjectionSuspensionProvider, TerminalServiceProvider } from './terminal-context.tsx'
 import { TerminalDock } from './terminal-dock.tsx'
 import { TERMINAL_DOCK_DEFAULT_HEIGHT, TERMINAL_DOCK_MIN_HEIGHT } from './terminal-metrics.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
@@ -237,6 +237,7 @@ export function WorkbenchApp({
   const contentSidebarProgress = layout.navigationOverlay ? 0 : animatedSidebarProgress
   const flowsTitlebarInset = 24 + (collapsedChromeInset - 24) * (1 - contentSidebarProgress)
   const displayedSurfaceId = workbenchSurfaceId(displayedRightPanel)
+  const rightTerminalSuspended = bottomTerminalFullscreen && displayedSurfaceId === 'terminal'
   const displayedSurface = uiSnapshot.surfaces.find((candidate) => candidate.id === displayedSurfaceId)
   const SurfaceComponent = displayedSurface?.component
   const panel = displayedRightPanel === 'notifications'
@@ -340,7 +341,9 @@ export function WorkbenchApp({
                     ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: safeWidth }
                     : { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }}
                   >
-                    {panel}
+                    <TerminalProjectionSuspensionProvider suspended={rightTerminalSuspended}>
+                      {panel}
+                    </TerminalProjectionSuspensionProvider>
                   </div>
                 </div>
               )}

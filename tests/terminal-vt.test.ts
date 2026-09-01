@@ -77,6 +77,42 @@ describe('VtEmulator', () => {
     expect(bytes.synchronizedOutput).toBe(false)
   })
 
+  it('matches OpenTUI changed-cell runs with mixed glyphs and color modes', () => {
+    const output = ESC + '[?2026h' + ESC + '[?25l'
+      + ESC + '[1;2H' + ESC + '[38;2;1;2;3m' + ESC + '[48;2;4;5;6m' + ESC + '[1m' + ESC + '[4m' + ' A▀' + ESC + '[0m'
+      + ESC + '[2;1H' + ESC + '[38;5;196m' + ESC + '[49m' + 'Z' + ESC + '[0m'
+      + ESC + '[3;2H' + ESC + '[39m' + ESC + '[49m' + '界' + ESC + '[0m'
+      + ESC + '[4;2H' + ESC + '[39m' + ESC + '[49m' + 'é' + ESC + '[0m'
+      + ESC + '[?2026l'
+    const text = new VtEmulator(12, 4)
+    const bytes = new VtEmulator(12, 4)
+    text.write(output)
+    const originalDecode = TextDecoder.prototype.decode
+    let decodedBodyBytes = 0
+    TextDecoder.prototype.decode = function (input, options) {
+      if (input) decodedBodyBytes += input.byteLength
+      return originalDecode.call(this, input, options)
+    }
+    try {
+      bytes.write(new TextEncoder().encode(output))
+    } finally {
+      TextDecoder.prototype.decode = originalDecode
+    }
+
+    expect(decodedBodyBytes).toBe(0)
+    expect(bytes.snapshot()).toEqual(text.snapshot())
+    const snapshot = bytes.snapshot()
+    expect(snapshot.cursorVisible).toBe(false)
+    expect(snapshot.viewport[0]?.text).toBe('  A▀')
+    expect(snapshot.viewport[0]?.cells[1]?.attrs).toBe((1 << 0) | (1 << 3))
+    expect(snapshot.viewport[1]?.cells[0]?.fg).toEqual({ kind: 'indexed', index: 196 })
+    expect(snapshot.viewport[1]?.cells[0]?.bg).toEqual({ kind: 'default-bg' })
+    expect(snapshot.viewport[2]?.cells[1]?.ch).toBe('界')
+    expect(snapshot.viewport[2]?.cells[2]?.attrs).not.toBe(0)
+    expect(snapshot.viewport[3]?.cells[1]?.ch).toBe('é')
+    expect(bytes.synchronizedOutput).toBe(false)
+  })
+
   it('falls back from byte-native framebuffer parsing at the first unmatched record', () => {
     const output = ESC + '[?2026h'
       + ESC + '[1;1H' + ESC + '[38;2;1;2;3m' + ESC + '[48;2;4;5;6m' + '█' + ESC + '[0m'

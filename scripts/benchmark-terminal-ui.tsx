@@ -27,7 +27,7 @@ function percentile(values: readonly number[], fraction: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))]!
 }
 
-const BLOCKS = ['▀', '▄', '█', '▌', '▐', '▖', '▗', '▘', '▙', '▛', '▜', '▝', '▟'] as const
+const GLYPHS = [' ', '▀', '▄', '█', '▌', '▐', '▖', '▗', '▘', '▙', '▛', '▜', '▝', '▟'] as const
 
 class BufferedMemoryTerminalBackend implements TerminalBackend {
   #output: TerminalOutputBuffer | undefined
@@ -75,8 +75,8 @@ function framebufferFrame(index: number): string {
       const green = (row * 9 + column * 2 + index * 7) & 0xff
       const blue = (row * 3 + column * 7 + index * 11) & 0xff
       const background = (red + green + blue + 37) & 0xff
-      const block = BLOCKS[(row + column + index) % BLOCKS.length]!
-      output += `${ESC}[${row + 1};${column + 1}H${ESC}[38;2;${red};${green};${blue}m${ESC}[48;2;${background};${blue};${red}m${block}${ESC}[0m`
+      const glyph = GLYPHS[(row + column + index) % GLYPHS.length]!
+      output += `${ESC}[${row + 1};${column + 1}H${ESC}[38;2;${red};${green};${blue}m${ESC}[48;2;${background};${blue};${red}m${glyph}${ESC}[0m`
     }
   }
   return output
@@ -91,7 +91,7 @@ if (!hasNativeTestRenderer) {
 const encoder = new TextEncoder()
 const frames = Array.from(
   { length: SAMPLES + 3 },
-  (_, index) => encoder.encode(`${ESC}[?2026h${framebufferFrame(index)}${ESC}[?2026l`),
+  (_, index) => encoder.encode(`${ESC}[?2026h${ESC}[?25l${framebufferFrame(index)}${ESC}[?2026l`),
 )
 const width = COLS * TERMINAL_CELL_WIDTH + TERMINAL_PADDING_X * 2
 const height = ROWS * TERMINAL_LINE_HEIGHT + TERMINAL_PADDING_Y * 2
@@ -148,7 +148,7 @@ for (let index = 0; index < SAMPLES; index += 1) {
 
 const stats = root.renderer.getDebugFrameOverlayStats()
 const retained = root.renderer.getRetainedElementCount()
-console.log(`framebuffer median      ${percentile(totals, 0.5).toFixed(2).padStart(9)} ms  PTY fragments + per-cell cursor + truecolor + blocks at ${COLS}×${ROWS}`)
+console.log(`framebuffer median      ${percentile(totals, 0.5).toFixed(2).padStart(9)} ms  OpenTUI sync + hidden cursor + changed-cell truecolor at ${COLS}×${ROWS}`)
 console.log(`framebuffer p95         ${percentile(totals, 0.95).toFixed(2).padStart(9)} ms  VT + React + NAPI + GPUI`)
 console.log(`frame commit median     ${percentile(commits, 0.5).toFixed(2).padStart(9)} ms  parse + packed frame + native transport`)
 console.log(`frame flush median      ${percentile(paints, 0.5).toFixed(2).padStart(9)} ms  GPUI layout and paint`)

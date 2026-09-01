@@ -1,9 +1,10 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useGpuix } from '@gpuix/react'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
 import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
+import { useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
 import { TERMINAL_CELL_WIDTH, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, TERMINAL_PADDING_X, TERMINAL_PADDING_Y, terminalGridSize } from './terminal-metrics.ts'
 import { terminalNativeBinaryFrame, terminalNativeFrame } from './terminal-native.ts'
@@ -33,9 +34,11 @@ export const TerminalView = memo(function TerminalView({
   appearance: ResolvedTheme
   focusSerial?: number
 }) {
-  const serviceSnapshot = useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const projectionSuspensionRequested = useTerminalProjectionSuspended()
+  const projectionSuspended = placement === 'right' && projectionSuspensionRequested
+  const serviceSnapshot = useTerminalServiceSnapshot(service, projectionSuspended)
   const rendering = serviceSnapshot.appearance
-  const snapshot = sessionId ? service.grid(sessionId) : undefined
+  const snapshot = !projectionSuspended && sessionId ? service.grid(sessionId) : undefined
   const theme = useMemo(() => terminalPaintTheme(appearance), [appearance])
   const size = terminalGridSize(width, height)
   const sizeRef = useRef(size)
@@ -45,9 +48,9 @@ export const TerminalView = memo(function TerminalView({
   const inputId = useRef<number | undefined>(undefined)
 
   useEffect(() => {
-    if (!sessionId) return
+    if (projectionSuspended || !sessionId) return
     service.resize(sessionId, size.cols, size.rows, placement)
-  }, [placement, service, sessionId, size.cols, size.rows])
+  }, [placement, projectionSuspended, service, sessionId, size.cols, size.rows])
 
   useEffect(() => {
     if (focusSerial < 1 || !sessionId || inputId.current === undefined) return
@@ -117,7 +120,7 @@ export const TerminalView = memo(function TerminalView({
       onClick={focusInput}
       onScroll={onScroll}
     >
-      {snapshot ? (nativeTerminal
+      {projectionSuspended ? null : snapshot ? (nativeTerminal
         ? <NativeTerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
         : <TerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
       ) : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
@@ -125,7 +128,7 @@ export const TerminalView = memo(function TerminalView({
         ref={(instance: { id: number } | null) => { inputId.current = instance?.id }}
         testId={'terminal-input-' + placement}
         {...CAPTURE_TAB_PROPS}
-        tabIndex={0}
+        tabIndex={projectionSuspended ? -1 : 0}
         style={{
           position: 'absolute',
           left: 0,
@@ -136,6 +139,7 @@ export const TerminalView = memo(function TerminalView({
           height: '100%',
           backgroundColor: '#01010101',
           cursor: 'text',
+          pointerEvents: projectionSuspended ? 'none' : 'auto',
         }}
         onMouseDown={focusInput}
         onClick={focusInput}

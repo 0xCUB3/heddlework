@@ -28,6 +28,8 @@ const DEFAULT_FG = TERMINAL_PACKED_COLOR_DEFAULT_FG
 const DEFAULT_BG = TERMINAL_PACKED_COLOR_DEFAULT_BG
 const SYNCHRONIZED_OUTPUT_ENABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68])
 const SYNCHRONIZED_OUTPUT_DISABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c])
+const HIDE_CURSOR = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c])
+const FRAMEBUFFER_ASCII_GLYPHS = Array.from({ length: 0x5f }, (_, index) => String.fromCharCode(0x20 + index))
 const FRAMEBUFFER_BLOCK_GLYPHS = Array.from({ length: 0x20 }, (_, index) => String.fromCharCode(0x2580 + index))
 
 type ParserState = 'ground' | 'escape' | 'csi' | 'osc' | 'dcs' | 'charset'
@@ -549,13 +551,18 @@ export class VtEmulator {
     }
   }
 
-  // Dense synchronized frames are ASCII control records plus three-byte block glyphs.
-  // Parsing those bytes in place avoids decoding several megabytes to a transient UTF-16 string.
+  // OpenTUI emits synchronized changed-cell runs directly from its native framebuffer.
+  // Parsing complete runs in place avoids decoding multi-megabyte frames into transient UTF-16.
   #fastFramebufferBytes(input: Uint8Array): number {
     if (this.#insert) return 0
     this.#synchronizedOutput = true
     const origin = this.#origin ? this.#scrollTop : 0
     let index = SYNCHRONIZED_OUTPUT_ENABLE.byteLength
+    if (this.#bytesMatchAt(input, index, HIDE_CURSOR)) {
+      this.#cursorVisible = false
+      index += HIDE_CURSOR.byteLength
+    }
+
     let matched = false
     let attrs = this.#attrs
     let touchedRow: MutableCell[] | undefined
@@ -563,8 +570,10 @@ export class VtEmulator {
     let finalY = this.#y
 
     records: while (index < input.byteLength) {
-      if (input[index] !== 0x1b || input[index + 1] !== 0x5b) break
-      let scan = index + 2
+      let scan = index
+      if (input[scan] !== 0x1b || input[scan + 1] !== 0x5b) break
+      scan += 2
+
       let byte = input[scan] ?? -1
       if (byte < 0x30 || byte > 0x39) break
       let rowNumber = 0
@@ -587,104 +596,231 @@ export class VtEmulator {
       if (byte !== 0x48) break
       scan += 1
 
-      if (input[scan] !== 0x1b
-        || input[scan + 1] !== 0x5b
-        || input[scan + 2] !== 0x33
-        || input[scan + 3] !== 0x38
-        || input[scan + 4] !== 0x3b
-        || input[scan + 5] !== 0x32
-        || input[scan + 6] !== 0x3b) break
-      scan += 7
+      let foreground: number
+      if (input[scan] === 0x1b
+        && input[scan + 1] === 0x5b
+        && input[scan + 2] === 0x33
+        && input[scan + 3] === 0x38
+        && input[scan + 4] === 0x3b
+        && input[scan + 5] === 0x32
+        && input[scan + 6] === 0x3b) {
+        scan += 7
+        byte = input[scan] ?? -1
+        if (byte < 0x30 || byte > 0x39) break
+        let red = 0
+        do {
+          red = red * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x3b) break
 
-      byte = input[scan] ?? -1
-      if (byte < 0x30 || byte > 0x39) break
-      let foregroundRed = 0
-      do {
-        foregroundRed = foregroundRed * 10 + byte - 0x30
         scan += 1
         byte = input[scan] ?? -1
-      } while (byte >= 0x30 && byte <= 0x39)
-      if (byte !== 0x3b) break
+        if (byte < 0x30 || byte > 0x39) break
+        let green = 0
+        do {
+          green = green * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x3b) break
 
-      scan += 1
-      byte = input[scan] ?? -1
-      if (byte < 0x30 || byte > 0x39) break
-      let foregroundGreen = 0
-      do {
-        foregroundGreen = foregroundGreen * 10 + byte - 0x30
         scan += 1
         byte = input[scan] ?? -1
-      } while (byte >= 0x30 && byte <= 0x39)
-      if (byte !== 0x3b) break
+        if (byte < 0x30 || byte > 0x39) break
+        let blue = 0
+        do {
+          blue = blue * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x6d) break
+        scan += 1
+        red = Math.min(255, red)
+        green = Math.min(255, green)
+        blue = Math.min(255, blue)
+        foreground = (red << 16) | (green << 8) | blue
+      } else if (input[scan] === 0x1b
+        && input[scan + 1] === 0x5b
+        && input[scan + 2] === 0x33
+        && input[scan + 3] === 0x38
+        && input[scan + 4] === 0x3b
+        && input[scan + 5] === 0x35
+        && input[scan + 6] === 0x3b) {
+        scan += 7
+        byte = input[scan] ?? -1
+        if (byte < 0x30 || byte > 0x39) break
+        let color = 0
+        do {
+          color = color * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x6d) break
+        scan += 1
+        foreground = TERMINAL_PACKED_COLOR_INDEXED | Math.min(255, color)
+      } else if (input[scan] === 0x1b
+        && input[scan + 1] === 0x5b
+        && input[scan + 2] === 0x33
+        && input[scan + 3] === 0x39
+        && input[scan + 4] === 0x6d) {
+        scan += 5
+        foreground = DEFAULT_FG
+      } else {
+        break
+      }
 
-      scan += 1
-      byte = input[scan] ?? -1
-      if (byte < 0x30 || byte > 0x39) break
-      let foregroundBlue = 0
-      do {
-        foregroundBlue = foregroundBlue * 10 + byte - 0x30
+      let background: number
+      if (input[scan] === 0x1b
+        && input[scan + 1] === 0x5b
+        && input[scan + 2] === 0x34
+        && input[scan + 3] === 0x38
+        && input[scan + 4] === 0x3b
+        && input[scan + 5] === 0x32
+        && input[scan + 6] === 0x3b) {
+        scan += 7
+        byte = input[scan] ?? -1
+        if (byte < 0x30 || byte > 0x39) break
+        let red = 0
+        do {
+          red = red * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x3b) break
+
         scan += 1
         byte = input[scan] ?? -1
-      } while (byte >= 0x30 && byte <= 0x39)
-      if (byte !== 0x6d) break
-      scan += 1
+        if (byte < 0x30 || byte > 0x39) break
+        let green = 0
+        do {
+          green = green * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x3b) break
 
-      if (input[scan] !== 0x1b
-        || input[scan + 1] !== 0x5b
-        || input[scan + 2] !== 0x34
-        || input[scan + 3] !== 0x38
-        || input[scan + 4] !== 0x3b
-        || input[scan + 5] !== 0x32
-        || input[scan + 6] !== 0x3b) break
-      scan += 7
-
-      byte = input[scan] ?? -1
-      if (byte < 0x30 || byte > 0x39) break
-      let backgroundRed = 0
-      do {
-        backgroundRed = backgroundRed * 10 + byte - 0x30
         scan += 1
         byte = input[scan] ?? -1
-      } while (byte >= 0x30 && byte <= 0x39)
-      if (byte !== 0x3b) break
-
-      scan += 1
-      byte = input[scan] ?? -1
-      if (byte < 0x30 || byte > 0x39) break
-      let backgroundGreen = 0
-      do {
-        backgroundGreen = backgroundGreen * 10 + byte - 0x30
+        if (byte < 0x30 || byte > 0x39) break
+        let blue = 0
+        do {
+          blue = blue * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x6d) break
         scan += 1
+        red = Math.min(255, red)
+        green = Math.min(255, green)
+        blue = Math.min(255, blue)
+        background = (red << 16) | (green << 8) | blue
+      } else if (input[scan] === 0x1b
+        && input[scan + 1] === 0x5b
+        && input[scan + 2] === 0x34
+        && input[scan + 3] === 0x38
+        && input[scan + 4] === 0x3b
+        && input[scan + 5] === 0x35
+        && input[scan + 6] === 0x3b) {
+        scan += 7
         byte = input[scan] ?? -1
-      } while (byte >= 0x30 && byte <= 0x39)
-      if (byte !== 0x3b) break
-
-      scan += 1
-      byte = input[scan] ?? -1
-      if (byte < 0x30 || byte > 0x39) break
-      let backgroundBlue = 0
-      do {
-        backgroundBlue = backgroundBlue * 10 + byte - 0x30
+        if (byte < 0x30 || byte > 0x39) break
+        let color = 0
+        do {
+          color = color * 10 + byte - 0x30
+          scan += 1
+          byte = input[scan] ?? -1
+        } while (byte >= 0x30 && byte <= 0x39)
+        if (byte !== 0x6d) break
         scan += 1
-        byte = input[scan] ?? -1
-      } while (byte >= 0x30 && byte <= 0x39)
-      if (byte !== 0x6d) break
-      scan += 1
+        background = TERMINAL_PACKED_COLOR_INDEXED | Math.min(255, color)
+      } else if (input[scan] === 0x1b
+        && input[scan + 1] === 0x5b
+        && input[scan + 2] === 0x34
+        && input[scan + 3] === 0x39
+        && input[scan + 4] === 0x6d) {
+        scan += 5
+        background = DEFAULT_BG
+      } else {
+        break
+      }
+
+      while (input[scan] === 0x1b
+        && input[scan + 1] === 0x5b
+        && (input[scan + 2] ?? 0) >= 0x31
+        && (input[scan + 2] ?? 0) <= 0x39
+        && input[scan + 3] === 0x6d) {
+        const attribute = input[scan + 2]! - 0x30
+        if (attribute === 1) attrs |= CELL_BOLD
+        else if (attribute === 2) attrs |= CELL_DIM
+        else if (attribute === 3) attrs |= CELL_ITALIC
+        else if (attribute === 4) attrs |= CELL_UNDERLINE
+        else if (attribute === 5 || attribute === 6) attrs |= CELL_BLINK
+        else if (attribute === 7) attrs |= CELL_INVERSE
+        else if (attribute === 8) attrs |= CELL_HIDDEN
+        else if (attribute === 9) attrs |= CELL_STRIKE
+        scan += 4
+      }
 
       const glyphStart = scan
-      let runLength = 0
-      while (input[scan] === 0xe2
-        && input[scan + 1] === 0x96
-        && (input[scan + 2] ?? 0) >= 0x80
-        && (input[scan + 2] ?? 0) <= 0x9f) {
-        runLength += 1
-        scan += 3
+      let glyphEnd = scan
+      let glyphCount = 0
+      let cellColumns = 0
+      let singleCode = 0
+      let singleWidth = 0
+      while (glyphEnd < input.byteLength && input[glyphEnd] !== 0x1b) {
+        const first = input[glyphEnd]!
+        let code: number
+        let length: number
+        if (first >= 0x20 && first <= 0x7e) {
+          code = first
+          length = 1
+        } else if (first >= 0xc2 && first <= 0xdf) {
+          const second = input[glyphEnd + 1] ?? -1
+          if (second < 0x80 || second > 0xbf) break records
+          code = ((first & 0x1f) << 6) | (second & 0x3f)
+          length = 2
+        } else if (first >= 0xe0 && first <= 0xef) {
+          const second = input[glyphEnd + 1] ?? -1
+          const third = input[glyphEnd + 2] ?? -1
+          if (second < 0x80 || second > 0xbf
+            || third < 0x80 || third > 0xbf
+            || (first === 0xe0 && second < 0xa0)
+            || (first === 0xed && second > 0x9f)) break records
+          code = ((first & 0x0f) << 12) | ((second & 0x3f) << 6) | (third & 0x3f)
+          length = 3
+        } else if (first >= 0xf0 && first <= 0xf4) {
+          const second = input[glyphEnd + 1] ?? -1
+          const third = input[glyphEnd + 2] ?? -1
+          const fourth = input[glyphEnd + 3] ?? -1
+          if (second < 0x80 || second > 0xbf
+            || third < 0x80 || third > 0xbf
+            || fourth < 0x80 || fourth > 0xbf
+            || (first === 0xf0 && second < 0x90)
+            || (first === 0xf4 && second > 0x8f)) break records
+          code = ((first & 0x07) << 18) | ((second & 0x3f) << 12) | ((third & 0x3f) << 6) | (fourth & 0x3f)
+          length = 4
+        } else {
+          break records
+        }
+        const width = (code >= 0x20 && code <= 0x7e) || (code >= 0x2580 && code <= 0x259f)
+          ? 1
+          : cellWidth(code)
+        if (glyphCount === 0) {
+          singleCode = code
+          singleWidth = width
+        }
+        cellColumns += width
+        glyphCount += 1
+        glyphEnd += length
       }
-      if (runLength === 0
-        || input[scan] !== 0x1b
-        || input[scan + 1] !== 0x5b
-        || input[scan + 2] !== 0x30
-        || input[scan + 3] !== 0x6d) break
+
+      if (glyphCount === 0
+        || input[glyphEnd] !== 0x1b
+        || input[glyphEnd + 1] !== 0x5b
+        || input[glyphEnd + 2] !== 0x30
+        || input[glyphEnd + 3] !== 0x6d) break
 
       rowNumber ||= 1
       colNumber ||= 1
@@ -694,31 +830,96 @@ export class VtEmulator {
       let x = colNumber - 1
       if (x < 0) x = 0
       else if (x >= this.#cols) x = this.#cols - 1
-      if (x + runLength > this.#cols) break records
+      if (x + cellColumns > this.#cols) break
 
-      if (foregroundRed > 255) foregroundRed = 255
-      if (foregroundGreen > 255) foregroundGreen = 255
-      if (foregroundBlue > 255) foregroundBlue = 255
-      if (backgroundRed > 255) backgroundRed = 255
-      if (backgroundGreen > 255) backgroundGreen = 255
-      if (backgroundBlue > 255) backgroundBlue = 255
-      const foreground = (foregroundRed << 16) | (foregroundGreen << 8) | foregroundBlue
-      const background = (backgroundRed << 16) | (backgroundGreen << 8) | backgroundBlue
       const row = this.#screen[y]!
       if (touchedRow && touchedRow !== row) this.#touchRow(touchedRow)
       touchedRow = row
-      for (let offset = 0; offset < runLength; offset += 1) {
-        const target = row[x + offset]!
-        target.ch = FRAMEBUFFER_BLOCK_GLYPHS[(input[glyphStart + offset * 3 + 2] ?? 0x80) - 0x80]!
-        target.fg = foreground
-        target.bg = background
-        target.attrs = attrs
+      let writeX = x
+      if (glyphCount === 1) {
+        const glyph = singleCode >= 0x20 && singleCode <= 0x7e
+          ? FRAMEBUFFER_ASCII_GLYPHS[singleCode - 0x20]!
+          : singleCode >= 0x2580 && singleCode <= 0x259f
+            ? FRAMEBUFFER_BLOCK_GLYPHS[singleCode - 0x2580]!
+            : String.fromCodePoint(singleCode)
+        if (singleWidth === 0) {
+          if (writeX > 0) {
+            const target = row[writeX - 1]!
+            if (!(target.attrs & CELL_SPACER)) target.ch += glyph
+          }
+        } else {
+          const target = row[writeX]!
+          target.ch = glyph
+          target.fg = foreground
+          target.bg = background
+          target.attrs = attrs | (singleWidth === 2 ? CELL_WIDE : 0)
+          if (singleWidth === 2) {
+            const spacer = row[writeX + 1]!
+            spacer.ch = ' '
+            spacer.fg = foreground
+            spacer.bg = background
+            spacer.attrs = attrs | CELL_SPACER
+          }
+          writeX += singleWidth
+        }
+      } else {
+        let writeIndex = glyphStart
+        while (writeIndex < glyphEnd) {
+          const first = input[writeIndex]!
+          let code: number
+          let length: number
+          if (first < 0x80) {
+            code = first
+            length = 1
+          } else if (first < 0xe0) {
+            code = ((first & 0x1f) << 6) | (input[writeIndex + 1]! & 0x3f)
+            length = 2
+          } else if (first < 0xf0) {
+            code = ((first & 0x0f) << 12) | ((input[writeIndex + 1]! & 0x3f) << 6) | (input[writeIndex + 2]! & 0x3f)
+            length = 3
+          } else {
+            code = ((first & 0x07) << 18)
+              | ((input[writeIndex + 1]! & 0x3f) << 12)
+              | ((input[writeIndex + 2]! & 0x3f) << 6)
+              | (input[writeIndex + 3]! & 0x3f)
+            length = 4
+          }
+          const width = (code >= 0x20 && code <= 0x7e) || (code >= 0x2580 && code <= 0x259f)
+            ? 1
+            : cellWidth(code)
+          const glyph = code >= 0x20 && code <= 0x7e
+            ? FRAMEBUFFER_ASCII_GLYPHS[code - 0x20]!
+            : code >= 0x2580 && code <= 0x259f
+              ? FRAMEBUFFER_BLOCK_GLYPHS[code - 0x2580]!
+              : String.fromCodePoint(code)
+          if (width === 0) {
+            if (writeX > 0) {
+              const target = row[writeX - 1]!
+              if (!(target.attrs & CELL_SPACER)) target.ch += glyph
+            }
+          } else {
+            const target = row[writeX]!
+            target.ch = glyph
+            target.fg = foreground
+            target.bg = background
+            target.attrs = attrs | (width === 2 ? CELL_WIDE : 0)
+            if (width === 2) {
+              const spacer = row[writeX + 1]!
+              spacer.ch = ' '
+              spacer.fg = foreground
+              spacer.bg = background
+              spacer.attrs = attrs | CELL_SPACER
+            }
+            writeX += width
+          }
+          writeIndex += length
+        }
       }
 
       attrs = 0
       finalY = y
-      finalX = x + runLength
-      index = scan + 4
+      finalX = writeX
+      index = glyphEnd + 4
       matched = true
     }
 
@@ -729,15 +930,19 @@ export class VtEmulator {
       this.#wrapPending = this.#wrap && finalX >= this.#cols
       this.#resetPen()
     }
-    let disablesSynchronizedOutput = index + SYNCHRONIZED_OUTPUT_DISABLE.byteLength <= input.byteLength
-    for (let offset = 0; disablesSynchronizedOutput && offset < SYNCHRONIZED_OUTPUT_DISABLE.byteLength; offset += 1) {
-      disablesSynchronizedOutput = input[index + offset] === SYNCHRONIZED_OUTPUT_DISABLE[offset]
-    }
-    if (disablesSynchronizedOutput) {
+    if (this.#bytesMatchAt(input, index, SYNCHRONIZED_OUTPUT_DISABLE)) {
       this.#synchronizedOutput = false
       return index + SYNCHRONIZED_OUTPUT_DISABLE.byteLength
     }
     return index
+  }
+
+  #bytesMatchAt(input: Uint8Array, index: number, expected: Uint8Array): boolean {
+    if (index + expected.byteLength > input.byteLength) return false
+    for (let offset = 0; offset < expected.byteLength; offset += 1) {
+      if (input[index + offset] !== expected[offset]) return false
+    }
+    return true
   }
 
   #fastFramebufferRun(text: string, start: number): number {

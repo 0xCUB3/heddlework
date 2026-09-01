@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useWindowSize } from '@gpuix/react'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import type { WorkbenchSurfaceProps } from './extensions.ts'
@@ -6,6 +6,7 @@ import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { TerminalToolbar } from './terminal-chrome.tsx'
 import { TerminalView } from './terminal-view.tsx'
 import { colors } from './theme.ts'
+import { useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 
 export function TerminalPanel({
   service,
@@ -18,7 +19,8 @@ export function TerminalPanel({
   onNewSurface,
   onClose,
 }: WorkbenchSurfaceProps & { service: TerminalSessionService }) {
-  const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const projectionSuspended = useTerminalProjectionSuspended()
+  const snapshot = useTerminalServiceSnapshot(service, projectionSuspended)
   const windowSize = useWindowSize({ intervalMs: 50 })
   const activeId = snapshot.activeRightId ?? snapshot.sessions[0]?.id
   const [focusSerial, setFocusSerial] = useState(1)
