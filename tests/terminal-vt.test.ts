@@ -26,6 +26,16 @@ describe('VtEmulator', () => {
     expect(trueCell?.fg).toEqual({ kind: 'rgb', r: 10, g: 20, b: 30 })
   })
 
+  it('matches complete-CSI fast parsing with bytewise streaming', () => {
+    const output = '\u001b[2;3H\u001b[38;2;1;2;3mX\u001b[48;2;4;5;6mY\u001b[0m'
+    const complete = new VtEmulator(8, 4)
+    const streamed = new VtEmulator(8, 4)
+    complete.write(output)
+    for (const byte of new TextEncoder().encode(output)) streamed.write(new Uint8Array([byte]))
+
+    expect(streamed.snapshot()).toEqual(complete.snapshot())
+  })
+
   it('parses numeric CSI state incrementally across arbitrary chunks', () => {
     const vt = new VtEmulator(10, 2)
     vt.write(ESC + '[38;2;10')

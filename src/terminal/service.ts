@@ -28,7 +28,7 @@ interface LiveSession {
 }
 
 const TERMINAL_FRAME_MS = 16
-const SYNCHRONIZED_OUTPUT_STALE_MS = 150
+const SYNCHRONIZED_OUTPUT_STALE_MS = 1_000
 
 export class TerminalSessionService {
   readonly #backend: TerminalBackend

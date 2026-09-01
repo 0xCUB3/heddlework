@@ -166,7 +166,21 @@ export class VtEmulator {
   write(input: string | Uint8Array): void {
     const text = typeof input === 'string' ? input : this.#utf8.decode(input, { stream: true })
     this.#writeVersion += 1
-    for (const char of text) this.#feed(char)
+    for (let index = 0; index < text.length;) {
+      if (this.#state === 'ground'
+        && text.charCodeAt(index) === 0x1b
+        && text.charCodeAt(index + 1) === 0x5b) {
+        const next = this.#fastCsi(text, index + 2)
+        if (next !== -1) {
+          index = next
+          continue
+        }
+      }
+      const code = text.codePointAt(index) ?? 0
+      const length = code > 0xffff ? 2 : 1
+      this.#feed(length === 1 ? text[index]! : text.slice(index, index + length))
+      index += length
+    }
   }
 
   resize(cols: number, rows: number): void {
@@ -422,6 +436,32 @@ export class VtEmulator {
       this.#x = this.#cols
       this.#wrapPending = this.#wrap
     }
+  }
+
+  #fastCsi(text: string, start: number): number {
+    this.#resetCsi()
+    for (let index = start; index < text.length; index += 1) {
+      const code = text.charCodeAt(index)
+      if (code >= 0x30 && code <= 0x39) {
+        this.#csiValue = this.#csiValue * 10 + code - 0x30
+        this.#csiHasValue = true
+      } else if (code === 0x3b || code === 0x3a) {
+        this.#csiParams.push(this.#csiHasValue ? this.#csiValue : 0)
+        this.#csiValue = 0
+        this.#csiHasValue = false
+      } else if (code === 0x3f && this.#csiParams.length === 0 && !this.#csiHasValue) {
+        this.#csiPrivate = true
+      } else if (code >= 0x40 && code <= 0x7e) {
+        if (this.#csiHasValue || this.#csiParams.length > 0) {
+          this.#csiParams.push(this.#csiHasValue ? this.#csiValue : 0)
+        }
+        this.#dispatchCsi(text[index]!, this.#csiParams, this.#csiPrivate)
+        this.#resetCsi()
+        return index + 1
+      }
+    }
+    this.#resetCsi()
+    return -1
   }
 
   #resetCsi(): void {

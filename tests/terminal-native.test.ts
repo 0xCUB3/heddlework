@@ -14,6 +14,7 @@ import {
 import { TERMINAL_CELL_WIDTH } from '../src/ui/terminal-metrics.ts'
 import {
   NATIVE_CELL_BOLD,
+  NATIVE_CELL_FILL,
   NATIVE_CELL_SPACER,
   NATIVE_CELL_WIDE,
   NATIVE_TERMINAL_CELL_BYTES,
@@ -104,6 +105,18 @@ describe('native terminal frame projection', () => {
         expect(view.getUint32(index * NATIVE_TERMINAL_CELL_BYTES + 8, true)).toBe(Number.parseInt(painted.backgroundColor.slice(1), 16))
       }
     }
+  })
+
+  it('marks only a full block as a whole-cell image fill', () => {
+    const frame = terminalNativeFrame(
+      snapshot([{ cells: [cell('█'), cell('▌')], text: '█▌' }], 2),
+      terminalPaintTheme('dark'),
+      APPEARANCE,
+    )
+    const view = decoded(frame.cells)
+
+    expect(view.getUint16(12, true) & NATIVE_CELL_FILL).toBe(NATIVE_CELL_FILL)
+    expect(view.getUint16(NATIVE_TERMINAL_CELL_BYTES + 12, true) & NATIVE_CELL_FILL).toBe(0)
   })
 
   it('stores multi-codepoint graphemes once outside the cell buffer', () => {

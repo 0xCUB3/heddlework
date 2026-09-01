@@ -112,8 +112,12 @@ export interface TerminalRunStyle {
 }
 
 export function isTerminalFillGlyph(ch: string): boolean {
+  return ch.codePointAt(0) === 0x2588
+}
+
+export function isTerminalGraphicsGlyph(ch: string): boolean {
   const code = ch.codePointAt(0) ?? 0
-  return code >= 0x2588 && code <= 0x258f
+  return code >= 0x2580 && code <= 0x259f
 }
 
 export function paintTerminalCell(cell: TerminalCell, theme: TerminalPaintTheme): {
@@ -131,7 +135,7 @@ export function paintTerminalCell(cell: TerminalCell, theme: TerminalPaintTheme)
   let bg = resolveColor(cell.bg, theme, 'bg')
   if (cell.attrs & CELL_INVERSE) [fg, bg] = [bg, fg]
   const hidden = Boolean(cell.attrs & CELL_HIDDEN)
-  const graphical = isTerminalFillGlyph(cell.ch)
+  const graphical = isTerminalGraphicsGlyph(cell.ch)
   if (!hidden && !graphical && theme.minimumContrastRatio > 1) {
     fg = ensureContrast(bg, fg, dim ? theme.minimumContrastRatio / 2 : theme.minimumContrastRatio)
   }

@@ -19,13 +19,13 @@ Heddlework owns PTY sessions in-process. The byte stream, VT state, and painter 
 
 Heddlework follows the important invariants from Localterm without moving browser-specific xterm behavior into the native app:
 
-1. PTY chunks are parsed immediately on arrival. Device-status and capability queries are answered in the same task rather than being delayed behind a render callback.
-2. Ordinary presentation notifications are coalesced to a 16 ms frame deadline. The deadline is measured from the previous frame start, so React/native paint work does not accumulate on top of every interval. Parsing never runs inside the timer.
-3. DEC private mode 2026 holds the last committed grid while a synchronized frame is incomplete. The completed frame publishes immediately; a 150 ms stale-frame escape hatch prevents a broken application from freezing the surface indefinitely.
-4. User input can preempt a held synchronized frame, preserving interactive latency.
-5. A detached scrollback viewport is anchored as new rows arrive. Explicit terminal input returns to the live tail.
+1. `Bun.Terminal` can fragment a dense frame into hundreds of roughly 1 KiB callbacks. `TerminalOutputBuffer` copies those fragments into reusable buffers, finds DEC 2026 boundaries across arbitrary splits, and delivers each completed synchronized frame to the VT parser once. Adjacent end/start markers in one transport chunk remain separate frames.
+2. Ordinary output flushes at microtask latency, so prompts and device-status/capability queries are not delayed behind a paint callback. A one-second ingress escape hatch forwards an abandoned synchronized frame instead of retaining bytes indefinitely.
+3. Ordinary presentation notifications are coalesced to a 16 ms frame deadline. The deadline is measured from the previous frame start, so React/native paint work does not accumulate on top of every interval. Parsing never runs inside the timer.
+4. DEC private mode 2026 holds the last committed grid while a synchronized frame is incomplete. A completed frame remains atomic; the service's one-second stale escape hatch prevents a broken application from freezing the surface indefinitely without exposing healthy, high-volume frames halfway through.
+5. User input can preempt a held synchronized frame, preserving interactive latency. A detached scrollback viewport remains anchored as new rows arrive, and explicit terminal input returns to the live tail.
 
-`VtEmulator` parses numeric CSI parameters incrementally, reuses mutable cells, and invalidates each sequentially written row once per PTY chunk. Erase operations retain the active rendition (BCE), so inverse and explicit-background TUI rows reach the final column. `snapshot()` caches immutable rows by mutable-row revision: a one-cell update freezes only that row and unchanged row objects retain identity.
+`VtEmulator` parses complete CSI controls directly from a decoded chunk and falls back to its incremental state machine when a sequence straddles chunks. It reuses mutable cells and invalidates each sequentially written row once per delivered frame. Erase operations retain the active rendition (BCE), so inverse and explicit-background TUI rows reach the final column. `snapshot()` caches immutable rows by mutable-row revision: a one-cell update freezes only that row and unchanged row objects retain identity.
 
 On a patched GPUIX runtime, `TerminalView` projects the visible snapshot into a versioned binary frame: each cell is one 16-byte little-endian record containing a glyph reference, final foreground/background RGB, and flags. Multi-codepoint graphemes live in a small side table. The base64 payload crosses React/NAPI as one prop and updates one native host element. Stock GPUIX 0.6 uses the memoized React-run fallback.
 
@@ -35,7 +35,7 @@ Run the repeatable hot-path benchmark with:
 bun run benchmark:terminal
 ```
 
-It reports incremental snapshots, a 5 MiB ANSI parse, packed-frame projection, unchanged-row identity reuse, and a synchronized 160×50 high-churn TUI frame through VT parsing, React, NAPI, GPUI layout, and paint. The native benchmark also reports retained-node count. On the development machine after glyph warmup, the complete animated frame measured 0.57 ms median / 3.63 ms p95 with three retained nodes, compared with the previous 6,054-node React surface at roughly 72 ms per frame. Treat timings as hardware-dependent; the packed payload size, node count, and row reuse are structural guards.
+It reports incremental snapshots, a 5 MiB ANSI parse, packed-frame projection, unchanged-row identity reuse, and a synchronized 160×50 framebuffer through VT parsing, React, NAPI, GPUI layout, and paint. Every framebuffer cell uses an absolute cursor move, truecolor foreground/background, a Unicode block, and SGR reset—the control mix that exposed the Golden Star regression. On the development machine after the full test suite, this complete frame measured 4.47 ms median / 6.79 ms p95 with three retained nodes; native paint itself measured 0.11 ms p90. Separately, a captured 499 KiB Golden Star frame dropped from 34.54 ms to 3.17 ms median VT parse time after the complete-CSI path. Treat timings as hardware-dependent; the packed payload, workload shape, node count, and row reuse are the structural guards.
 
 ## Native rendering versus xterm.js
 
@@ -43,11 +43,11 @@ The xterm.js/WebGL fork in Localterm is not copied into the desktop bundle. Inst
 
 The native surface preserves terminal geometry rather than treating the grid as flexbox text:
 
-- one nearest-sampled `cols × rows` BGRA texture paints every cell background, including BCE highlights through the rightmost column;
+- one nearest-sampled `(cols × 2) × (rows × 2)` BGRA texture paints cell backgrounds plus exact half-block, quadrant, and shade masks, including BCE highlights through the rightmost column;
 - ordinary and double-width glyphs retain explicit column positions at fractional cell coordinates;
 - shaping is cached by text and font geometry, not ANSI color, then cached glyph-atlas masks are painted directly with the current foreground;
 - adjacent compatible cells remain one shaped run, preserving programming ligatures without per-cell retained nodes;
-- cursor, underline, and strike are exact grid quads, while block elements are folded into the background texture;
+- cursor, underline, and strike are exact grid quads; framebuffer block elements bypass shaping and thousands of glyph draws by becoming quarter-cell texture pixels;
 - disabling ligatures inserts zero-width non-joiners; Nerd Font ranges can use a separate family;
 - bold base ANSI colors resolve to bright variants, and muted emoji requests text presentation (`VS15`).
 

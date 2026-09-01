@@ -10,6 +10,8 @@ import {
 import { contrastRatio } from '../src/ui/terminal-color.ts'
 import {
   isNerdFontGlyph,
+  isTerminalFillGlyph,
+  isTerminalGraphicsGlyph,
   muteEmojiPresentation,
   paintTerminalCell,
   terminalPaintTheme,
@@ -55,6 +57,20 @@ describe('terminal native paint theme', () => {
     const painted = paintTerminalCell(lowContrast, theme)
     expect(painted.color).toMatch(/^#[0-9a-f]{6}$/i)
     expect(contrastRatio(painted.backgroundColor, painted.color)).toBeGreaterThanOrEqual(4.49)
+  })
+
+  it('only promotes a full block to a cell fill while preserving all block colors', () => {
+    expect(isTerminalFillGlyph('█')).toBe(true)
+    expect(isTerminalFillGlyph('▌')).toBe(false)
+    expect(isTerminalGraphicsGlyph('▌')).toBe(true)
+    expect(isTerminalGraphicsGlyph('A')).toBe(false)
+    const block = cell('▌', {
+      fg: { kind: 'rgb', r: 1, g: 2, b: 3 },
+      bg: { kind: 'rgb', r: 4, g: 5, b: 6 },
+    })
+    const painted = paintTerminalCell(block, terminalPaintTheme('light'))
+    expect(painted.color).toBe('#010203')
+    expect(terminalRowRuns([block], terminalPaintTheme('dark'), APPEARANCE)[0]?.fill).toBe(false)
   })
 
   it('maps bold base ANSI colors to their bright variants', () => {

@@ -1,6 +1,6 @@
 diff --git a/.changeset/quiet-terminals-capture-tabs.md b/.changeset/quiet-terminals-capture-tabs.md
 new file mode 100644
-index 0000000..78f81c0
+index 0000000..f84a816
 --- /dev/null
 +++ b/.changeset/quiet-terminals-capture-tabs.md
 @@ -0,0 +1,6 @@
@@ -9,9 +9,9 @@ index 0000000..78f81c0
 +"@gpuix/react": patch
 +---
 +
-+Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a packed fixed-cell terminal element backed by one background texture, cached shaping, and direct GPUI glyph-atlas painting.
++Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a packed fixed-cell terminal element backed by a nearest-sampled quarter-cell block texture, cached shaping, and direct GPUI glyph-atlas painting.
 diff --git a/README.md b/README.md
-index 0eb922b..b840b58 100644
+index 0eb922b..453a47a 100644
 --- a/README.md
 +++ b/README.md
 @@ -41,7 +41,7 @@ bun add -d @types/react typescript
@@ -55,7 +55,7 @@ index 0eb922b..b840b58 100644
 +/>
 +```
 +
-+The painter decodes the frame once, uploads all backgrounds as one nearest-sampled cell texture, and caches shaping independently of ANSI colour. It then paints GPUI's cached monochrome glyph-atlas coverage directly with each run's foreground, so colour animation does not reshape text or create a second atlas. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries.
++The painter decodes the frame once and uploads one nearest-sampled texture at two pixels per cell axis. Backgrounds occupy all four quarter-cell pixels; half blocks, quadrants, and shades replace the corresponding pixels with the foreground, bypassing text shaping for framebuffer graphics. Remaining text is shaped independently of ANSI colour and paints GPUI's cached monochrome glyph-atlas coverage directly with each run's foreground, so colour animation does not reshape text or create a second atlas. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries.
 +
  ## Native text components
  
@@ -157,10 +157,10 @@ index b3811c1..6cd7461 100644
  
 diff --git a/packages/native/src/custom_elements/terminal.rs b/packages/native/src/custom_elements/terminal.rs
 new file mode 100644
-index 0000000..e1d9f80
+index 0000000..5977913
 --- /dev/null
 +++ b/packages/native/src/custom_elements/terminal.rs
-@@ -0,0 +1,509 @@
+@@ -0,0 +1,565 @@
 +use std::{
 +    collections::HashMap,
 +    sync::{Arc, Mutex},
@@ -271,24 +271,7 @@ index 0000000..e1d9f80
 +        }
 +        let cells = decode_cells(&frame.cells, frame.cols.checked_mul(frame.rows)?)?;
 +        let background = parse_color(&frame.background, gpui::transparent_black());
-+        let mut background_bgra = vec![0; cells.len() * 4];
-+        for (index, cell) in cells.iter().enumerate() {
-+            let color = if cell.flags & CELL_FILL != 0 {
-+                cell.foreground
-+            } else {
-+                cell.background
-+            };
-+            let offset = index * 4;
-+            background_bgra[offset] = color as u8;
-+            background_bgra[offset + 1] = (color >> 8) as u8;
-+            background_bgra[offset + 2] = (color >> 16) as u8;
-+            background_bgra[offset + 3] = 255;
-+        }
-+        let background_image = Arc::new(gpui::RenderImage::from_bgra(
-+            frame.cols as u32,
-+            frame.rows as u32,
-+            background_bgra,
-+        )?);
++        let background_image = Arc::new(cell_image(&frame, &cells)?);
 +        let runs = build_runs(&frame, &cells);
 +        Some(Self {
 +            cols: frame.cols,
@@ -325,6 +308,62 @@ index 0000000..e1d9f80
 +    )
 +}
 +
++fn cell_image(frame: &WireFrame, cells: &[PackedCell]) -> Option<gpui::RenderImage> {
++    let width = frame.cols.checked_mul(2)?;
++    let height = frame.rows.checked_mul(2)?;
++    let mut bgra = vec![0; width.checked_mul(height)?.checked_mul(4)?];
++    for row in 0..frame.rows {
++        for column in 0..frame.cols {
++            let cell = cells[row * frame.cols + column];
++            let mask = if cell.flags & CELL_FILL != 0 {
++                0b1111
++            } else {
++                block_mask(cell.glyph).unwrap_or(0)
++            };
++            for pixel_y in 0..2 {
++                for pixel_x in 0..2 {
++                    let bit = 1 << (pixel_y * 2 + pixel_x);
++                    let color = if mask & bit != 0 {
++                        cell.foreground
++                    } else {
++                        cell.background
++                    };
++                    let offset = ((row * 2 + pixel_y) * width + column * 2 + pixel_x) * 4;
++                    bgra[offset] = color as u8;
++                    bgra[offset + 1] = (color >> 8) as u8;
++                    bgra[offset + 2] = (color >> 16) as u8;
++                    bgra[offset + 3] = 255;
++                }
++            }
++        }
++    }
++    gpui::RenderImage::from_bgra(width.try_into().ok()?, height.try_into().ok()?, bgra)
++}
++
++fn block_mask(glyph: u32) -> Option<u8> {
++    Some(match glyph {
++        0x2580 => 0b0011,
++        0x2584 => 0b1100,
++        0x2588 => 0b1111,
++        0x258c => 0b0101,
++        0x2590 => 0b1010,
++        0x2591 => 0b0001,
++        0x2592 => 0b1001,
++        0x2593 => 0b1110,
++        0x2596 => 0b0100,
++        0x2597 => 0b1000,
++        0x2598 => 0b0001,
++        0x2599 => 0b1101,
++        0x259a => 0b1001,
++        0x259b => 0b0111,
++        0x259c => 0b1011,
++        0x259d => 0b0010,
++        0x259e => 0b0110,
++        0x259f => 0b1110,
++        _ => return None,
++    })
++}
++
 +fn build_runs(frame: &WireFrame, cells: &[PackedCell]) -> Vec<PaintRun> {
 +    let mut runs = Vec::<PaintRun>::new();
 +    for row in 0..frame.rows {
@@ -341,6 +380,7 @@ index 0000000..e1d9f80
 +            let text = glyph_text(cell.glyph, &frame.graphemes);
 +            let decorated = cell.flags & (CELL_UNDERLINE | CELL_STRIKE) != 0;
 +            if cell.flags & CELL_FILL != 0
++                || block_mask(cell.glyph).is_some()
 +                || text.is_empty()
 +                || (text.chars().all(char::is_whitespace) && !decorated)
 +                || (cell.foreground == cell.background && !decorated)
@@ -639,6 +679,22 @@ index 0000000..e1d9f80
 +        self.frame = None;
 +        self.stale_images.clear();
 +        self.shape_cache.lock().unwrap().clear();
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::block_mask;
++
++    #[test]
++    fn maps_framebuffer_blocks_to_quarter_cell_masks() {
++        assert_eq!(block_mask('▀' as u32), Some(0b0011));
++        assert_eq!(block_mask('▄' as u32), Some(0b1100));
++        assert_eq!(block_mask('▌' as u32), Some(0b0101));
++        assert_eq!(block_mask('▐' as u32), Some(0b1010));
++        assert_eq!(block_mask('▙' as u32), Some(0b1101));
++        assert_eq!(block_mask('▟' as u32), Some(0b1110));
++        assert_eq!(block_mask('A' as u32), None);
 +    }
 +}
 +

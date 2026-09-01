@@ -1,8 +1,62 @@
 import { describe, expect, it } from 'bun:test'
-import { bunTerminalAvailable, BunPtyBackend } from '../src/terminal/backend.ts'
+import { bunTerminalAvailable, BunPtyBackend, TerminalOutputBuffer } from '../src/terminal/backend.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
 
 const describePty = bunTerminalAvailable() ? describe : describe.skip
+const encode = (value: string) => new TextEncoder().encode(value)
+const decode = (value: Uint8Array) => new TextDecoder().decode(value)
+
+describe('terminal output buffering', () => {
+  it('delivers ordinary output at microtask latency', async () => {
+    const chunks: string[] = []
+    const output = new TerminalOutputBuffer((chunk) => chunks.push(decode(chunk)))
+
+    output.write(encode('hel'))
+    output.write(encode('lo'))
+    expect(chunks).toEqual([])
+    await Promise.resolve()
+    expect(chunks).toEqual(['hello'])
+  })
+
+  it('coalesces fragmented DEC 2026 output into one complete frame', async () => {
+    const chunks: string[] = []
+    const output = new TerminalOutputBuffer((chunk) => chunks.push(decode(chunk)))
+
+    output.write(encode('\x1b[?2026hfirst'))
+    output.write(encode('-second'))
+    await Promise.resolve()
+    expect(chunks).toEqual([])
+    output.write(encode('\x1b[?20'))
+    output.write(encode('26l'))
+
+    expect(chunks).toEqual(['\x1b[?2026hfirst-second\x1b[?2026l'])
+  })
+
+  it('splits adjacent frames that share one transport chunk', async () => {
+    const chunks: string[] = []
+    const output = new TerminalOutputBuffer((chunk) => chunks.push(decode(chunk)))
+
+    output.write(encode('\x1b[?2026hone\x1b[?2026l\x1b[?2026htwo'))
+    await Promise.resolve()
+    expect(chunks).toEqual(['\x1b[?2026hone\x1b[?2026l'])
+    output.write(encode('\x1b[?2026l'))
+
+    expect(chunks).toEqual([
+      '\x1b[?2026hone\x1b[?2026l',
+      '\x1b[?2026htwo\x1b[?2026l',
+    ])
+  })
+
+  it('flushes an abandoned synchronized frame when closed', () => {
+    const chunks: string[] = []
+    const output = new TerminalOutputBuffer((chunk) => chunks.push(decode(chunk)))
+
+    output.write(encode('\x1b[?2026hpartial'))
+    output.close()
+
+    expect(chunks).toEqual(['\x1b[?2026hpartial'])
+  })
+})
 
 describePty('Bun.Terminal PTY', () => {
   it('runs a login-free shell command through the session service', async () => {
