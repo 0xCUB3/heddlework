@@ -157,17 +157,17 @@ describeNative('conversation extension overlays', () => {
     try {
       await Bun.sleep(30)
       root.renderer.flush()
-      const baseSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      const baseSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
       transport.emit({ type: 'extension_ui_request', id: 'fabric-status', method: 'setStatus', statusKey: 'fabric', statusText: '2 agents · 1 approval pending' })
       await Bun.sleep(30)
       root.renderer.flush()
 
-      const enteringSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      const enteringSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
       expect(enteringSpacerHeight).toBeGreaterThan(baseSpacerHeight)
       expect(enteringSpacerHeight).toBeLessThan(baseSpacerHeight + 35)
       await Bun.sleep(SPRING_SETTLE_MS + 80)
       root.renderer.flush()
-      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBeCloseTo(baseSpacerHeight + 35, 0)
+      expect((await automation.getByTestId('composer-spacer').bounds()).height).toBeCloseTo(baseSpacerHeight + 35, 0)
       const railBounds = await automation.getByTestId('extension-surface-rail').bounds()
       const conversationBottom = Math.max(...(await automation.getByTestId('message-footer').all()).flatMap((footer) => {
         const bounds = footer.bounds
@@ -179,12 +179,12 @@ describeNative('conversation extension overlays', () => {
       await Bun.sleep(30)
       root.renderer.flush()
       expect(await automation.getByTestId('extension-surface-rail').count()).toBe(0)
-      const exitingSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      const exitingSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
       expect(exitingSpacerHeight).toBeGreaterThan(baseSpacerHeight)
       expect(exitingSpacerHeight).toBeLessThan(baseSpacerHeight + 35)
       await Bun.sleep(SPRING_SETTLE_MS + 80)
       root.renderer.flush()
-      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBeCloseTo(baseSpacerHeight, 0)
+      expect((await automation.getByTestId('composer-spacer').bounds()).height).toBeCloseTo(baseSpacerHeight, 0)
     } finally {
       await automation.close()
       root.unmount()
@@ -365,17 +365,17 @@ describeNative('conversation extension overlays', () => {
       }
 
       await automation.getByTestId('ask-user-review-0').click()
-      const spacerHeightBeforeCollapse = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      const spacerHeightBeforeCollapse = (await automation.getByTestId('composer-spacer').bounds()).height
       await automation.getByTestId('ask-user-collapse').click()
       await Bun.sleep(40)
       root.renderer.flush()
       expect(await automation.getByTestId('ask-user-collapsed').count()).toBe(1)
-      const growingSpacerHeight = Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)
+      const growingSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
       expect(growingSpacerHeight).toBeGreaterThan(spacerHeightBeforeCollapse)
       expect(growingSpacerHeight).toBeLessThan(spacerHeightBeforeCollapse + 53)
       await Bun.sleep(SPRING_SETTLE_MS + 80)
       root.renderer.flush()
-      expect(Number(root.renderer.findByTestId('composer-spacer')?.style.height ?? 0)).toBeCloseTo(spacerHeightBeforeCollapse + 53, 0)
+      expect((await automation.getByTestId('composer-spacer').bounds()).height).toBeCloseTo(spacerHeightBeforeCollapse + 53, 0)
       const dockBounds = await automation.getByTestId('ask-user-collapsed').bounds()
       const conversationRows = [
         ...await automation.getByTestId('assistant-message').all(),

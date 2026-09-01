@@ -11,7 +11,7 @@ import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
-import { MotionDiv, SPRING_SETTLE_MS, TextShimmer, useEaseProgress, useSpringValue } from './motion.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS, TextShimmer, useEaseProgress } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 import type { ToolPresenter } from './tool-presenters.ts'
 import { resolveToolPresentation } from './tool-presenters.ts'
@@ -567,12 +567,12 @@ function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineIte
   )
 }
 
+const TRACE_CHEVRON_SOURCE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>'
+
 function TraceChevron({ expanded, size = 12 }: { expanded: boolean; size?: number }) {
-  const progress = useEaseProgress(expanded, 0.18)
-  const angle = (90 * progress).toFixed(2)
-  const source = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(${angle} 12 12)"><path d="m9 18 6-6-6-6"/></g></svg>`
   return React.createElement('svg', {
-    source,
+    source: TRACE_CHEVRON_SOURCE,
+    rotation: expanded ? 90 : 0,
     style: { width: size, height: size, flexShrink: 0, color: colors.textFaint, pointerEvents: 'none' },
   } as never)
 }
@@ -604,7 +604,7 @@ function ExecutionTraceHeader({
   const naturalHeight = !expanded && running ? Math.max(COLLAPSED_TRACE_ROW_HEIGHT, collapsedPreviewHeight(collapsedTools, preview, presenters)) : 0
   const leasedHeight = leasePreviewHeight(trace.boundaryId ?? trace.items[0]?.id ?? trace.id, naturalHeight, running)
   const extraHeight = Math.max(0, leasedHeight - naturalHeight)
-  const height = useSpringValue(leasedHeight, { stiffness: 320, damping: 34, positionEpsilon: 0.1, velocityEpsilon: 0.1 })
+  const height = leasedHeight
   return (
     <div testId="execution-trace" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', gap: 2, paddingLeft: 4, paddingRight: 2, userSelect: 'none' }}>
       <div
@@ -618,7 +618,7 @@ function ExecutionTraceHeader({
           : <text testId="execution-trace-label" style={{ color: colors.textMuted, fontSize: 13, userSelect: 'none', pointerEvents: 'none' }}>{compaction ?? (duration ? `Worked for ${duration}` : 'Worked')}</text>}
         <TraceChevron expanded={expanded} />
       </div>
-      {!expanded && height > 0.5 && (
+      {!expanded && (
         <WorkPreviewTransition height={height}>
           {running && preview && <TracePreview item={preview} />}
           {running && collapsedTools.length > 0 ? <CollapsedTraceTools items={collapsedTools} presenters={presenters} hidden={Math.max(0, wave.tools.length - collapsedTools.length)} /> : null}
@@ -725,7 +725,7 @@ function WorkPreviewTransition({ height, children }: { height: number; children:
   const initial = entered.current ? false : { opacity: 0, top: 4 }
   entered.current = true
   return (
-    <MotionDiv testId="execution-preview-transition" initial={initial} animate={{ opacity: 1, top: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }} style={{ position: 'relative', overflow: 'hidden', height, minHeight: height, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 2 }}>
+    <MotionDiv testId="execution-preview-transition" initial={initial} animate={{ opacity: 1, top: 0, height }} transition={LAYOUT_MOTION_TRANSITION} style={{ position: 'relative', overflow: 'hidden', height, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 2 }}>
       {children}
     </MotionDiv>
   )
@@ -847,7 +847,7 @@ function RetiringAssistantRow({ item, onRevert, onDone }: { item: AssistantTimel
     const timer = setTimeout(() => setOpen(false), 16)
     return () => clearTimeout(timer)
   }, [])
-  const height = useSpringValue(open ? RETIRING_ASSISTANT_HEIGHT : 0, { stiffness: 320, damping: 34, positionEpsilon: 0.1, velocityEpsilon: 0.1 })
+  const height = open ? RETIRING_ASSISTANT_HEIGHT : 0
   useEffect(() => {
     if (open) return
     const timer = setTimeout(() => onDoneRef.current(), SPRING_SETTLE_MS)
@@ -858,8 +858,8 @@ function RetiringAssistantRow({ item, onRevert, onDone }: { item: AssistantTimel
       <MotionDiv
         testId="retiring-assistant"
         initial={{ opacity: 1, top: 0 }}
-        animate={{ opacity: open ? 1 : 0, top: open ? 0 : -8 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
+        animate={{ opacity: open ? 1 : 0, top: open ? 0 : -8, height }}
+        transition={LAYOUT_MOTION_TRANSITION}
         style={{ position: 'relative', overflow: 'hidden', height: Math.max(0, height), width: '100%' }}
       >
         <AssistantMessage item={{ ...item, streaming: false }} onRevert={onRevert} />
@@ -997,8 +997,7 @@ function EmptyConversation({ workspacePath }: { workspacePath: string }) {
 
 function ComposerSpacer({ questionnaireCollapsed, queue, statusItems, widgets }: { questionnaireCollapsed: boolean; queue: WorkbenchState['queue']; statusItems: WorkbenchState['statusItems']; widgets: WorkbenchState['widgets'] }) {
   const targetHeight = 194 + questionnaireWaitingDockReserveHeight(questionnaireCollapsed) + queueDockReserveHeight(queue) + extensionSurfaceRailReserveHeight(widgets, statusItems)
-  const height = useSpringValue(targetHeight, { stiffness: 320, damping: 34, positionEpsilon: 0.1, velocityEpsilon: 0.1 })
-  return <div testId="composer-spacer" style={{ width: '100%', height: Math.max(0, height) }} />
+  return <MotionDiv initial={false} animate={{ height: targetHeight }} transition={LAYOUT_MOTION_TRANSITION} testId="composer-spacer" style={{ width: '100%', height: targetHeight }} />
 }
 
 function Timestamp({ value }: { value: number }) {

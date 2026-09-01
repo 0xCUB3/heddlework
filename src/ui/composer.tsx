@@ -11,7 +11,7 @@ import { editorTextAfterImagePaste, readClipboardImage } from './clipboard-media
 import { DROPDOWN_MOTION_MS, DropdownSurface } from './dropdown.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { QueueDock } from './queue-dock.tsx'
-import { useSpringProgress } from './motion.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { CommandPalette, ExtensionSurfaceRail, QuestionnaireWaitingDock } from './composer-surfaces.tsx'
 
 export { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
@@ -91,8 +91,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
   const hasComposerInput = Boolean(state.editorText.trim() || state.editorImages.length > 0)
   const canResumeQueue = !state.session.isStreaming && state.queue.paused && state.queue.items.length > 0 && !hasComposerInput
   const queueHintOpen = queueHintVisible && connected && !state.session.isStreaming
-  const queueHintProgress = useSpringProgress(queueHintOpen)
-  const primaryActionWidth = PRIMARY_ACTION_SIZE + (queueHintExpandedWidth() - PRIMARY_ACTION_SIZE) * queueHintProgress
+  const primaryActionWidth = queueHintOpen ? queueHintExpandedWidth() : PRIMARY_ACTION_SIZE
 
   const clearQueueHint = () => {
     if (queueHintTimer.current) clearTimeout(queueHintTimer.current)
@@ -327,7 +326,6 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
               disabled={!connected || (!state.session.isStreaming && !hasComposerInput && !canResumeQueue)}
               tabIndex={matchingCommands.length > 0 ? -1 : 0}
               queueHintVisible={queueHintOpen}
-              queueHintProgress={queueHintProgress}
               width={primaryActionWidth}
               onSend={() => send(state.editorText)}
               onStop={() => void controller.abort()}
@@ -337,9 +335,9 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
         <div testId="composer-seam-mask" style={{ position: 'absolute', left: 22, right: 22, bottom: 0, height: 2, backgroundColor: colors.composer, pointerEvents: 'none' }} />
       </div>
       {contextPopoverMounted && state.stats && (
-        <div testId="context-popover-positioner" style={{ position: 'absolute', right: layout.mobile ? 0 : 46 + primaryActionWidth - PRIMARY_ACTION_SIZE, bottom: 84, width: layout.mobile ? layout.popoverWidth : 256, display: 'flex', backgroundColor: colors.transparent }}>
+        <MotionDiv initial={false} animate={{ right: layout.mobile ? 0 : 46 + primaryActionWidth - PRIMARY_ACTION_SIZE }} transition={LAYOUT_MOTION_TRANSITION} testId="context-popover-positioner" style={{ position: 'absolute', right: layout.mobile ? 0 : 46 + primaryActionWidth - PRIMARY_ACTION_SIZE, bottom: 84, width: layout.mobile ? layout.popoverWidth : 256, display: 'flex', backgroundColor: colors.transparent }}>
           <ContextPopover stats={state.stats} open={contextPopoverOpen} width={layout.mobile ? layout.popoverWidth : 256} />
-        </div>
+        </MotionDiv>
       )}
       </div>
 
@@ -453,16 +451,19 @@ function ComposerImages({ images, onRemove }: { images: ComposerImage[]; onRemov
   )
 }
 
-function PrimaryAction({ running, disabled, queueHintVisible, queueHintProgress, width, tabIndex, onSend, onStop }: { running: boolean; disabled: boolean; queueHintVisible: boolean; queueHintProgress: number; width: number; tabIndex?: number; onSend(): void; onStop(): void }) {
+function PrimaryAction({ running, disabled, queueHintVisible, width, tabIndex, onSend, onStop }: { running: boolean; disabled: boolean; queueHintVisible: boolean; width: number; tabIndex?: number; onSend(): void; onStop(): void }) {
   const action = running ? onStop : onSend
   const background = running ? '#D72C58' : colors.primary
   return (
-    <div
+    <MotionDiv
+      initial={false}
+      animate={{ width }}
+      transition={LAYOUT_MOTION_TRANSITION}
       testId={running ? 'abort' : 'send'}
       tabIndex={disabled ? -1 : tabIndex ?? 0}
       style={{
         width,
-        minWidth: width,
+        minWidth: PRIMARY_ACTION_SIZE,
         height: PRIMARY_ACTION_SIZE,
         borderRadius: PRIMARY_ACTION_SIZE / 2,
         display: 'flex',
@@ -477,9 +478,13 @@ function PrimaryAction({ running, disabled, queueHintVisible, queueHintProgress,
       {...(disabled ? {} : { onClick: action, onKeyDown: (event: { key?: string }) => { if (event.key === 'enter') action() } })}
     >
       {queueHintVisible
-        ? <text testId="composer-queue-hint" style={{ color: '#FFFFFF', fontSize: 11, fontWeight: 700, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap', opacity: Math.min(1, queueHintProgress * 2) }}>{queueHintLabel()}</text>
+        ? (
+          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.16, ease: 'easeOut' }}>
+            <text testId="composer-queue-hint" style={{ color: '#FFFFFF', fontSize: 11, fontWeight: 700, fontFamily: nativeTheme.fontMono, whiteSpace: 'nowrap' }}>{queueHintLabel()}</text>
+          </MotionDiv>
+        )
         : <Icon name={running ? 'stop' : 'arrowUp'} size={17} color="#FFFFFF" />}
-    </div>
+    </MotionDiv>
   )
 }
 

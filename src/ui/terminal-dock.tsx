@@ -7,6 +7,7 @@ import { TerminalToolbar } from './terminal-chrome.tsx'
 import { TerminalView } from './terminal-view.tsx'
 import type { ResolvedTheme } from './theme.ts'
 import { useTerminalServiceSnapshot } from './terminal-context.tsx'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 
 export function TerminalDock({
   service,
@@ -55,7 +56,7 @@ export function TerminalDock({
   const trafficLightInset = process.platform === 'darwin' ? 96 * fullscreenProgress : 0
 
   return (
-    <div testId="terminal-dock" style={{ height, flexShrink: 0, display: 'flex', flexDirection: 'column', borderTopWidth: fullscreenProgress > 0.5 ? 0 : 1, borderColor: colors.border, backgroundColor: colors.panel, overflow: 'hidden' }}>
+    <MotionDiv initial={{ height: 0 }} animate={{ height }} transition={LAYOUT_MOTION_TRANSITION} testId="terminal-dock" style={{ height, flexShrink: 0, display: 'flex', flexDirection: 'column', borderTopWidth: fullscreenProgress > 0.5 ? 0 : 1, borderColor: colors.border, backgroundColor: colors.panel, overflow: 'hidden' }}>
       <div
         testId="terminal-dock-resize"
         style={{ height: TERMINAL_DOCK_RESIZE, flexShrink: 0, marginTop: -4, cursor: fullscreen ? 'default' : 'ns-resize', backgroundColor: colors.transparent }}
@@ -64,7 +65,7 @@ export function TerminalDock({
           onResizeStart(event.y ?? 0)
         }}
       />
-      <div testId="terminal-dock-header" style={{ height: TERMINAL_DOCK_HEADER, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 8 + trafficLightInset, paddingRight: 8, gap: 4 }}>
+      <MotionDiv initial={false} animate={{ paddingLeft: 8 + trafficLightInset }} transition={LAYOUT_MOTION_TRANSITION} testId="terminal-dock-header" style={{ height: TERMINAL_DOCK_HEADER, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 8 + trafficLightInset, paddingRight: 8, gap: 4 }}>
         <TerminalToolbar
           service={service}
           sessions={snapshot.sessions}
@@ -77,10 +78,10 @@ export function TerminalDock({
         />
         <IconButton icon={fullscreen ? 'minimize' : 'maximize'} label={fullscreen ? 'Restore terminal panel' : 'Fullscreen terminal panel'} testId={fullscreen ? 'terminal-dock-restore' : 'terminal-dock-fullscreen'} tabIndex={-1} onClick={() => { requestFocus(); onToggleFullscreen() }} />
         <IconButton icon="x" label="Close terminal panel" testId="close-terminal-dock" tabIndex={-1} onClick={onClose} />
-      </div>
+      </MotionDiv>
       <div style={{ height: viewHeight, minHeight: 0, flexGrow: 1 }}>
         <TerminalView service={service} sessionId={activeId} placement="bottom" width={width} height={viewHeight} appearance={appearance} focusSerial={focusSerial} />
       </div>
-    </div>
+    </MotionDiv>
   )
 }

@@ -2,6 +2,7 @@ import React from 'react'
 import { Icon, type IconName } from './icons.tsx'
 import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 
 export function RightPanelHeader({
   icon,
@@ -29,7 +30,7 @@ export function RightPanelHeader({
   const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
   const trafficLightInset = process.platform === 'darwin' ? 96 * titlebarProgress : 0
   return (
-    <div testId="right-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 9 + trafficLightInset, paddingRight: 9 }}>
+    <MotionDiv initial={false} animate={{ paddingLeft: 9 + trafficLightInset }} transition={LAYOUT_MOTION_TRANSITION} testId="right-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 9 + trafficLightInset, paddingRight: 9 }}>
       <div testId="right-panel-tab" style={{ height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 9, paddingRight: 9, borderRadius: 8, backgroundColor: colors.raised }}>
         <Icon name={icon} size={13} color={colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 11, fontWeight: 600 }}>{title}</text>
@@ -41,7 +42,7 @@ export function RightPanelHeader({
         {!fullscreenLocked && <IconButton icon={fullscreen ? 'minimize' : 'maximize'} label={fullscreen ? `Restore ${title} panel` : `Fullscreen ${title} panel`} testId={fullscreen ? 'right-panel-restore' : 'right-panel-fullscreen'} onClick={onToggleFullscreen} />}
         <IconButton icon="x" label={`Close ${title} panel`} testId={title === 'Diff' ? 'close-diff' : 'close-surface'} onClick={onClose} />
       </div>
-    </div>
+    </MotionDiv>
   )
 }
 

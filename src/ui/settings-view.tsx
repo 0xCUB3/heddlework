@@ -8,11 +8,13 @@ import { Button } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 import { useResponsiveLayout } from './responsive.tsx'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 
 export function SettingsView({
   state,
   controller,
   theme,
+  titlebarInset,
   onThemeModeChange,
   terminals,
   onClose,
@@ -20,19 +22,20 @@ export function SettingsView({
   state: WorkbenchState
   controller: WorkbenchController
   theme: ThemeSnapshot
+  titlebarInset?: number | undefined
   onThemeModeChange(mode: ThemeMode): void
   terminals?: TerminalSessionService | undefined
   onClose(): void
 }) {
   const { mobile, compact, contentGutter } = useResponsiveLayout()
-  const titlebarInset = compact ? (process.platform === 'darwin' ? 132 : 54) : 18
+  const resolvedTitlebarInset = titlebarInset ?? (compact ? (process.platform === 'darwin' ? 132 : 54) : 18)
   return (
     <div testId="settings-view" style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
-      <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: titlebarInset, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
+      <MotionDiv initial={false} animate={{ paddingLeft: resolvedTitlebarInset }} transition={LAYOUT_MOTION_TRANSITION} style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: resolvedTitlebarInset, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Settings</text>
         <div style={{ flexGrow: 1 }} />
         <Button label="Done" compact onClick={onClose} />
-      </div>
+      </MotionDiv>
       <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'scroll', display: 'flex', flexDirection: 'row', justifyContent: 'center', paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
         <div testId="settings-global" style={{ width: '100%', maxWidth: 720, minHeight: mobile ? 0 : 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
           <SettingsSection title="Runtime" description="Global Pi connection settings for this application.">

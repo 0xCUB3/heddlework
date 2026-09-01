@@ -3,7 +3,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { queueItemsInDeliveryOrder, queueSize, queuedInputControl, type QueuedInput, type WorkbenchQueueState } from '../workbench/queue.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { MotionDiv, useSpringProgress } from './motion.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 import { NativeVirtualList, useNativeVirtualWindow } from './virtual-list.tsx'
@@ -45,9 +45,9 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
   const virtualWindow = useNativeVirtualWindow(rows.length, `queue:${rows.length}:${rows[0]?.id ?? ''}:${rows.at(-1)?.id ?? ''}`)
   const visibleRows = rows.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   const drainable = state.queue.items.some((item) => !item.flow && !queuedInputControl(item))
-  const openProgress = Math.min(1, useSpringProgress(expanded && rows.length > 0))
+  const open = expanded && rows.length > 0
   const listTargetHeight = Math.min(MAX_LIST_HEIGHT, rows.length * ROW_HEIGHT + 8)
-  const listHeight = listTargetHeight * openProgress
+  const listHeight = open ? listTargetHeight : 0
   const height = COLLAPSED_HEIGHT + listHeight
 
   useEffect(() => {
@@ -72,9 +72,15 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
   }
 
   return (
-    <div testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 8, overflow: 'hidden', userSelect: 'none', pointerEvents: 'auto' }}>
+    <MotionDiv initial={false} animate={{ height }} transition={LAYOUT_MOTION_TRANSITION} testId="queue-dock" style={{ position: 'relative', width: '100%', maxWidth: 768, height, flexShrink: 0, marginBottom: 8, overflow: 'hidden', userSelect: 'none', pointerEvents: 'auto' }}>
       <div testId="queue-panel" style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, top: 0, bottom: 0, borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised }} />
 
+      <MotionDiv
+        initial={false}
+        animate={{ height: listHeight, opacity: open ? 1 : 0 }}
+        transition={LAYOUT_MOTION_TRANSITION}
+        style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: COLLAPSED_HEIGHT, height: listHeight, overflow: 'hidden' }}
+      >
       <NativeVirtualList
         testId="queue-scroll"
         alignment="top"
@@ -84,17 +90,13 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         windowStart={virtualWindow.windowStart}
         onVisibleRange={virtualWindow.onVisibleRange}
         style={{
-          position: 'absolute',
-          left: DOCK_INSET,
-          right: DOCK_INSET,
-          bottom: COLLAPSED_HEIGHT,
-          height: listHeight,
+          width: '100%',
+          height: '100%',
           display: 'flex',
           flexDirection: 'column',
           paddingTop: 4,
           paddingBottom: 4,
           overflow: 'hidden',
-          opacity: openProgress,
         }}
       >
         {visibleRows.map((row) => {
@@ -174,8 +176,9 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
           )
         })}
       </NativeVirtualList>
+      </MotionDiv>
 
-      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: openProgress > 0 ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
+      <div testId="queue-header" tabIndex={0} style={{ position: 'absolute', left: DOCK_INSET, right: DOCK_INSET, bottom: 0, height: HEADER_HEIGHT, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 11, borderTopWidth: open ? 1 : 0, borderColor: colors.border, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => setExpanded((value) => !value)}>
         <Icon name="list" size={13} color={state.queue.paused ? colors.warning : colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{`${rows.length} queued`}</text>
         <text {...(state.queue.blockingActivity ? { testId: 'queue-blocking-note' } : {})} style={{ minWidth: 0, flexGrow: 1, color: state.queue.blockingActivity ? colors.warning : colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{state.queue.blockingNote ?? first.text ?? 'Image attachment'}</text>
@@ -206,6 +209,6 @@ export function QueueDock({ state, controller }: { state: WorkbenchState; contro
         )}
         <Icon name={expanded ? 'chevronDown' : 'chevronUp'} size={12} color={colors.textFaint} />
       </div>
-    </div>
+    </MotionDiv>
   )
 }

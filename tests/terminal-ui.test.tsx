@@ -152,6 +152,8 @@ describeNative('terminal panels', () => {
       expect(await automation.getByTestId('terminal-view-right').count()).toBe(1)
       expect(await automation.getByTestId('terminal-grid').count()).toBe(1)
       if (nativeTerminal) expect(root.renderer.findByType('terminal')).toHaveLength(1)
+      await Bun.sleep(SPRING_SETTLE_MS * 2)
+      root.renderer.flush()
 
       await automation.getByTestId('terminal-dock-restore').click()
       await Bun.sleep(SPRING_SETTLE_MS * 2)

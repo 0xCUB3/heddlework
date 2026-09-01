@@ -1,6 +1,6 @@
 diff --git a/.changeset/quiet-terminals-capture-tabs.md b/.changeset/quiet-terminals-capture-tabs.md
 new file mode 100644
-index 0000000..810a694
+index 0000000..8f2b311
 --- /dev/null
 +++ b/.changeset/quiet-terminals-capture-tabs.md
 @@ -0,0 +1,6 @@
@@ -9,20 +9,22 @@ index 0000000..810a694
 +"@gpuix/react": patch
 +---
 +
-+Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, add a packed fixed-cell terminal with stable atlas updates and cached-scene presentation, and keep the embedded macOS AppKit pump nonblocking for PTY and timer callbacks.
++Allow focused hosts to capture Tab without native traversal, add packed fixed-cell terminal and GPUI-owned shimmer hosts, spring-rotate SVG targets, keep the embedded macOS AppKit pump nonblocking, extend native motion to flex growth and directional padding, and synthesize clicks only for the primary mouse button.
 diff --git a/README.md b/README.md
-index 0eb922b..d0b8403 100644
+index 0eb922b..4e51478 100644
 --- a/README.md
 +++ b/README.md
-@@ -41,7 +41,7 @@ bun add -d @types/react typescript
+@@ -41,8 +41,8 @@ bun add -d @types/react typescript
  ### 1. Point TypeScript at the GPUIX JSX types
  
  **`jsxImportSource` is required.** Without it TypeScript uses DOM types, so
 -`<virtual-list>`, `<markdown>`, `<code>` and `style.hover` all fail to
-+`<virtual-list>`, `<markdown>`, `<code>`, `<terminal>` and `style.hover` all fail to
- typecheck.
+-typecheck.
++`<virtual-list>`, `<markdown>`, `<code>`, `<shimmer>`, `<terminal>` and
++`style.hover` all fail to typecheck.
  
  ```json
+ {
 @@ -672,8 +672,11 @@ This is a remount, not React Refresh. Keeping hook state needs Bun to inject
  Native `.node` edits still need a rebuild. See [Developing the Rust side](#developing-the-rust-side).
  
@@ -37,10 +39,36 @@ index 0eb922b..d0b8403 100644
  
  On **Windows and Linux**, GPUI runs its normal blocking native event loop on one
  dedicated Rust UI thread. Node sends in-process commands to that thread, so
-@@ -1749,6 +1752,42 @@ assert the geometry without a screenshot. Zed's own editor paints search
+@@ -726,7 +729,9 @@ Motion currently accepts these **numeric targets**:
+ | Target | Range or unit |
+ |---|---|
+ | `width`, `height` | pixels, zero or greater |
++| `flexGrow` | unitless, zero or greater |
+ | `top`, `right`, `bottom`, `left` | pixels |
++| `paddingTop`, `paddingRight`, `paddingBottom`, `paddingLeft` | pixels, zero or greater |
+ | `opacity` | `0` through `1` |
+ | `borderRadius` | pixels, zero or greater |
+ 
+@@ -1749,6 +1754,58 @@ assert the geometry without a screenshot. Zed's own editor paints search
  highlights manually for the same reason.
  </details>
  
++## Native shimmer text
++
++`<shimmer>` paints a repeating travelling highlight with GPUI’s animation clock, so decorative frames do not re-render React. `duration` is measured in seconds, and GPUI automatically stops the animation when reduced motion is enabled. Keep the same text as a child so retained-tree automation and accessibility can read it.
++
++```tsx
++<shimmer
++  text="Working"
++  baseColor="#8b8b8b"
++  highlightColor="#ffffff"
++  duration={2}
++  style={{ fontSize: 13, fontWeight: 650 }}
++>
++  Working
++</shimmer>
++```
++
 +## Native terminal surface
 +
 +`<terminal>` is a low-level fixed-cell painter for applications that already own a VT parser and PTY. It remains one retained host node. Cells use a row-major buffer of 16-byte little-endian records: `u32 glyph`, `u32 foreground RGB`, `u32 background RGB`, `u16 flags`, and two reserved bytes. A glyph with bit 31 set indexes `graphemes`; otherwise it is a Unicode scalar value. Flag bits 0–7 are wide, spacer, bold, italic, underline, strike, block-fill, and Nerd Font respectively.
@@ -80,7 +108,17 @@ index 0eb922b..d0b8403 100644
  ## Native text components
  
  Three elements render text with Syntect syntax highlighting computed in
-@@ -2011,6 +2050,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
+@@ -1927,7 +1984,8 @@ placeholder instead of crashing.
+ 
+ `<svg>` uses GPUI's **monochrome icon renderer**. Raw `source` works on desktop
+ and in the browser. Desktop apps can also use a local `src` path. The icon is
+-drawn as one shape and tinted with `style.color`.
++drawn as one shape and tinted with `style.color`. Set `rotation` to a clockwise
++degree target to retarget a GPUI-owned spring without rendering React frames.
+ 
+ For application icons, prefer **raw SVG source**. It works with both GPUIX
+ targets and lets a bundler embed each icon in the JavaScript bundle. Use `src`
+@@ -2011,6 +2069,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
  automatically. A listener alone does not put a `div` in the Tab order; add
  `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
  
@@ -95,10 +133,11 @@ index 0eb922b..d0b8403 100644
  A node that listens for both `onMouseDown` and `onMouseMove` **captures the
  pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
  `onMouseMove` and `onMouseUp` keep firing after the pointer leaves the hitbox,
-@@ -2556,6 +2603,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
+@@ -2556,6 +2622,8 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
  - [x] Image and SVG elements (`<img>`, `<svg>`)
  - [x] Virtual lists (`<virtual-list>`)
  - [x] Native text components (`<code>`, `<diff>`, `<markdown>`)
++- [x] GPUI-owned decorative text animation (`<shimmer>`)
 +- [x] Fixed-cell GPU terminal surface (`<terminal>`)
  - [x] Cross-element text selection
  - [x] Text highlighting and search (`highlight`, `useTextSearch`)
@@ -157,26 +196,333 @@ index 2d9b6e6..8c041f5 100644
    /**
     * The offscreen window size, so `useWindowSize()` reports the same numbers
     * under test as in a real window instead of falling back to a default.
+diff --git a/packages/native/src/custom_elements/img.rs b/packages/native/src/custom_elements/img.rs
+index fbe0525..49d328b 100644
+--- a/packages/native/src/custom_elements/img.rs
++++ b/packages/native/src/custom_elements/img.rs
+@@ -159,6 +159,7 @@ pub struct SvgElement {
+     src: String,
+     bytes: Option<std::sync::Arc<[u8]>>,
+     source: String,
++    rotation_degrees: Option<f32>,
+ }
+ 
+ impl SvgElement {
+@@ -228,6 +229,27 @@ impl CustomElement for SvgElement {
+             .and_then(|style| style.color.as_deref())
+             .and_then(crate::color::parse_color_rgba)
+             .unwrap_or_else(|| gpui::rgb(0xe2e2e2).into());
++        if let Some(rotation_degrees) = self.rotation_degrees {
++            use gpui::AnimationExt as _;
++
++            let root = super::custom_surface(gpui::div().id(element_id), &ctx);
++            let animation_id = gpui::SharedString::from(format!("__gpuix_svg_rotation_{}", ctx.id));
++            let icon = gpui::svg()
++                .data(bytes)
++                .size_full()
++                .text_color(tint)
++                .with_spring(
++                    animation_id,
++                    gpui::SpringAnimation::new(gpui::SpringConfig::new(320.0, 30.0, 1.0))
++                        .to(rotation_degrees.to_radians())
++                        .with_epsilon(0.001),
++                    |icon, angle| {
++                        icon.with_transformation(gpui::Transformation::rotate(gpui::radians(angle)))
++                    },
++                );
++            return root.child(icon).into_any_element();
++        }
++
+         let mut icon = gpui::svg()
+             .data(bytes)
+             .flex_none()
+@@ -244,12 +266,18 @@ impl CustomElement for SvgElement {
+         match key {
+             "src" => self.load_src(value.as_str().unwrap_or_default().to_string()),
+             "source" => self.source = value.as_str().unwrap_or_default().to_string(),
++            "rotation" => {
++                self.rotation_degrees = value
++                    .as_f64()
++                    .filter(|value| value.is_finite())
++                    .map(|value| value as f32);
++            }
+             _ => {}
+         }
+     }
+ 
+     fn supported_props(&self) -> &'static [&'static str] {
+-        &["src", "source"]
++        &["src", "source", "rotation"]
+     }
+ 
+     fn supported_events(&self) -> &'static [&'static str] {
 diff --git a/packages/native/src/custom_elements/mod.rs b/packages/native/src/custom_elements/mod.rs
-index b3811c1..6cd7461 100644
+index b3811c1..4e2b009 100644
 --- a/packages/native/src/custom_elements/mod.rs
 +++ b/packages/native/src/custom_elements/mod.rs
-@@ -19,6 +19,7 @@ pub mod diff;
+@@ -19,6 +19,8 @@ pub mod diff;
  pub mod img;
  pub mod input;
  pub mod markdown;
++pub mod shimmer;
 +pub mod terminal;
  
  // ── Render context ───────────────────────────────────────────────────
  
-@@ -285,6 +286,7 @@ impl CustomElementRegistry {
+@@ -144,13 +146,14 @@ pub(crate) fn wire_standard_events<E: gpui::StatefulInteractiveElement>(
+         let callback = ctx.event_callback.clone();
+         match event.as_str() {
+             "click" => {
+-                el = el.on_click(move |click, _window, _cx| {
++                el = el.on_mouse_up(gpui::MouseButton::Left, move |mouse_event, _window, _cx| {
+                     crate::renderer::emit_event_full(&callback, id, "click", |p| {
+-                        let (x, y) = crate::renderer::point_to_xy(click.position());
++                        let (x, y) = crate::renderer::point_to_xy(mouse_event.position);
+                         p.x = Some(x);
+                         p.y = Some(y);
+-                        p.click_count = Some(click.click_count() as u32);
+-                        p.modifiers = Some(click.modifiers().into());
++                        p.button = Some(0);
++                        p.click_count = Some(mouse_event.click_count as u32);
++                        p.modifiers = Some(mouse_event.modifiers.into());
+                     });
+                 });
+             }
+@@ -285,6 +288,8 @@ impl CustomElementRegistry {
          registry.register(Box::new(code::CodeFactory));
          registry.register(Box::new(diff::DiffFactory));
          registry.register(Box::new(markdown::MarkdownFactory));
++        registry.register(Box::new(shimmer::ShimmerFactory));
 +        registry.register(Box::new(terminal::TerminalFactory));
          registry
      }
  
+diff --git a/packages/native/src/custom_elements/shimmer.rs b/packages/native/src/custom_elements/shimmer.rs
+new file mode 100644
+index 0000000..f42cfcb
+--- /dev/null
++++ b/packages/native/src/custom_elements/shimmer.rs
+@@ -0,0 +1,220 @@
++use std::time::Duration;
++
++use gpui::{Animation, AnimationExt, Font, Hsla, Rgba, SharedString, TextRun};
++
++use super::{CustomElement, CustomElementFactory, CustomRenderContext};
++
++const DEFAULT_DURATION_SECONDS: f64 = 2.0;
++
++pub struct ShimmerFactory;
++
++impl CustomElementFactory for ShimmerFactory {
++    fn element_type(&self) -> &str {
++        "shimmer"
++    }
++
++    fn create(&self, _id: u64) -> Box<dyn CustomElement> {
++        Box::new(ShimmerElement::default())
++    }
++}
++
++#[derive(Debug, Clone)]
++pub struct ShimmerElement {
++    text: String,
++    base_color: String,
++    highlight_color: String,
++    duration: f64,
++}
++
++impl Default for ShimmerElement {
++    fn default() -> Self {
++        Self {
++            text: String::new(),
++            base_color: "#8b8b8b".to_string(),
++            highlight_color: "#ffffff".to_string(),
++            duration: DEFAULT_DURATION_SECONDS,
++        }
++    }
++}
++
++impl CustomElement for ShimmerElement {
++    fn render(
++        &mut self,
++        ctx: CustomRenderContext,
++        _window: &mut gpui::Window,
++        _cx: &mut gpui::Context<crate::renderer::GpuixView>,
++    ) -> gpui::AnyElement {
++        use gpui::prelude::*;
++
++        let root = super::custom_surface(
++            gpui::div().id(SharedString::from(format!("__gpuix_shimmer_{}", ctx.id))),
++            &ctx,
++        );
++        if self.text.is_empty() {
++            return root.into_any_element();
++        }
++
++        let text = SharedString::from(self.text.clone());
++        let byte_lengths: Vec<usize> = self.text.chars().map(char::len_utf8).collect();
++        let glyph_count = byte_lengths.len();
++        let base = parse_color(
++            &self.base_color,
++            Rgba {
++                r: 0.55,
++                g: 0.55,
++                b: 0.55,
++                a: 1.0,
++            },
++        );
++        let highlight = parse_color(
++            &self.highlight_color,
++            Rgba {
++                r: 1.0,
++                g: 1.0,
++                b: 1.0,
++                a: 1.0,
++            },
++        );
++        let mut font = ctx
++            .style
++            .and_then(|style| style.font_family.as_deref())
++            .map(gpui::font)
++            .unwrap_or_default();
++        if let Some(weight) = ctx.style.and_then(|style| style.font_weight.as_ref()) {
++            font.weight = crate::renderer::parse_font_weight(weight);
++        }
++        let duration = if self.duration.is_finite() && self.duration > 0.0 {
++            self.duration.clamp(0.1, 60.0)
++        } else {
++            DEFAULT_DURATION_SECONDS
++        };
++        let animation_id = SharedString::from(format!("__gpuix_shimmer_animation_{}", ctx.id));
++        let animated = gpui::div().with_animation(
++            animation_id,
++            Animation::new(Duration::from_secs_f64(duration))
++                .repeat_synced()
++                .with_max_fps(30.0),
++            move |el, phase| {
++                let runs = shimmer_runs(&byte_lengths, &font, base, highlight, phase, glyph_count);
++                el.child(crate::text::chrome_text(text.clone(), Some(runs)))
++            },
++        );
++
++        root.child(animated).into_any_element()
++    }
++
++    fn set_prop(&mut self, key: &str, value: serde_json::Value) {
++        match key {
++            "text" => self.text = value.as_str().unwrap_or("").to_string(),
++            "baseColor" => {
++                self.base_color = value.as_str().unwrap_or("#8b8b8b").to_string();
++            }
++            "highlightColor" => {
++                self.highlight_color = value.as_str().unwrap_or("#ffffff").to_string();
++            }
++            "duration" => {
++                self.duration = value
++                    .as_f64()
++                    .filter(|value| value.is_finite() && *value > 0.0)
++                    .unwrap_or(DEFAULT_DURATION_SECONDS);
++            }
++            _ => {}
++        }
++    }
++
++    fn supported_props(&self) -> &'static [&'static str] {
++        &["text", "baseColor", "highlightColor", "duration"]
++    }
++
++    fn supported_events(&self) -> &'static [&'static str] {
++        &[]
++    }
++
++    fn destroy(&mut self) {}
++}
++
++fn parse_color(value: &str, fallback: Rgba) -> Rgba {
++    crate::color::parse_color_rgba(value).unwrap_or(fallback)
++}
++
++fn shimmer_runs(
++    byte_lengths: &[usize],
++    font: &Font,
++    base: Rgba,
++    highlight: Rgba,
++    phase: f32,
++    glyph_count: usize,
++) -> Vec<TextRun> {
++    let center = phase * (glyph_count as f32 + 2.0) - 1.0;
++    byte_lengths
++        .iter()
++        .enumerate()
++        .map(|(index, &len)| {
++            let amount = (1.0 - (index as f32 - center).abs() / 1.6).clamp(0.0, 1.0);
++            TextRun {
++                len,
++                font: font.clone(),
++                color: mix_color(base, highlight, amount),
++                background_color: None,
++                underline: None,
++                strikethrough: None,
++            }
++        })
++        .collect()
++}
++
++fn mix_color(base: Rgba, highlight: Rgba, amount: f32) -> Hsla {
++    let amount = amount.clamp(0.0, 1.0);
++    Rgba {
++        r: base.r + (highlight.r - base.r) * amount,
++        g: base.g + (highlight.g - base.g) * amount,
++        b: base.b + (highlight.b - base.b) * amount,
++        a: base.a + (highlight.a - base.a) * amount,
++    }
++    .into()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn builds_exact_utf8_runs_and_moves_the_highlight() {
++        let lengths: Vec<usize> = "Wørk".chars().map(char::len_utf8).collect();
++        let base = Rgba {
++            r: 0.2,
++            g: 0.2,
++            b: 0.2,
++            a: 1.0,
++        };
++        let highlight = Rgba {
++            r: 0.9,
++            g: 0.9,
++            b: 0.9,
++            a: 1.0,
++        };
++        let start = shimmer_runs(
++            &lengths,
++            &Font::default(),
++            base,
++            highlight,
++            0.0,
++            lengths.len(),
++        );
++        let middle = shimmer_runs(
++            &lengths,
++            &Font::default(),
++            base,
++            highlight,
++            0.5,
++            lengths.len(),
++        );
++
++        assert_eq!(start.iter().map(|run| run.len).sum::<usize>(), "Wørk".len());
++        assert_eq!(
++            middle.iter().map(|run| run.len).sum::<usize>(),
++            "Wørk".len()
++        );
++        assert_ne!(start, middle);
++    }
++}
 diff --git a/packages/native/src/custom_elements/terminal.rs b/packages/native/src/custom_elements/terminal.rs
 new file mode 100644
 index 0000000..4eafff2
@@ -1143,11 +1489,202 @@ index 0000000..4eafff2
 +    }
 +    Ok(())
 +}
+diff --git a/packages/native/src/motion.rs b/packages/native/src/motion.rs
+index eb719b8..055a5cd 100644
+--- a/packages/native/src/motion.rs
++++ b/packages/native/src/motion.rs
+@@ -13,10 +13,15 @@ pub(crate) struct MotionStyle {
+     pub width: Option<f64>,
+     pub height: Option<f64>,
+     pub opacity: Option<f64>,
++    pub flex_grow: Option<f64>,
+     pub top: Option<f64>,
+     pub right: Option<f64>,
+     pub bottom: Option<f64>,
+     pub left: Option<f64>,
++    pub padding_top: Option<f64>,
++    pub padding_right: Option<f64>,
++    pub padding_bottom: Option<f64>,
++    pub padding_left: Option<f64>,
+     pub border_radius: Option<f64>,
+ }
+ 
+@@ -30,10 +35,15 @@ impl MotionStyle {
+             width: value(self.width, target.width, progress),
+             height: value(self.height, target.height, progress),
+             opacity: value(self.opacity, target.opacity, progress),
++            flex_grow: value(self.flex_grow, target.flex_grow, progress),
+             top: value(self.top, target.top, progress),
+             right: value(self.right, target.right, progress),
+             bottom: value(self.bottom, target.bottom, progress),
+             left: value(self.left, target.left, progress),
++            padding_top: value(self.padding_top, target.padding_top, progress),
++            padding_right: value(self.padding_right, target.padding_right, progress),
++            padding_bottom: value(self.padding_bottom, target.padding_bottom, progress),
++            padding_left: value(self.padding_left, target.padding_left, progress),
+             border_radius: value(self.border_radius, target.border_radius, progress),
+         }
+     }
+@@ -48,6 +58,9 @@ impl MotionStyle {
+         if let Some(value) = self.opacity {
+             style.opacity = Some(value);
+         }
++        if let Some(value) = self.flex_grow {
++            style.flex_grow = Some(value);
++        }
+         if let Some(value) = self.top {
+             style.top = Some(value);
+         }
+@@ -60,6 +73,18 @@ impl MotionStyle {
+         if let Some(value) = self.left {
+             style.left = Some(value);
+         }
++        if let Some(value) = self.padding_top {
++            style.padding_top = Some(value);
++        }
++        if let Some(value) = self.padding_right {
++            style.padding_right = Some(value);
++        }
++        if let Some(value) = self.padding_bottom {
++            style.padding_bottom = Some(value);
++        }
++        if let Some(value) = self.padding_left {
++            style.padding_left = Some(value);
++        }
+         if let Some(value) = self.border_radius {
+             style.border_radius = Some(value);
+         }
+@@ -240,10 +265,15 @@ fn validate_style(style: &MotionStyle) -> Result<(), String> {
+         ("width", style.width),
+         ("height", style.height),
+         ("opacity", style.opacity),
++        ("flexGrow", style.flex_grow),
+         ("top", style.top),
+         ("right", style.right),
+         ("bottom", style.bottom),
+         ("left", style.left),
++        ("paddingTop", style.padding_top),
++        ("paddingRight", style.padding_right),
++        ("paddingBottom", style.padding_bottom),
++        ("paddingLeft", style.padding_left),
+         ("borderRadius", style.border_radius),
+     ] {
+         if value.is_some_and(|value| !value.is_finite() || value.abs() > f32::MAX as f64) {
+@@ -252,9 +282,16 @@ fn validate_style(style: &MotionStyle) -> Result<(), String> {
+     }
+     if style.width.is_some_and(|value| value < 0.0)
+         || style.height.is_some_and(|value| value < 0.0)
++        || style.flex_grow.is_some_and(|value| value < 0.0)
++        || style.padding_top.is_some_and(|value| value < 0.0)
++        || style.padding_right.is_some_and(|value| value < 0.0)
++        || style.padding_bottom.is_some_and(|value| value < 0.0)
++        || style.padding_left.is_some_and(|value| value < 0.0)
+         || style.border_radius.is_some_and(|value| value < 0.0)
+     {
+-        return Err("motion sizes and borderRadius must be non-negative".to_string());
++        return Err(
++            "motion sizes, flexGrow, padding, and borderRadius must be non-negative".to_string(),
++        );
+     }
+     if style
+         .opacity
+@@ -371,6 +408,22 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn interpolates_flex_growth_and_directional_padding() {
++        let started = Instant::now();
++        let description = serde_json::json!({
++            "initial": { "flexGrow": 0.0, "paddingLeft": 8.0 },
++            "animate": { "flexGrow": 1.0, "paddingLeft": 104.0 },
++            "transition": { "duration": 1.0, "ease": "linear" }
++        });
++        let state = MotionState::new(&description, started).unwrap();
++        let middle = state.frame(started + Duration::from_millis(500));
++
++        assert_eq!(middle.style.flex_grow, Some(0.5));
++        assert_eq!(middle.style.padding_left, Some(56.0));
++        assert!(middle.active);
++    }
++
+     #[test]
+     fn disabled_initial_state_starts_at_the_target() {
+         let now = Instant::now();
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
-index 9620967..5da476c 100644
+index 9620967..d180d14 100644
 --- a/packages/native/src/renderer.rs
 +++ b/packages/native/src/renderer.rs
-@@ -1183,6 +1183,40 @@ impl GpuixRenderer {
+@@ -13,7 +13,7 @@
+ //!     setTimeout(loop, 8)
+ //!   })
+ #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+-use futures::{channel::mpsc, StreamExt as _};
++use futures::{StreamExt as _, channel::mpsc};
+ use gpui::AppContext as _;
+ #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+ use napi::bindgen_prelude::*;
+@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
+ #[cfg(any(target_os = "macos", target_family = "wasm"))]
+ use std::rc::Rc;
+ #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+-use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
++use std::sync::mpsc::{RecvTimeoutError, SyncSender, sync_channel};
+ use std::sync::{Arc, Mutex};
+ use std::time::Duration;
+ #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+@@ -36,7 +36,7 @@ use crate::custom_elements::{CustomElementRegistry, CustomRenderContext};
+ use crate::element_tree::EventPayload;
+ use crate::retained_tree::{RetainedTree, StyleTable};
+ use crate::style::StyleDesc;
+-use crate::text::{selectable_text, selection_frame_reset, SharedSelection};
++use crate::text::{SharedSelection, selectable_text, selection_frame_reset};
+ use crate::theme::Theme;
+ 
+ gpui::actions!(gpuix_focus, [FocusNext, FocusPrevious]);
+@@ -222,12 +222,8 @@ mod selection_scroll_tests {
+             selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(120.0))),
+             0.0
+         );
+-        assert!(
+-            selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(20.0))) < 0.0
+-        );
+-        assert!(
+-            selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(220.0))) > 0.0
+-        );
++        assert!(selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(20.0))) < 0.0);
++        assert!(selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(220.0))) > 0.0);
+         assert!(
+             selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(220.0)))
+                 > selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(200.0)))
+@@ -578,15 +574,17 @@ async fn run_ui_commands(
+                 response.send(top).ok();
+                 Ok(())
+             }
+-            UiCommand::GetWindowSize { response } => window.update(cx, move |_view, window, _cx| {
+-                let size = window.viewport_size();
+-                response
+-                    .send(WindowSize {
+-                        width: f32::from(size.width) as f64,
+-                        height: f32::from(size.height) as f64,
+-                    })
+-                    .ok();
+-            }),
++            UiCommand::GetWindowSize { response } => {
++                window.update(cx, move |_view, window, _cx| {
++                    let size = window.viewport_size();
++                    response
++                        .send(WindowSize {
++                            width: f32::from(size.width) as f64,
++                            height: f32::from(size.height) as f64,
++                        })
++                        .ok();
++                })
++            }
+             UiCommand::GetAutomationBounds { response } => {
+                 window.update(cx, move |_view, window, cx| {
+                     cx.notify();
+@@ -1183,6 +1181,40 @@ impl GpuixRenderer {
          cfg!(target_os = "macos")
      }
  
@@ -1188,7 +1725,30 @@ index 9620967..5da476c 100644
      /// The paintable size of the window in logical pixels, excluding any
      /// platform title bar. This used to answer a hardcoded 800x600, so anything
      /// that turned a mouse position into layout coordinates pointed at the
-@@ -2257,6 +2291,11 @@ impl WebGpuixRenderer {
+@@ -1576,8 +1608,9 @@ impl GpuixRenderer {
+         {
+             let (response, receiver) = sync_channel(1);
+             self.send_ui_command(UiCommand::GetListScrollTop { id, response })?;
+-            return Ok(recv_ui_response(receiver, "the GPUI list scroll query")?
+-                .map(|top| top.to_vec()));
++            return Ok(
++                recv_ui_response(receiver, "the GPUI list scroll query")?.map(|top| top.to_vec())
++            );
+         }
+ 
+         #[cfg(not(any(
+@@ -1921,9 +1954,7 @@ impl GpuixRenderer {
+ 
+         #[cfg(target_os = "macos")]
+         return update_window(move |_view, window, cx| {
+-            crate::automation::dispatch_scroll_wheel(
+-                window, cx, x, y, delta_x, delta_y, modifiers,
+-            );
++            crate::automation::dispatch_scroll_wheel(window, cx, x, y, delta_x, delta_y, modifiers);
+         });
+ 
+         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+@@ -2257,6 +2288,11 @@ impl WebGpuixRenderer {
  
      pub fn tick(&self) {}
  
@@ -1200,7 +1760,62 @@ index 9620967..5da476c 100644
      #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
      pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
          let window = web_sys::window()
-@@ -4096,6 +4135,30 @@ pub(crate) fn build_host_container(
+@@ -2499,7 +2535,14 @@ impl WebGpuixRenderer {
+     ) -> Result<(), wasm_bindgen::JsValue> {
+         let modifiers = crate::automation::parse_modifiers(modifiers.as_deref());
+         update_web_window(move |_view, window, cx| {
+-            crate::automation::dispatch_mouse_down(window, cx, x, y, button.unwrap_or(0), modifiers);
++            crate::automation::dispatch_mouse_down(
++                window,
++                cx,
++                x,
++                y,
++                button.unwrap_or(0),
++                modifiers,
++            );
+             cx.notify();
+         })
+     }
+@@ -2545,9 +2588,7 @@ impl WebGpuixRenderer {
+     ) -> Result<(), wasm_bindgen::JsValue> {
+         let modifiers = crate::automation::parse_modifiers(modifiers.as_deref());
+         update_web_window(move |_view, window, cx| {
+-            crate::automation::dispatch_scroll_wheel(
+-                window, cx, x, y, delta_x, delta_y, modifiers,
+-            );
++            crate::automation::dispatch_scroll_wheel(window, cx, x, y, delta_x, delta_y, modifiers);
+             cx.notify();
+         })
+     }
+@@ -3666,9 +3707,7 @@ impl gpui::Render for GpuixView {
+                     self.selection.clone(),
+                     move |position, app| {
+                         drag_move_view
+-                            .update(app, |view, cx| {
+-                                view.on_selection_mouse_move(position, cx)
+-                            })
++                            .update(app, |view, cx| view.on_selection_mouse_move(position, cx))
+                             .ok();
+                     },
+                     move |app| {
+@@ -3767,8 +3806,14 @@ pub(crate) fn build_element(
+     // resolves or counts matches that will not paint.
+     if let Some(value) = element.custom_props.get("highlight") {
+         let has_listener = element.events.contains("highlight");
+-        let resolved =
+-            resolve_highlight(ctx.highlights, ctx.tree, id, value, &Theme::dark(), has_listener);
++        let resolved = resolve_highlight(
++            ctx.highlights,
++            ctx.tree,
++            id,
++            value,
++            &Theme::dark(),
++            has_listener,
++        );
+         if let Some((_, Some(total))) = &resolved {
+             ctx.highlight_events.push((id, *total));
+         }
+@@ -4096,6 +4141,30 @@ pub(crate) fn build_host_container(
      {
          el = el.tab_index(tab_index).tab_stop(tab_index >= 0);
      }
@@ -1231,7 +1846,34 @@ index 9620967..5da476c 100644
  
      // Wire up events.
      // Some events (on_hover, on_click) require a stateful element (.id()),
-@@ -4738,6 +4801,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
+@@ -4106,17 +4175,19 @@ pub(crate) fn build_host_container(
+         let callback = ctx.event_callback.clone();
+         match event_type.as_str() {
+             // ── Click ────────────────────────────────────────────
+-            // Primary button only, like the DOM. Right and middle clicks go to
+-            // `onAuxClick`, and `onMouseDown` sees every button.
++            // GPUI's higher-level on_click gesture is not finalized by the
++            // embedded macOS pump. A primary mouse-up is the portable click
++            // boundary; right and middle buttons remain aux/mouse events.
+             "click" => {
+-                el = el.on_click(move |click_event, _window, _cx| {
++                el = el.on_mouse_up(gpui::MouseButton::Left, move |mouse_event, _window, _cx| {
+                     emit_event_full(&callback, id, "click", |p| {
+-                        let (x, y) = point_to_xy(click_event.position());
++                        let (x, y) = point_to_xy(mouse_event.position);
+                         p.x = Some(x);
+                         p.y = Some(y);
+-                        p.modifiers = Some(click_event.modifiers().into());
+-                        p.click_count = Some(click_event.click_count() as u32);
+-                        p.is_right_click = Some(click_event.is_right_click());
++                        p.button = Some(0);
++                        p.modifiers = Some(mouse_event.modifiers.into());
++                        p.click_count = Some(mouse_event.click_count as u32);
++                        p.is_right_click = Some(false);
+                     });
+                 });
+             }
+@@ -4738,6 +4809,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
  /// caller customize it via a closure, then sends it through the callback.
  /// Production: queues on Node.js event loop via ThreadsafeFunction.
  /// Tests: pushes to a synchronous Vec for drainEvents().
@@ -1253,6 +1895,181 @@ index 9620967..5da476c 100644
  pub(crate) fn emit_event_full(
      callback: &Option<EventCallback>,
      element_id: u64,
+@@ -4837,7 +4923,9 @@ fn parse_batch_ops(bytes: &[u8]) -> BatchResult<Vec<BatchOp<'_>>> {
+ struct BatchOps<'a>(Vec<BatchOp<'a>>);
+ 
+ impl<'de> serde::Deserialize<'de> for BatchOps<'de> {
+-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
++    fn deserialize<D: serde::Deserializer<'de>>(
++        deserializer: D,
++    ) -> std::result::Result<Self, D::Error> {
+         struct OpsVisitor;
+ 
+         impl<'de> serde::de::Visitor<'de> for OpsVisitor {
+@@ -4862,7 +4950,7 @@ impl<'de> serde::Deserialize<'de> for BatchOps<'de> {
+                         Err(error) => {
+                             return Err(serde::de::Error::custom(format!(
+                                 "Batch op {index}: {error}"
+-                            )))
++                            )));
+                         }
+                     }
+                 }
+@@ -4881,7 +4969,9 @@ impl<'de> serde::Deserialize<'de> for BatchOps<'de> {
+ struct StrArg<'a>(std::borrow::Cow<'a, str>);
+ 
+ impl<'de> serde::Deserialize<'de> for StrArg<'de> {
+-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
++    fn deserialize<D: serde::Deserializer<'de>>(
++        deserializer: D,
++    ) -> std::result::Result<Self, D::Error> {
+         use std::borrow::Cow;
+         struct V;
+         impl<'de> serde::de::Visitor<'de> for V {
+@@ -4895,7 +4985,10 @@ impl<'de> serde::Deserialize<'de> for StrArg<'de> {
+             ) -> std::result::Result<StrArg<'de>, E> {
+                 Ok(StrArg(Cow::Borrowed(v)))
+             }
+-            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<StrArg<'de>, E> {
++            fn visit_str<E: serde::de::Error>(
++                self,
++                v: &str,
++            ) -> std::result::Result<StrArg<'de>, E> {
+                 Ok(StrArg(Cow::Owned(v.to_owned())))
+             }
+             fn visit_string<E: serde::de::Error>(
+@@ -4929,7 +5022,9 @@ fn next_id<'de, A: serde::de::SeqAccess<'de>>(
+ }
+ 
+ impl<'de> serde::Deserialize<'de> for BatchOp<'de> {
+-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
++    fn deserialize<D: serde::Deserializer<'de>>(
++        deserializer: D,
++    ) -> std::result::Result<Self, D::Error> {
+         struct V;
+ 
+         impl<'de> serde::de::Visitor<'de> for V {
+@@ -4973,7 +5068,9 @@ impl<'de> serde::Deserialize<'de> for BatchOp<'de> {
+                     },
+                     "setEventListener" => BatchOp::SetEventListener {
+                         id: next_id(&mut seq, "id")?,
+-                        event_type: next_arg::<A, StrArg>(&mut seq, "event type")?.0.into_owned(),
++                        event_type: next_arg::<A, StrArg>(&mut seq, "event type")?
++                            .0
++                            .into_owned(),
+                         has_handler: next_arg(&mut seq, "hasHandler")?,
+                     },
+                     "setRoot" => BatchOp::SetRoot {
+@@ -4987,7 +5084,7 @@ impl<'de> serde::Deserialize<'de> for BatchOp<'de> {
+                     other => {
+                         return Err(serde::de::Error::custom(format!(
+                             "unknown operation: {other:?}"
+-                        )))
++                        )));
+                     }
+                 };
+                 // Trailing arguments are tolerated, as they were when the op was
+@@ -5018,7 +5115,10 @@ fn intern_style_payload(
+ /// when it returns `Err`, which is what makes a batch atomic. An earlier
+ /// version interned inside the apply loop, so a malformed style at the end of a
+ /// batch left everything before it applied and then threw.
+-fn resolve_styles(styles: &mut StyleTable, ops: &[BatchOp<'_>]) -> BatchResult<Vec<Arc<StyleDesc>>> {
++fn resolve_styles(
++    styles: &mut StyleTable,
++    ops: &[BatchOp<'_>],
++) -> BatchResult<Vec<Arc<StyleDesc>>> {
+     let mut resolved = Vec::new();
+     for (index, op) in ops.iter().enumerate() {
+         if let BatchOp::SetStyle { style, .. } = op {
+@@ -5050,8 +5150,7 @@ pub fn apply_batch_to_tree(tree: &mut RetainedTree, bytes: &[u8]) -> BatchResult
+ 
+     // Phase 2: resolve styles. Touches the style table only; a failure here
+     // sweeps back out whatever this call interned.
+-    let styles = resolve_styles(&mut tree.styles, &parsed)
+-        .inspect_err(|_| tree.styles.sweep())?;
++    let styles = resolve_styles(&mut tree.styles, &parsed).inspect_err(|_| tree.styles.sweep())?;
+     let mut styles = styles.into_iter();
+ 
+     // Phase 3: apply. Cannot fail.
+@@ -5367,7 +5466,11 @@ mod highlight_cache_tests {
+             resolve_highlight(&mut cache, &tree, 1, &spec(1), &theme, true).expect("resolves");
+         assert_eq!(Arc::as_ptr(&context.matches), matches, "no rescan");
+         assert_eq!(changed, None, "a cursor move is not a new result");
+-        assert_eq!(context.set.specs[0].active_index, Some(1), "spec still swapped");
++        assert_eq!(
++            context.set.specs[0].active_index,
++            Some(1),
++            "spec still swapped"
++        );
+     }
+ 
+     /// Editing the text must invalidate, or the wash paints over stale offsets.
+@@ -5398,8 +5501,8 @@ mod highlight_cache_tests {
+         let mut cache = HashMap::new();
+ 
+         declare(&mut tree, &query("fox"));
+-        let (_, changed) =
+-            resolve_highlight(&mut cache, &tree, 1, &query("fox"), &theme, false).expect("resolves");
++        let (_, changed) = resolve_highlight(&mut cache, &tree, 1, &query("fox"), &theme, false)
++            .expect("resolves");
+         assert_eq!(changed, None, "nothing to report without a listener");
+ 
+         let (_, changed) =
+@@ -5496,9 +5599,15 @@ mod batch_tests {
+     #[test]
+     fn a_null_style_is_an_error() {
+         let mut tree = RetainedTree::new();
+-        let error = apply(&mut tree, r#"[["createElement",1,"div"],["setStyle",1,null]]"#)
+-            .expect_err("null is not a style");
+-        assert!(error.contains("Batch op 1 setStyle parse error:"), "{error}");
++        let error = apply(
++            &mut tree,
++            r#"[["createElement",1,"div"],["setStyle",1,null]]"#,
++        )
++        .expect_err("null is not a style");
++        assert!(
++            error.contains("Batch op 1 setStyle parse error:"),
++            "{error}"
++        );
+         assert!(tree.elements.is_empty(), "and the batch stays atomic");
+     }
+ 
+@@ -5549,9 +5658,8 @@ mod batch_tests {
+     fn has_handler_requires_a_bool() {
+         for (payload, expected) in [("true", true), ("false", false)] {
+             let mut tree = RetainedTree::new();
+-            let json = format!(
+-                r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#
+-            );
++            let json =
++                format!(r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#);
+             apply(&mut tree, &json).expect("boolean handler state");
+             assert_eq!(
+                 tree.elements[&1].events.contains("click"),
+@@ -5562,9 +5670,8 @@ mod batch_tests {
+ 
+         for payload in ["0", "1", "0.5", r#""true""#] {
+             let mut tree = RetainedTree::new();
+-            let json = format!(
+-                r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#
+-            );
++            let json =
++                format!(r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#);
+             apply(&mut tree, &json).expect_err(&format!("hasHandler {payload} is not a boolean"));
+         }
+     }
+@@ -5579,7 +5686,10 @@ mod batch_tests {
+         for (json, what) in cases {
+             let mut tree = RetainedTree::new();
+             let error = apply(&mut tree, json).expect_err(what);
+-            assert!(error.starts_with("Failed to parse batch:"), "{what}: {error}");
++            assert!(
++                error.starts_with("Failed to parse batch:"),
++                "{what}: {error}"
++            );
+             assert!(tree.elements.is_empty(), "{what} mutated the tree");
+         }
+     }
 diff --git a/packages/native/src/test_renderer.rs b/packages/native/src/test_renderer.rs
 index a9b5d71..325356a 100644
 --- a/packages/native/src/test_renderer.rs
@@ -1282,51 +2099,84 @@ index a9b5d71..325356a 100644
      /// The offscreen window size, so `useWindowSize()` reports the same numbers
      /// under test as in a real window instead of falling back to a default.
      #[napi]
+diff --git a/packages/native/src/text/paint.rs b/packages/native/src/text/paint.rs
+index 7fa9657..28a2d88 100644
+--- a/packages/native/src/text/paint.rs
++++ b/packages/native/src/text/paint.rs
+@@ -627,10 +627,13 @@ fn register_drag_listeners(
+             return;
+         }
+         let mut selection = up_selection.lock();
++        let was_dragging = selection.is_dragging();
+         selection.cancel_pending();
+         selection.end_active_drag();
+         drop(selection);
+-        on_drag_end(cx);
++        if was_dragging {
++            on_drag_end(cx);
++        }
+     });
+ }
+ 
 diff --git a/packages/react/jsx-dev-runtime.d.ts b/packages/react/jsx-dev-runtime.d.ts
-index e987c1f..d0613c2 100644
+index e987c1f..9134677 100644
 --- a/packages/react/jsx-dev-runtime.d.ts
 +++ b/packages/react/jsx-dev-runtime.d.ts
-@@ -13,6 +13,7 @@ import type {
+@@ -12,7 +12,9 @@ import type {
+   InputProps,
    MarkdownProps,
    Props,
++  ShimmerProps,
    SvgProps,
 +  TerminalProps,
    TextareaProps,
    VirtualListProps,
  } from "./dist/types/host"
-@@ -40,6 +41,7 @@ export namespace JSX {
+@@ -40,6 +42,8 @@ export namespace JSX {
      code: CodeProps
      diff: DiffProps
      markdown: MarkdownProps
++    shimmer: ShimmerProps
 +    terminal: TerminalProps
      "virtual-list": VirtualListProps
    }
  }
 diff --git a/packages/react/jsx-runtime.d.ts b/packages/react/jsx-runtime.d.ts
-index 1c005b1..a57db33 100644
+index 1c005b1..66f060b 100644
 --- a/packages/react/jsx-runtime.d.ts
 +++ b/packages/react/jsx-runtime.d.ts
-@@ -14,6 +14,7 @@ import type {
+@@ -13,7 +13,9 @@ import type {
+   InputProps,
    MarkdownProps,
    Props,
++  ShimmerProps,
    SvgProps,
 +  TerminalProps,
    TextareaProps,
    VirtualListProps,
  } from "./dist/types/host"
-@@ -41,6 +42,7 @@ export namespace JSX {
+@@ -41,6 +43,8 @@ export namespace JSX {
      code: CodeProps
      diff: DiffProps
      markdown: MarkdownProps
++    shimmer: ShimmerProps
 +    terminal: TerminalProps
      "virtual-list": VirtualListProps
    }
  }
 diff --git a/packages/react/src/__tests__/events.test.tsx b/packages/react/src/__tests__/events.test.tsx
-index d07c8ea..1fffe39 100644
+index d07c8ea..957c8fb 100644
 --- a/packages/react/src/__tests__/events.test.tsx
 +++ b/packages/react/src/__tests__/events.test.tsx
-@@ -35,7 +35,7 @@ describe("frame loop", () => {
+@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach } from "vitest"
+ import React, { useState, useRef } from "react"
+ import { createTestRoot, hasNativeTestRenderer } from "../testing"
+ import { startFrameLoop } from "../reconciler/renderer.js"
++import { motion } from "../index"
+ import type { EventPayload } from "@gpuix/native"
+ import { expectScreenshotsDiffer, SHOTS_DIR } from "./test-utils"
+ 
+@@ -35,7 +36,7 @@ describe("frame loop", () => {
      loop.stop()
    })
  
@@ -1335,17 +2185,65 @@ index d07c8ea..1fffe39 100644
      let ticks = 0
      const loop = startFrameLoop(
        {
-@@ -50,7 +50,9 @@ describe("frame loop", () => {
+@@ -50,7 +51,9 @@ describe("frame loop", () => {
        },
        { frameMs: 20 },
      )
 -    await new Promise((resolve) => setTimeout(resolve, 8))
-+    await new Promise((resolve) => setTimeout(resolve, 1))
++    await Promise.resolve()
 +    expect(ticks).toBe(1)
 +    await new Promise((resolve) => setTimeout(resolve, 7))
      loop.stop()
      expect(ticks).toBeGreaterThanOrEqual(2)
    })
+@@ -142,6 +145,47 @@ describeNative("events", () => {
+         ]
+       `)
+     })
++
++    it("synthesizes click only for the primary button", () => {
++      const received: string[] = []
++      testRoot.render(
++        <div
++          style={{ width: 200, height: 50 }}
++          onMouseDown={() => received.push("down")}
++          onMouseUp={() => received.push("up")}
++          onClick={() => received.push("click")}
++        />,
++      )
++
++      testRoot.renderer.nativeSimulateMouseDown(10, 10, 2)
++      testRoot.renderer.nativeSimulateMouseUp(10, 10, 2)
++      expect(received).toEqual(["down", "up"])
++
++      testRoot.renderer.nativeSimulateMouseDown(10, 10, 0)
++      testRoot.renderer.nativeSimulateMouseUp(10, 10, 0)
++      expect(received.filter((event) => event === "down")).toHaveLength(2)
++      expect(received.filter((event) => event === "up")).toHaveLength(2)
++      expect(received.filter((event) => event === "click")).toHaveLength(1)
++    })
++
++    it("dispatches primary clicks from native motion elements", () => {
++      let clicks = 0
++      testRoot.render(
++        <motion.div
++          initial={false}
++          animate={{ width: 200 }}
++          style={{ width: 200, height: 50 }}
++          onClick={() => { clicks += 1 }}
++        />,
++      )
++
++      testRoot.renderer.nativeSimulateMouseDown(10, 10, 0)
++      testRoot.renderer.nativeSimulateMouseUp(10, 10, 0)
++      expect(clicks).toBe(1)
++      testRoot.renderer.nativeSimulateMouseDown(10, 10, 2)
++      testRoot.renderer.nativeSimulateMouseUp(10, 10, 2)
++      expect(clicks).toBe(1)
++    })
+   })
+ 
+   describe("keyboard events", () => {
 diff --git a/packages/react/src/__tests__/floating-controls.test.tsx b/packages/react/src/__tests__/floating-controls.test.tsx
 index 2a93c7a..366c8ec 100644
 --- a/packages/react/src/__tests__/floating-controls.test.tsx
@@ -1395,6 +2293,102 @@ index 2a93c7a..366c8ec 100644
    it("removes an element from tab order when tabIndex is removed", () => {
      function Demo() {
        const [secondEnabled, setSecondEnabled] = useState(true)
+diff --git a/packages/react/src/__tests__/img.test.tsx b/packages/react/src/__tests__/img.test.tsx
+index 135958a..cf326cb 100644
+--- a/packages/react/src/__tests__/img.test.tsx
++++ b/packages/react/src/__tests__/img.test.tsx
+@@ -133,6 +133,33 @@ describeNative("custom element: img", () => {
+ })
+ 
+ describeNative("custom element: svg", () => {
++  it("spring-rotates a raw SVG without React frames", () => {
++    const testRoot = createTestRoot({ width: 120, height: 120 })
++    const source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3 4h15l-4 5 4 5H3z"/></svg>'
++    const beforePath = `${SHOTS_DIR}/gpuix-svg-rotation-0.png`
++    const afterPath = `${SHOTS_DIR}/gpuix-svg-rotation-1.png`
++
++    try {
++      testRoot.render(<svg source={source} rotation={0} style={{ width: 72, height: 72, color: "#ffffff" }} />)
++      testRoot.renderer.captureScreenshot(beforePath)
++      testRoot.render(<svg source={source} rotation={90} style={{ width: 72, height: 72, color: "#ffffff" }} />)
++      for (let frame = 0; frame < 40; frame += 1) {
++        testRoot.renderer.advanceTime(16)
++        testRoot.renderer.flush()
++      }
++      testRoot.renderer.captureScreenshot(afterPath)
++
++      expect(testRoot.renderer.findByType("svg")[0]?.customProps?.rotation).toBe(90)
++      if (!isCI) {
++        const before = fs.readFileSync(beforePath)
++        const after = fs.readFileSync(afterPath)
++        expect(bufferSimilarity(before, after)).toBeLessThan(0.99)
++      }
++    } finally {
++      testRoot.unmount()
++    }
++  })
++
+   it("renders raw SVG source with the style color", () => {
+     const testRoot = createTestRoot()
+ 
+diff --git a/packages/react/src/__tests__/shimmer.test.tsx b/packages/react/src/__tests__/shimmer.test.tsx
+new file mode 100644
+index 0000000..23845e4
+--- /dev/null
++++ b/packages/react/src/__tests__/shimmer.test.tsx
+@@ -0,0 +1,52 @@
++import { afterEach, beforeEach, describe, expect, it } from "vitest"
++import { createTestRoot, hasNativeTestRenderer, type TestRoot } from "../testing.js"
++
++const describeNative = hasNativeTestRenderer ? describe : describe.skip
++
++describeNative("custom element: shimmer", () => {
++  let root: TestRoot
++
++  beforeEach(() => {
++    root = createTestRoot({ width: 240, height: 40 })
++  })
++
++  afterEach(() => {
++    root.unmount()
++  })
++
++  it("paints and updates one native animated text host", () => {
++    root.render(
++      <shimmer
++        testId="working-shimmer"
++        text="Working"
++        baseColor="#777777"
++        highlightColor="#eeeeee"
++        duration={2}
++        style={{ display: "flex", fontSize: 13, fontWeight: 650 }}
++      >
++        Working
++      </shimmer>
++    )
++    root.renderer.flush()
++
++    expect(root.renderer.findByType("shimmer")).toHaveLength(1)
++    expect(root.renderer.getPaintedText()).toContain("Working")
++
++    root.render(
++      <shimmer
++        testId="working-shimmer"
++        text="Thinking"
++        baseColor="#777777"
++        highlightColor="#eeeeee"
++        duration={1.5}
++        style={{ display: "flex", fontSize: 13, fontWeight: 700 }}
++      >
++        Thinking
++      </shimmer>
++    )
++    root.renderer.flush()
++
++    expect(root.renderer.getPaintedText()).toContain("Thinking")
++    expect(root.renderer.getPaintedText()).not.toContain("Working")
++  })
++})
 diff --git a/packages/react/src/__tests__/terminal.test.tsx b/packages/react/src/__tests__/terminal.test.tsx
 new file mode 100644
 index 0000000..e86f1dd
@@ -1505,24 +2499,27 @@ index 0000000..e86f1dd
 +  })
 +})
 diff --git a/packages/react/src/components/index.ts b/packages/react/src/components/index.ts
-index 548e7ea..fa23e61 100644
+index 548e7ea..dff6c63 100644
 --- a/packages/react/src/components/index.ts
 +++ b/packages/react/src/components/index.ts
-@@ -10,6 +10,7 @@ export const gpuixComponents = {
+@@ -10,6 +10,8 @@ export const gpuixComponents = {
    img: "img",
    svg: "svg",
    canvas: "canvas",
++  shimmer: "shimmer",
 +  terminal: "terminal",
    input: "input",
    textarea: "textarea",
    anchored: "anchored",
 diff --git a/packages/react/src/index.ts b/packages/react/src/index.ts
-index 9e88b09..c1a4660 100644
+index 9e88b09..45b680e 100644
 --- a/packages/react/src/index.ts
 +++ b/packages/react/src/index.ts
-@@ -91,6 +91,8 @@ export type {
+@@ -90,7 +90,10 @@ export type {
+   NativeRenderer,
    NativeWindowInsets,
    PublicInstance,
++  ShimmerProps,
    StyleDesc,
 +  TerminalFrame,
 +  TerminalProps,
@@ -1609,18 +2606,35 @@ index 064174b..445eb1d 100644
  
    /** Set the scroll offset of a scrollable element (overflow: "scroll").
 diff --git a/packages/react/src/types/host.ts b/packages/react/src/types/host.ts
-index 022ef20..7845eca 100644
+index 022ef20..68ff274 100644
 --- a/packages/react/src/types/host.ts
 +++ b/packages/react/src/types/host.ts
-@@ -185,6 +185,7 @@ export type ElementType =
+@@ -6,10 +6,15 @@ export interface MotionStyle {
+   width?: number
+   height?: number
+   opacity?: number
++  flexGrow?: number
+   top?: number
+   right?: number
+   bottom?: number
+   left?: number
++  paddingTop?: number
++  paddingRight?: number
++  paddingBottom?: number
++  paddingLeft?: number
+   borderRadius?: number
+ }
+ 
+@@ -185,6 +190,8 @@ export type ElementType =
    | "code"
    | "diff"
    | "markdown"
++  | "shimmer"
 +  | "terminal"
    | "virtual-list"
  
  // ── Theme ────────────────────────────────────────────────────────────
-@@ -417,6 +418,8 @@ export interface Props {
+@@ -417,6 +424,8 @@ export interface Props {
    autoFocus?: boolean
    /** Native GPUI tab order. Use 0 for normal keyboard focus. */
    tabIndex?: number
@@ -1629,10 +2643,14 @@ index 022ef20..7845eca 100644
    /** Stable locator id for automation. */
    testId?: string
    /** Internal native animation description used by motion components. */
-@@ -480,6 +483,32 @@ export interface SvgProps extends Props {
+@@ -478,6 +487,42 @@ export interface SvgProps extends Props {
+   src?: string
+   /** Raw SVG markup rendered directly by GPUI. */
    source?: string
- }
- 
++  /** GPUI spring-animated clockwise rotation target in degrees. */
++  rotation?: number
++}
++
 +/** A complete visible grid painted by the native GPU terminal surface. */
 +export interface TerminalFrame {
 +  version: 2
@@ -1659,10 +2677,16 @@ index 022ef20..7845eca 100644
 +  frame?: TerminalFrame
 +}
 +
++/** A decorative text highlight animated entirely by GPUI. */
++export interface ShimmerProps extends Props {
++  text?: string
++  baseColor?: string
++  highlightColor?: string
++  duration?: number
+ }
+ 
  /**
-  * Props for the <code> custom element — a syntax-highlighted code block.
-  *
-@@ -598,6 +627,10 @@ export interface NativeRenderer {
+@@ -598,6 +643,10 @@ export interface NativeRenderer {
  
    // ── Window API ─────────────────────────────────────────────────
    getWindowSize?(): { width: number; height: number }

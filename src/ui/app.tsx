@@ -18,7 +18,7 @@ import type { ToolPresenter } from './tool-presenters.ts'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
 import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
-import { MotionDiv, SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS } from './motion.ts'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
 import { TerminalProjectionSuspensionProvider, TerminalServiceProvider } from './terminal-context.tsx'
 import { TerminalDock } from './terminal-dock.tsx'
@@ -64,32 +64,35 @@ export function WorkbenchApp({
   const [surface, setSurface] = useState<Surface>('chat')
   const [composerPickerOpen, setComposerPickerOpen] = useState(false)
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(!layout.navigationOverlay)
+  const [leftSidebarMounted, setLeftSidebarMounted] = useState(!layout.navigationOverlay)
   const previousNavigationOverlay = useRef(layout.navigationOverlay)
-  const leftSidebarProgress = useSpringProgress(leftSidebarOpen)
   const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
+  const [bottomTerminalMounted, setBottomTerminalMounted] = useState(false)
   const [bottomTerminalHeight, setBottomTerminalHeight] = useState(TERMINAL_DOCK_DEFAULT_HEIGHT)
   const [bottomTerminalFullscreen, setBottomTerminalFullscreen] = useState(false)
   const [bottomResizeDrag, setBottomResizeDrag] = useState<{ startY: number; startHeight: number } | undefined>()
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
   const [displayedRightPanel, setDisplayedRightPanel] = useState<RightPanel | undefined>()
-  const rightPanelProgress = useSpringProgress(Boolean(rightPanel))
   const [panelFullscreen, setPanelFullscreen] = useState(false)
-  const fullscreenProgress = Math.min(1, useSpringProgress(panelFullscreen))
-  const bottomOpenProgress = useSpringProgress(bottomTerminalOpen)
-  const bottomFullscreenProgress = useSpringProgress(bottomTerminalFullscreen && bottomTerminalOpen)
+  const [panelFullscreenRendered, setPanelFullscreenRendered] = useState(false)
+  const forcedPanelFullscreen = layout.panelOverlay && Boolean(rightPanel)
   const diffOpen = rightPanel === surfacePanelId('diff')
   const notificationsOpen = rightPanel === 'notifications'
   const [lastSeenNoticeId, setLastSeenNoticeId] = useState(0)
   const latestNoticeId = state.notices.at(-1)?.id ?? 0
   const unreadCount = state.notices.filter((notice) => notice.id > lastSeenNoticeId).length
   const draft = state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
+  const setLeftSidebarVisibility = useCallback((open: boolean) => {
+    if (!open) setLeftSidebarMounted(true)
+    setLeftSidebarOpen(open)
+  }, [])
   const closeFlows = useCallback(() => setSurface('chat'), [])
   const openFlowSession = useCallback(() => {
     setSurface('chat')
     setRightPanel(undefined)
     setPanelFullscreen(false)
-    if (layout.navigationOverlay) setLeftSidebarOpen(false)
-  }, [layout.navigationOverlay])
+    if (layout.navigationOverlay) setLeftSidebarVisibility(false)
+  }, [layout.navigationOverlay, setLeftSidebarVisibility])
 
   useEffect(() => {
     renderer.setWindowTitle?.(state.windowTitle)
@@ -99,7 +102,20 @@ export function WorkbenchApp({
     if (previousNavigationOverlay.current === layout.navigationOverlay) return
     previousNavigationOverlay.current = layout.navigationOverlay
     setLeftSidebarOpen(!layout.navigationOverlay)
+    setLeftSidebarMounted(!layout.navigationOverlay)
   }, [layout.navigationOverlay])
+
+  useEffect(() => {
+    if (leftSidebarOpen) return
+    const timer = setTimeout(() => setLeftSidebarMounted(false), SPRING_SETTLE_MS + 32)
+    return () => clearTimeout(timer)
+  }, [leftSidebarOpen])
+
+  useEffect(() => {
+    if (bottomTerminalOpen) return
+    const timer = setTimeout(() => setBottomTerminalMounted(false), SPRING_SETTLE_MS + 32)
+    return () => clearTimeout(timer)
+  }, [bottomTerminalOpen])
 
   useEffect(() => {
     if (notificationsOpen) setLastSeenNoticeId(latestNoticeId)
@@ -115,8 +131,18 @@ export function WorkbenchApp({
     return () => clearTimeout(timer)
   }, [rightPanel])
 
+  useEffect(() => {
+    if (forcedPanelFullscreen) {
+      setPanelFullscreenRendered(true)
+      return
+    }
+    if (panelFullscreen) return
+    const timer = setTimeout(() => setPanelFullscreenRendered(false), SPRING_SETTLE_MS + 32)
+    return () => clearTimeout(timer)
+  }, [forcedPanelFullscreen, panelFullscreen])
+
   const closeOverlayNavigation = () => {
-    if (layout.navigationOverlay) setLeftSidebarOpen(false)
+    if (layout.navigationOverlay) setLeftSidebarVisibility(false)
   }
 
   const closeRightPanel = () => {
@@ -125,6 +151,7 @@ export function WorkbenchApp({
   }
 
   const closeBottomTerminal = () => {
+    setBottomTerminalMounted(true)
     setBottomTerminalOpen(false)
     setBottomTerminalFullscreen(false)
   }
@@ -143,14 +170,14 @@ export function WorkbenchApp({
     controller.completeUiRequest(request.id)
     if (request.kind === 'settings') {
       closeRightPanel()
-      if (layout.navigationOverlay) setLeftSidebarOpen(false)
+      if (layout.navigationOverlay) setLeftSidebarVisibility(false)
       setSurface('settings')
       return
     }
     if (request.kind === 'sessions') {
       closeRightPanel()
       setSurface('chat')
-      setLeftSidebarOpen(true)
+      setLeftSidebarVisibility(true)
       return
     }
     if (request.kind === 'copy') {
@@ -215,27 +242,39 @@ export function WorkbenchApp({
 
   const selectSurface = (surfaceId: string) => openWorkbenchSurface(surfaceId, true)
   const togglePanelFullscreen = () => {
-    if (!layout.panelOverlay) setPanelFullscreen((value) => !value)
+    if (layout.panelOverlay) return
+    if (!panelFullscreen) setPanelFullscreenRendered(true)
+    setPanelFullscreen(!panelFullscreen)
   }
 
-  const mainWidth = safeWidth - (layout.navigationOverlay ? 0 : layout.sidebarWidth * leftSidebarProgress)
+  const rightPanelOpen = Boolean(rightPanel)
+  const bottomFullscreenVisible = bottomTerminalFullscreen && bottomTerminalOpen
+  const panelFullscreenTarget = forcedPanelFullscreen || panelFullscreen
+  const panelFullscreenVisible = panelFullscreenTarget || panelFullscreenRendered
+  const fullscreenVisible = panelFullscreenVisible || bottomFullscreenVisible
+  const animatedSidebarProgress = leftSidebarOpen && !panelFullscreenTarget && !bottomFullscreenVisible ? 1 : 0
+  const mainWidth = safeWidth - (layout.navigationOverlay ? 0 : layout.sidebarWidth * animatedSidebarProgress)
   const standardPanelWidth = Math.min(mainWidth, Math.max(420, Math.floor(mainWidth * 0.44)))
   const panelWidth = layout.panelOverlay ? safeWidth : displayedRightPanel === 'notifications' ? Math.min(422, mainWidth) : standardPanelWidth
-  const boundedRightPanelProgress = Math.max(0, Math.min(1, rightPanelProgress))
-  const forcedPanelFullscreen = layout.panelOverlay && Boolean(displayedRightPanel)
-  const panelFullscreenVisible = forcedPanelFullscreen || panelFullscreen || fullscreenProgress > 0.001
-  const chromeFullscreenProgress = Math.max(fullscreenProgress, bottomFullscreenProgress)
-  const animatedSidebarProgress = leftSidebarProgress * (1 - chromeFullscreenProgress)
-  const fullscreenVisible = panelFullscreenVisible || bottomFullscreenProgress > 0.001
   const safeHeight = Math.max(1, windowSize.height - windowInsets.effective.top - windowInsets.effective.bottom)
   const restDockHeight = Math.max(TERMINAL_DOCK_MIN_HEIGHT, Math.min(Math.floor(safeHeight * 0.7), bottomTerminalHeight))
-  const dockHeight = (restDockHeight * (1 - bottomFullscreenProgress) + safeHeight * bottomFullscreenProgress) * bottomOpenProgress * (1 - fullscreenProgress)
-  const showBottomDock = Boolean(terminals) && (bottomTerminalOpen || bottomOpenProgress > 0.001) && dockHeight > 0.5
-  const panelFullscreenProgress = forcedPanelFullscreen ? boundedRightPanelProgress : fullscreenProgress
+  const dockHeight = !bottomTerminalOpen || panelFullscreenTarget ? 0 : bottomFullscreenVisible ? safeHeight : restDockHeight
+  const showBottomDock = Boolean(terminals) && (bottomTerminalOpen || bottomTerminalMounted)
+  const panelFullscreenProgress = panelFullscreenTarget ? 1 : 0
   const sidebarToggleLeft = process.platform === 'darwin' ? 90 : layout.navigationOverlay ? 10 : 10 + 54 * animatedSidebarProgress
   const collapsedChromeInset = process.platform === 'darwin' ? 132 : 54
   const contentSidebarProgress = layout.navigationOverlay ? 0 : animatedSidebarProgress
   const flowsTitlebarInset = 24 + (collapsedChromeInset - 24) * (1 - contentSidebarProgress)
+  const settingsTitlebarInset = 18 + (collapsedChromeInset - 18) * (1 - contentSidebarProgress)
+  const conversationFlexGrow = panelFullscreenTarget ? 0 : 1
+  const conversationBodyFlexGrow = bottomFullscreenVisible ? 0.001 : 1
+  const chatHeaderHeight = bottomFullscreenVisible ? 0 : 52
+  const rightPanelHostWidth = rightPanelOpen && !panelFullscreenTarget && !bottomFullscreenVisible ? panelWidth : 0
+  const rightPanelHostFlexGrow = rightPanelOpen && panelFullscreenTarget && !bottomFullscreenVisible ? 1 : 0
+  const bottomFullscreenProgress = bottomFullscreenVisible ? 1 : 0
+  const dockWidth = Math.max(1, safeWidth
+    - (layout.navigationOverlay ? 0 : layout.sidebarWidth * animatedSidebarProgress)
+    - (rightPanelOpen && !layout.panelOverlay && !panelFullscreenTarget && !bottomFullscreenVisible ? panelWidth : 0))
   const displayedSurfaceId = workbenchSurfaceId(displayedRightPanel)
   const rightTerminalSuspended = bottomTerminalFullscreen && displayedSurfaceId === 'terminal'
   const displayedSurface = uiSnapshot.surfaces.find((candidate) => candidate.id === displayedSurfaceId)
@@ -249,7 +288,10 @@ export function WorkbenchApp({
         : null
 
   const sidebarHost = (
-    <div
+    <MotionDiv
+      initial={layout.navigationOverlay ? { width: 0 } : false}
+      animate={{ width: layout.sidebarWidth * animatedSidebarProgress }}
+      transition={LAYOUT_MOTION_TRANSITION}
       testId="left-sidebar-host"
       style={layout.navigationOverlay
         ? { position: 'absolute', top: 0, bottom: 0, left: 0, width: layout.sidebarWidth * animatedSidebarProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }
@@ -281,7 +323,7 @@ export function WorkbenchApp({
           onNotifications={toggleNotifications}
         />
       </div>
-    </div>
+    </MotionDiv>
   )
 
   return (
@@ -296,14 +338,14 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView state={state} controller={controller} theme={theme} onThemeModeChange={(mode) => themeManager.setMode(mode)} terminals={terminals} onClose={() => setSurface('chat')} />
+            <SettingsView state={state} controller={controller} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} terminals={terminals} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: 1 - fullscreenProgress, minWidth: 0, height: '100%', overflow: 'hidden' }}>
-                <div style={{ height: 52 * (1 - bottomFullscreenProgress), flexShrink: 0, overflow: 'hidden' }}>
+              <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>
+                <MotionDiv initial={false} animate={{ height: chatHeaderHeight }} transition={LAYOUT_MOTION_TRANSITION} style={{ height: chatHeaderHeight, flexShrink: 0, overflow: 'hidden' }}>
                   <ChatHeader state={state} controller={controller} diffOpen={diffOpen} terminalOpen={bottomTerminalOpen} leftSidebarProgress={layout.navigationOverlay ? 0 : animatedSidebarProgress} onToggleDiff={toggleDiff} {...(terminals ? { onToggleTerminal: toggleBottomTerminal } : {})} />
-                </div>
-                <div testId="conversation-body" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: Math.max(0.001, 1 - bottomFullscreenProgress), minHeight: 0, overflow: 'hidden' }}>
+                </MotionDiv>
+                <MotionDiv initial={false} animate={{ flexGrow: conversationBodyFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} testId="conversation-body" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: conversationBodyFlexGrow, minHeight: 0, overflow: 'hidden' }}>
                   {draft ? (
                     <DraftWorkspaceChooser state={state} controller={controller} />
                   ) : (
@@ -314,7 +356,7 @@ export function WorkbenchApp({
                     </>
                   )}
                   <ConversationExtensionOverlay state={state} controller={controller} />
-                </div>
+                </MotionDiv>
                 {showBottomDock && terminals && (
                   <TerminalDock
                     service={terminals}
@@ -322,20 +364,26 @@ export function WorkbenchApp({
                     fullscreen={bottomTerminalFullscreen}
                     fullscreenProgress={bottomFullscreenProgress}
                     height={dockHeight}
-                    width={Math.max(1, safeWidth - (layout.navigationOverlay ? 0 : layout.sidebarWidth * animatedSidebarProgress) - (displayedRightPanel && !layout.panelOverlay ? panelWidth * boundedRightPanelProgress * (1 - fullscreenProgress) * (1 - bottomFullscreenProgress) : 0))}
+                    width={dockWidth}
                     appearance={theme.resolved}
                     onResizeStart={(y) => setBottomResizeDrag({ startY: y, startHeight: restDockHeight })}
                     onToggleFullscreen={() => setBottomTerminalFullscreen((value) => !value)}
                     onClose={closeBottomTerminal}
                   />
                 )}
-              </div>
+              </MotionDiv>
               {panel && (
-                <div
+                <MotionDiv
+                  initial={{ width: 0, flexGrow: 0 }}
+                  animate={{
+                    width: layout.panelOverlay ? (rightPanelOpen ? safeWidth : 0) : rightPanelHostWidth,
+                    flexGrow: layout.panelOverlay ? 0 : rightPanelHostFlexGrow,
+                  }}
+                  transition={LAYOUT_MOTION_TRANSITION}
                   testId="right-panel-host"
                   style={layout.panelOverlay
-                    ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: safeWidth * boundedRightPanelProgress, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }
-                    : { position: 'relative', width: panelWidth * rightPanelProgress * (1 - fullscreenProgress) * (1 - bottomFullscreenProgress), flexGrow: fullscreenProgress * rightPanelProgress * (1 - bottomFullscreenProgress), minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }}
+                    ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: rightPanelOpen ? safeWidth : 0, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }
+                    : { position: 'relative', width: rightPanelHostWidth, flexGrow: rightPanelHostFlexGrow, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }}
                 >
                   <div style={layout.panelOverlay
                     ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: safeWidth }
@@ -345,11 +393,11 @@ export function WorkbenchApp({
                       {panel}
                     </TerminalProjectionSuspensionProvider>
                   </div>
-                </div>
+                </MotionDiv>
               )}
             </div>
           )}
-          {layout.navigationOverlay && !panel && animatedSidebarProgress > 0.001 && (
+          {layout.navigationOverlay && !panel && (leftSidebarOpen || leftSidebarMounted) && (
             <>
               <MotionDiv
                 testId="navigation-scrim"
@@ -357,7 +405,7 @@ export function WorkbenchApp({
                 animate={{ opacity: Math.min(0.72, animatedSidebarProgress * 0.72) }}
                 transition={{ duration: 0.14, ease: 'easeOut' }}
                 style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: '#00000099', pointerEvents: leftSidebarOpen ? 'auto' : 'none' }}
-                onClick={() => setLeftSidebarOpen(false)}
+                onClick={() => setLeftSidebarVisibility(false)}
               />
               {sidebarHost}
             </>
@@ -374,14 +422,17 @@ export function WorkbenchApp({
             />
           )}
           {!fullscreenVisible && (
-            <div
+            <MotionDiv
+              initial={false}
+              animate={{ left: sidebarToggleLeft }}
+              transition={LAYOUT_MOTION_TRANSITION}
               testId="toggle-left-sidebar"
               tabIndex={0}
               style={{ position: 'absolute', top: 12, left: sidebarToggleLeft, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, backgroundColor: colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }}
-              onClick={() => setLeftSidebarOpen((value) => !value)}
+              onClick={() => setLeftSidebarVisibility(!leftSidebarOpen)}
             >
               <div style={{ width: 15, height: 15, pointerEvents: 'none' }}><Icon name={leftSidebarOpen ? 'panelLeftClose' : 'panelLeft'} size={15} color={colors.textMuted} /></div>
-            </div>
+            </MotionDiv>
           )}
         </div>
       </div>
