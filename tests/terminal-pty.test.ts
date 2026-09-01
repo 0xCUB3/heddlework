@@ -9,18 +9,27 @@ const decode = (value: Uint8Array) => new TextDecoder().decode(value)
 describe('terminal output buffering', () => {
   it('delivers ordinary output at microtask latency', async () => {
     const chunks: string[] = []
-    const output = new TerminalOutputBuffer((chunk) => chunks.push(decode(chunk)))
+    const synchronized: boolean[] = []
+    const output = new TerminalOutputBuffer((chunk, metadata) => {
+      chunks.push(decode(chunk))
+      synchronized.push(metadata.synchronizedFrame)
+    })
 
     output.write(encode('hel'))
     output.write(encode('lo'))
     expect(chunks).toEqual([])
     await Promise.resolve()
     expect(chunks).toEqual(['hello'])
+    expect(synchronized).toEqual([false])
   })
 
-  it('coalesces fragmented DEC 2026 output into one complete frame', async () => {
+  it('coalesces fragmented DEC 2026 output into one tagged complete frame', async () => {
     const chunks: string[] = []
-    const output = new TerminalOutputBuffer((chunk) => chunks.push(decode(chunk)))
+    const synchronized: boolean[] = []
+    const output = new TerminalOutputBuffer((chunk, metadata) => {
+      chunks.push(decode(chunk))
+      synchronized.push(metadata.synchronizedFrame)
+    })
 
     output.write(encode('\x1b[?20'))
     output.write(encode('26hfirst'))
@@ -31,6 +40,7 @@ describe('terminal output buffering', () => {
     output.write(encode('26l'))
 
     expect(chunks).toEqual(['\x1b[?2026hfirst-second\x1b[?2026l'])
+    expect(synchronized).toEqual([true])
   })
 
   it('splits adjacent frames that share one transport chunk', async () => {

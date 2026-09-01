@@ -727,7 +727,7 @@ index 0000000..5977913
 +    Ok(())
 +}
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
-index 9620967..ffa6901 100644
+index 9620967..3faca85 100644
 --- a/packages/native/src/renderer.rs
 +++ b/packages/native/src/renderer.rs
 @@ -1183,6 +1183,11 @@ impl GpuixRenderer {
@@ -754,7 +754,7 @@ index 9620967..ffa6901 100644
      #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
      pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
          let window = web_sys::window()
-@@ -4096,6 +4106,19 @@ pub(crate) fn build_host_container(
+@@ -4096,6 +4106,30 @@ pub(crate) fn build_host_container(
      {
          el = el.tab_index(tab_index).tab_stop(tab_index >= 0);
      }
@@ -764,16 +764,49 @@ index 9620967..ffa6901 100644
 +        .and_then(|value| value.as_bool())
 +        == Some(true)
 +    {
-+        // GPUI actions stop bubbling unless a handler explicitly propagates.
-+        // Keep both focus-navigation actions on this focused element while its
-+        // keyDown listener still receives Tab and Shift+Tab.
++        // A matched GPUI action stops before raw keyDown dispatch. Swallow focus
++        // traversal here and emit the terminal-facing key event from the action.
++        let emits_key_down = element.events.contains("keyDown");
++        let next_callback = ctx.event_callback.clone();
++        let previous_callback = ctx.event_callback.clone();
++        let id = element.id;
 +        el = el
-+            .on_action(|_: &FocusNext, _window, _cx| {})
-+            .on_action(|_: &FocusPrevious, _window, _cx| {});
++            .on_action(move |_: &FocusNext, _window, _cx| {
++                if emits_key_down {
++                    emit_captured_tab(&next_callback, id, false);
++                }
++            })
++            .on_action(move |_: &FocusPrevious, _window, _cx| {
++                if emits_key_down {
++                    emit_captured_tab(&previous_callback, id, true);
++                }
++            });
 +    }
  
      // Wire up events.
      // Some events (on_hover, on_click) require a stateful element (.id()),
+@@ -4738,6 +4772,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
+ /// caller customize it via a closure, then sends it through the callback.
+ /// Production: queues on Node.js event loop via ThreadsafeFunction.
+ /// Tests: pushes to a synchronous Vec for drainEvents().
++fn emit_captured_tab(callback: &Option<EventCallback>, element_id: u64, shift: bool) {
++    emit_event_full(callback, element_id, "keyDown", |payload| {
++        payload.key = Some("tab".to_string());
++        payload.key_char = Some("\t".to_string());
++        payload.is_held = Some(false);
++        payload.modifiers = Some(
++            gpui::Modifiers {
++                shift,
++                ..Default::default()
++            }
++            .into(),
++        );
++    });
++}
++
+ pub(crate) fn emit_event_full(
+     callback: &Option<EventCallback>,
+     element_id: u64,
 diff --git a/packages/native/src/test_renderer.rs b/packages/native/src/test_renderer.rs
 index a9b5d71..90aeea2 100644
 --- a/packages/native/src/test_renderer.rs
@@ -831,7 +864,7 @@ index 1c005b1..a57db33 100644
    }
  }
 diff --git a/packages/react/src/__tests__/floating-controls.test.tsx b/packages/react/src/__tests__/floating-controls.test.tsx
-index 2a93c7a..fa461d2 100644
+index 2a93c7a..366c8ec 100644
 --- a/packages/react/src/__tests__/floating-controls.test.tsx
 +++ b/packages/react/src/__tests__/floating-controls.test.tsx
 @@ -479,6 +479,44 @@ describeNative("floating controls", () => {
@@ -848,7 +881,7 @@ index 2a93c7a..fa461d2 100644
 +            tabIndex={0}
 +            captureTab
 +            style={{ width: 100, height: 32 }}
-+            onKeyDown={(event) => received.push(`terminal:${event.key}`)}
++            onKeyDown={(event) => received.push(`terminal:${event.modifiers.shift ? "shift-" : ""}${event.key}`)}
 +          >
 +            Terminal
 +          </div>
@@ -865,7 +898,7 @@ index 2a93c7a..fa461d2 100644
 +
 +    testRoot.render(<Demo />)
 +    testRoot.renderer.simulateKeystrokes("tab a")
-+    expect(received.at(-1)).toBe("terminal:a")
++    expect(received).toEqual(["terminal:tab", "terminal:a"])
 +
 +    const terminal = testRoot.renderer
 +      .findByType("div")
@@ -873,7 +906,7 @@ index 2a93c7a..fa461d2 100644
 +    testRoot.renderer.focusElement(terminal.id)
 +    received.length = 0
 +    testRoot.renderer.simulateKeystrokes("shift-tab b")
-+    expect(received.at(-1)).toBe("terminal:b")
++    expect(received).toEqual(["terminal:shift-tab", "terminal:b"])
 +  })
 +
    it("removes an element from tab order when tabIndex is removed", () => {

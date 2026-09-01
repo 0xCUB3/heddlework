@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { MemoryTerminalBackend, type TerminalBackend, type TerminalProcess } from '../src/terminal/backend.ts'
+import { MemoryTerminalBackend, type TerminalBackend, type TerminalOutputMetadata, type TerminalProcess } from '../src/terminal/backend.ts'
 import type { TerminalProcessStatus, TerminalSpawnRequest } from '../src/terminal/types.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
 
@@ -7,7 +7,7 @@ const ESC = String.fromCharCode(27)
 
 class PushTerminalBackend implements TerminalBackend {
   readonly writes: Array<string | Uint8Array> = []
-  #dataListener: ((chunk: Uint8Array) => void) | undefined
+  #dataListener: ((chunk: Uint8Array, metadata?: TerminalOutputMetadata) => void) | undefined
 
   async spawn(_request: TerminalSpawnRequest & { cols: number; rows: number; cwd: string }): Promise<TerminalProcess> {
     const writes = this.writes
@@ -23,8 +23,8 @@ class PushTerminalBackend implements TerminalBackend {
     }
   }
 
-  emit(data: string): void {
-    this.#dataListener?.(new TextEncoder().encode(data))
+  emit(data: string, metadata?: TerminalOutputMetadata): void {
+    this.#dataListener?.(new TextEncoder().encode(data), metadata)
   }
 }
 
@@ -78,6 +78,53 @@ describe('TerminalSessionService', () => {
 
     backend.emit(' frame' + ESC + '[?2026l')
     expect(service.grid(id)?.viewport.some((row) => row.text.includes('partial frame'))).toBe(true)
+    await service.dispose()
+  })
+
+  it('publishes a transport-coalesced synchronized frame without a 60 Hz delay', async () => {
+    const backend = new PushTerminalBackend()
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend })
+    await service.spawn({ cols: 40, rows: 4 })
+    let notifications = 0
+    const unsubscribe = service.subscribe(() => { notifications += 1 })
+
+    backend.emit(ESC + '[?2026hframe' + ESC + '[?2026l', { synchronizedFrame: true })
+
+    expect(notifications).toBe(1)
+    unsubscribe()
+    await service.dispose()
+  })
+
+  it('publishes the first small output after user input without a frame delay', async () => {
+    const backend = new PushTerminalBackend()
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend })
+    const id = await service.spawn({ cols: 40, rows: 4 })
+    let notifications = 0
+    const unsubscribe = service.subscribe(() => { notifications += 1 })
+
+    service.write(id, 'x')
+    backend.emit('x')
+
+    expect(notifications).toBe(1)
+    unsubscribe()
+    await service.dispose()
+  })
+
+  it('only lets the first PTY delivery after input use the interactive bypass', async () => {
+    const backend = new PushTerminalBackend()
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend })
+    const id = await service.spawn({ cols: 40, rows: 4 })
+    let notifications = 0
+    const unsubscribe = service.subscribe(() => { notifications += 1 })
+
+    service.write(id, 'x')
+    backend.emit('x'.repeat(8 * 1024 + 1))
+    backend.emit('tail')
+
+    expect(notifications).toBe(0)
+    await Bun.sleep(25)
+    expect(notifications).toBe(1)
+    unsubscribe()
     await service.dispose()
   })
 

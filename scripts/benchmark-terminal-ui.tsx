@@ -1,6 +1,7 @@
 import React from 'react'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
-import { MemoryTerminalBackend } from '../src/terminal/backend.ts'
+import { TerminalOutputBuffer, type TerminalBackend, type TerminalOutputMetadata, type TerminalProcess } from '../src/terminal/backend.ts'
+import type { TerminalProcessStatus, TerminalSpawnRequest } from '../src/terminal/types.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
 import {
   TERMINAL_CELL_WIDTH,
@@ -21,6 +22,36 @@ function percentile(values: readonly number[], fraction: number): number {
 }
 
 const BLOCKS = ['▀', '▄', '█', '▌', '▐', '▖', '▗', '▘', '▙', '▛', '▜', '▝', '▟'] as const
+
+class BufferedMemoryTerminalBackend implements TerminalBackend {
+  async spawn(_request: TerminalSpawnRequest & { cols: number; rows: number; cwd: string }): Promise<TerminalProcess> {
+    const dataListeners = new Set<(chunk: Uint8Array, metadata?: TerminalOutputMetadata) => void>()
+    const output = new TerminalOutputBuffer((chunk, metadata) => {
+      for (const listener of dataListeners) listener(chunk, metadata)
+    })
+    let running = true
+    return {
+      write(data) {
+        if (!running) return
+        const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+        for (let offset = 0; offset < bytes.byteLength; offset += 1_024) {
+          output.write(bytes.subarray(offset, offset + 1_024))
+        }
+      },
+      resize() {},
+      kill() {
+        if (!running) return
+        running = false
+        output.close()
+      },
+      onData(listener) {
+        dataListeners.add(listener)
+        return () => { dataListeners.delete(listener) }
+      },
+      onExit(_listener: (status: TerminalProcessStatus) => void) { return () => {} },
+    }
+  }
+}
 
 function framebufferFrame(index: number): string {
   let output = ''
@@ -47,7 +78,7 @@ const width = COLS * TERMINAL_CELL_WIDTH + TERMINAL_PADDING_X * 2
 const height = ROWS * TERMINAL_LINE_HEIGHT + TERMINAL_PADDING_Y * 2
 const service = new TerminalSessionService({
   cwd: '/tmp/heddlework-terminal-benchmark',
-  backend: new MemoryTerminalBackend(),
+  backend: new BufferedMemoryTerminalBackend(),
   appearancePath: false,
 })
 const sessionId = await service.spawn({ cols: COLS, rows: ROWS })
@@ -92,7 +123,7 @@ for (let index = 0; index < SAMPLES; index += 1) {
 
 const stats = root.renderer.getDebugFrameOverlayStats()
 const retained = root.renderer.getRetainedElementCount()
-console.log(`framebuffer median      ${percentile(totals, 0.5).toFixed(2).padStart(9)} ms  per-cell cursor + truecolor + blocks at ${COLS}×${ROWS}`)
+console.log(`framebuffer median      ${percentile(totals, 0.5).toFixed(2).padStart(9)} ms  PTY fragments + per-cell cursor + truecolor + blocks at ${COLS}×${ROWS}`)
 console.log(`framebuffer p95         ${percentile(totals, 0.95).toFixed(2).padStart(9)} ms  VT + React + NAPI + GPUI`)
 console.log(`frame commit median     ${percentile(commits, 0.5).toFixed(2).padStart(9)} ms  parse + packed frame + native mutation`)
 console.log(`frame flush median      ${percentile(paints, 0.5).toFixed(2).padStart(9)} ms  GPUI layout and paint`)

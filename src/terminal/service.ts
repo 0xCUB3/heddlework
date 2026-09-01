@@ -24,11 +24,14 @@ interface LiveSession {
   gridDirty: boolean
   synchronizedHold: boolean
   synchronizedTimer: ReturnType<typeof setTimeout> | undefined
+  lastInputAt: number
   cleanups: TerminalCleanup[]
 }
 
-const TERMINAL_FRAME_MS = 16
+const TERMINAL_FRAME_MS = 8
 const SYNCHRONIZED_OUTPUT_STALE_MS = 1_000
+const INTERACTIVE_OUTPUT_WINDOW_MS = 500
+const INTERACTIVE_OUTPUT_MAX_BYTES = 8 * 1024
 
 export class TerminalSessionService {
   readonly #backend: TerminalBackend
@@ -113,9 +116,10 @@ export class TerminalSessionService {
       gridDirty: false,
       synchronizedHold: false,
       synchronizedTimer: undefined,
+      lastInputAt: Number.NEGATIVE_INFINITY,
       cleanups: [],
     }
-    session.cleanups.push(process.onData((chunk) => {
+    session.cleanups.push(process.onData((chunk, metadata) => {
       const wasSynchronized = session.vt.synchronizedOutput
       const previousScrollback = session.vt.scrollbackLength
       session.vt.write(chunk)
@@ -126,10 +130,14 @@ export class TerminalSessionService {
         this.#holdSynchronizedOutput(session)
         return
       }
-      const completedSynchronizedFrame = wasSynchronized || session.synchronizedHold
+      const completedSynchronizedFrame = metadata?.synchronizedFrame === true || wasSynchronized || session.synchronizedHold
+      const elapsedSinceInput = performance.now() - session.lastInputAt
+      const withinInteractiveWindow = elapsedSinceInput >= 0 && elapsedSinceInput <= INTERACTIVE_OUTPUT_WINDOW_MS
+      const interactiveResponse = withinInteractiveWindow && chunk.byteLength <= INTERACTIVE_OUTPUT_MAX_BYTES
+      if (withinInteractiveWindow) session.lastInputAt = Number.NEGATIVE_INFINITY
       this.#releaseSynchronizedOutput(session)
       session.gridDirty = true
-      this.#schedule(completedSynchronizedFrame)
+      this.#schedule(completedSynchronizedFrame || interactiveResponse)
     }))
     session.cleanups.push(process.onExit((status) => {
       this.#releaseSynchronizedOutput(session)
@@ -166,6 +174,7 @@ export class TerminalSessionService {
     const session = this.#sessions.get(id)
     if (!session || session.info.status.kind === 'exited' || !data) return
     session.scrollOffset = 0
+    session.lastInputAt = performance.now()
     if (session.synchronizedHold) {
       session.gridDirty = true
       this.#schedule(true)

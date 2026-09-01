@@ -1,11 +1,15 @@
 import type { TerminalCleanup, TerminalProcessStatus, TerminalSpawnRequest } from './types.ts'
 
+export interface TerminalOutputMetadata {
+  readonly synchronizedFrame: boolean
+}
+
 export interface TerminalProcess {
   readonly pid?: number
   write(data: string | Uint8Array): void
   resize(cols: number, rows: number): void
   kill(): void
-  onData(listener: (chunk: Uint8Array) => void): TerminalCleanup
+  onData(listener: (chunk: Uint8Array, metadata?: TerminalOutputMetadata) => void): TerminalCleanup
   onExit(listener: (status: TerminalProcessStatus) => void): TerminalCleanup
 }
 
@@ -16,9 +20,11 @@ export interface TerminalBackend {
 const SYNCHRONIZED_DATA_STALE_MS = 1_000
 const INITIAL_OUTPUT_BUFFER_BYTES = 64 * 1024
 const SYNCHRONIZED_OUTPUT_PREFIX = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36])
+const ORDINARY_OUTPUT_METADATA = { synchronizedFrame: false } as const
+const SYNCHRONIZED_FRAME_METADATA = { synchronizedFrame: true } as const
 
 export class TerminalOutputBuffer {
-  readonly #emit: (chunk: Uint8Array) => void
+  readonly #emit: (chunk: Uint8Array, metadata: TerminalOutputMetadata) => void
   #buffer = new Uint8Array(INITIAL_OUTPUT_BUFFER_BYTES)
   #spare = new Uint8Array(INITIAL_OUTPUT_BUFFER_BYTES)
   #length = 0
@@ -27,7 +33,7 @@ export class TerminalOutputBuffer {
   #microtaskPending = false
   #staleTimer: ReturnType<typeof setTimeout> | undefined
 
-  constructor(emit: (chunk: Uint8Array) => void) {
+  constructor(emit: (chunk: Uint8Array, metadata: TerminalOutputMetadata) => void) {
     this.#emit = emit
   }
 
@@ -90,7 +96,7 @@ export class TerminalOutputBuffer {
     this.#schedule()
   }
 
-  flush(): void {
+  flush(synchronizedFrame = false): void {
     if (this.#length === 0) return
     const delivering = this.#buffer
     const length = this.#length
@@ -99,7 +105,10 @@ export class TerminalOutputBuffer {
       : new Uint8Array(INITIAL_OUTPUT_BUFFER_BYTES)
     this.#spare = new Uint8Array(0)
     this.#length = 0
-    this.#emit(delivering.subarray(0, length))
+    this.#emit(
+      delivering.subarray(0, length),
+      synchronizedFrame ? SYNCHRONIZED_FRAME_METADATA : ORDINARY_OUTPUT_METADATA,
+    )
     if (this.#spare.byteLength === 0) this.#spare = delivering
   }
 
@@ -115,7 +124,7 @@ export class TerminalOutputBuffer {
     this.#append(chunk.subarray(start, end))
     if (this.#staleTimer) clearTimeout(this.#staleTimer)
     this.#staleTimer = undefined
-    this.flush()
+    this.flush(true)
   }
 
   #append(chunk: Uint8Array): void {
@@ -219,10 +228,10 @@ export class BunPtyBackend implements TerminalBackend {
   async spawn(request: TerminalSpawnRequest & { cols: number; rows: number; cwd: string }): Promise<TerminalProcess> {
     const Terminal = bunTerminalCtor()
     if (!Terminal) throw new Error('Bun.Terminal is not available in this runtime')
-    const dataListeners = new Set<(chunk: Uint8Array) => void>()
+    const dataListeners = new Set<(chunk: Uint8Array, metadata?: TerminalOutputMetadata) => void>()
     const exitListeners = new Set<(status: TerminalProcessStatus) => void>()
-    const output = new TerminalOutputBuffer((chunk) => {
-      for (const listener of dataListeners) listener(chunk)
+    const output = new TerminalOutputBuffer((chunk, metadata) => {
+      for (const listener of dataListeners) listener(chunk, metadata)
     })
     let status: TerminalProcessStatus = { kind: 'running' }
     const terminal = new Terminal({
