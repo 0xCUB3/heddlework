@@ -77,9 +77,14 @@ export function terminalNativeBinaryFrame(
   snapshot: TerminalGridSnapshot,
   theme: TerminalPaintTheme,
   rendering: TerminalAppearance,
+  reusableCells?: Uint8Array,
 ): NativeTerminalBinaryFrame {
-  const bytes = new Uint8Array(snapshot.cols * snapshot.rows * NATIVE_TERMINAL_CELL_BYTES)
-  const view = new DataView(bytes.buffer)
+  const byteLength = snapshot.cols * snapshot.rows * NATIVE_TERMINAL_CELL_BYTES
+  const bytes = reusableCells?.byteLength === byteLength && reusableCells.byteOffset % Uint32Array.BYTES_PER_ELEMENT === 0
+    ? reusableCells
+    : new Uint8Array(byteLength)
+  // Every supported NAPI target and WebAssembly use the protocol's little-endian word order.
+  const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / Uint32Array.BYTES_PER_ELEMENT)
   const graphemes: string[] = []
   const graphemeIndexes = new Map<string, number>()
   const ansi = theme.ansi.map(packedCssColor)
@@ -147,11 +152,11 @@ export function terminalNativeBinaryFrame(
       if (rendering.nerdFontEnabled
         && (raw === undefined ? isNerdFontCodepoint(codepoint) : isNerdFontGlyph(raw))) flags |= NATIVE_CELL_NERD_FONT
 
-      view.setUint32(offset, glyph, true)
-      view.setUint32(offset + 4, foreground, true)
-      view.setUint32(offset + 8, background, true)
-      view.setUint16(offset + 12, flags, true)
-      offset += NATIVE_TERMINAL_CELL_BYTES
+      words[offset] = glyph
+      words[offset + 1] = foreground
+      words[offset + 2] = background
+      words[offset + 3] = flags
+      offset += TERMINAL_PACKED_CELL_WORDS
     }
   }
 

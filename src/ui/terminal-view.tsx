@@ -155,10 +155,13 @@ const NativeTerminalGrid = memo(function NativeTerminalGrid({ snapshot, theme, r
   const gpuix = useGpuix()
   const renderer = gpuix?.renderer as TerminalCapableRenderer | undefined
   const direct = typeof renderer?.setTerminalFrame === 'function'
-  const binaryFrame = useMemo(
-    () => direct ? terminalNativeBinaryFrame(snapshot, theme, rendering) : undefined,
-    [direct, rendering, snapshot, theme],
-  )
+  const binaryCells = useRef<Uint8Array | undefined>(undefined)
+  const binaryFrame = useMemo(() => {
+    if (!direct) return undefined
+    const frame = terminalNativeBinaryFrame(snapshot, theme, rendering, binaryCells.current)
+    binaryCells.current = frame.cells
+    return frame
+  }, [direct, rendering, snapshot, theme])
   const fallbackFrame = useMemo(
     () => direct ? undefined : terminalNativeFrame(snapshot, theme, rendering),
     [direct, rendering, snapshot, theme],

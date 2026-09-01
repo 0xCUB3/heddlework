@@ -77,6 +77,25 @@ describe('native terminal frame projection', () => {
     expect({ ...binary, cells: encoded.cells }).toEqual(encoded)
   })
 
+  it('reuses only an exactly sized and aligned direct-transport cell buffer', () => {
+    const grid = snapshot([{ cells: [cell('A'), cell('B')], text: 'AB' }], 2)
+    const theme = terminalPaintTheme('dark')
+    const reusable = new Uint8Array(2 * NATIVE_TERMINAL_CELL_BYTES)
+    reusable.fill(0xff)
+
+    const misaligned = new Uint8Array(reusable.byteLength + 1).subarray(1)
+    const reused = terminalNativeBinaryFrame(grid, theme, APPEARANCE, reusable)
+    const realigned = terminalNativeBinaryFrame(grid, theme, APPEARANCE, misaligned)
+    const resized = terminalNativeBinaryFrame(grid, theme, APPEARANCE, reusable.subarray(1))
+
+    expect(reused.cells).toBe(reusable)
+    expect(reused.cells[15]).toBe(0)
+    expect(realigned.cells).not.toBe(misaligned)
+    expect(realigned.cells.byteOffset % Uint32Array.BYTES_PER_ELEMENT).toBe(0)
+    expect(resized.cells).not.toBe(reusable)
+    expect(resized.cells.byteLength).toBe(reusable.byteLength)
+  })
+
   it('packs glyphs, final colors, and cell flags into a fixed-width binary stream', () => {
     const cells = [
       cell('A', { attrs: CELL_BOLD }),

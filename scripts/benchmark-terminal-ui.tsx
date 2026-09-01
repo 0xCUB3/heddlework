@@ -90,7 +90,7 @@ if (!hasNativeTestRenderer) {
 
 const encoder = new TextEncoder()
 const frames = Array.from(
-  { length: SAMPLES + 3 },
+  { length: 4 },
   (_, index) => encoder.encode(`${ESC}[?2026h${ESC}[?25l${framebufferFrame(index)}${ESC}[?2026l`),
 )
 const width = COLS * TERMINAL_CELL_WIDTH + TERMINAL_PADDING_X * 2
@@ -126,36 +126,68 @@ if (REQUIRE_DIRECT && (!native || !direct)) {
   await service.dispose()
   throw new Error('patched GPUIX native terminal with setTerminalFrame() is required')
 }
+let nativeFrameCount = 0
+let latestNativeFrame: readonly [number, string, Uint8Array] | undefined
+let stageNativeFrame: ((...args: unknown[]) => void) | undefined
+if (direct) {
+  stageNativeFrame = renderer.setTerminalFrame!.bind(renderer)
+  renderer.setTerminalFrame = (...args: unknown[]) => {
+    stageNativeFrame!(...args)
+    latestNativeFrame = args as unknown as [number, string, Uint8Array]
+    nativeFrameCount += 1
+  }
+}
 for (let index = 0; index < 3; index += 1) {
-  backend.emit(frames[index]!)
+  backend.emit(frames[index % frames.length]!)
+  await Bun.sleep(0)
   root.renderer.flush()
 }
 root.renderer.resetDebugFrameOverlayStats()
 
-const commits: number[] = []
+const parses: number[] = []
+const projections: number[] = []
 const paints: number[] = []
 const totals: number[] = []
 for (let index = 0; index < SAMPLES; index += 1) {
   const startedAt = performance.now()
-  backend.emit(frames[index + 3]!)
-  const committedAt = performance.now()
+  backend.emit(frames[(index + 3) % frames.length]!)
+  const parsedAt = performance.now()
+  await Bun.sleep(0)
+  const projectedAt = performance.now()
   root.renderer.flush()
   const paintedAt = performance.now()
-  commits.push(committedAt - startedAt)
-  paints.push(paintedAt - committedAt)
+  parses.push(parsedAt - startedAt)
+  projections.push(projectedAt - parsedAt)
+  paints.push(paintedAt - projectedAt)
   totals.push(paintedAt - startedAt)
 }
 
 const stats = root.renderer.getDebugFrameOverlayStats()
 const retained = root.renderer.getRetainedElementCount()
+const mailboxPaints: number[] = []
+if (latestNativeFrame && stageNativeFrame) {
+  for (let sample = 0; sample < 6; sample += 1) {
+    const startedAt = performance.now()
+    for (let frame = 0; frame < 8; frame += 1) stageNativeFrame(...latestNativeFrame)
+    root.renderer.flush()
+    if (sample > 0) mailboxPaints.push(performance.now() - startedAt)
+  }
+}
 console.log(`framebuffer median      ${percentile(totals, 0.5).toFixed(2).padStart(9)} ms  OpenTUI sync + hidden cursor + changed-cell truecolor at ${COLS}×${ROWS}`)
 console.log(`framebuffer p95         ${percentile(totals, 0.95).toFixed(2).padStart(9)} ms  VT + React + NAPI + GPUI`)
-console.log(`frame commit median     ${percentile(commits, 0.5).toFixed(2).padStart(9)} ms  parse + packed frame + native transport`)
-console.log(`frame flush median      ${percentile(paints, 0.5).toFixed(2).padStart(9)} ms  GPUI layout and paint`)
+console.log(`frame parse median      ${percentile(parses, 0.5).toFixed(2).padStart(9)} ms  ingress + byte-native VT`)
+console.log(`frame project median    ${percentile(projections, 0.5).toFixed(2).padStart(9)} ms  React + packed frame + native transport`)
+console.log(`frame flush median      ${percentile(paints, 0.5).toFixed(2).padStart(9)} ms  GPUI rasterization + layout + paint`)
 console.log(`native paint p90        ${(stats.p90Ms ?? 0).toFixed(2).padStart(9)} ms  renderer frame instrumentation`)
+if (mailboxPaints.length > 0) {
+  console.log(`mailbox 8→1 median      ${percentile(mailboxPaints, 0.5).toFixed(2).padStart(9)} ms  eight raw arrivals + one raster/upload`)
+}
 console.log(`retained terminal nodes ${String(retained).padStart(9)}     ${native ? direct ? 'direct binary native surface' : 'base64 native surface' : 'React fallback'}`)
 
 root.unmount()
 await service.dispose()
 
 if (native && retained > 5) throw new Error(`native terminal retained ${retained} nodes instead of one compact surface`)
+if (direct && nativeFrameCount !== SAMPLES + 3) {
+  throw new Error(`direct terminal projected ${nativeFrameCount} of ${SAMPLES + 3} frames`)
+}

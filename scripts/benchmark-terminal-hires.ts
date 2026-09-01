@@ -2,6 +2,8 @@ const grids = [
   { cols: 220, rows: 65, samples: 30 },
   { cols: 320, rows: 90, samples: 24 },
   { cols: 480, rows: 120, samples: 20 },
+  { cols: 640, rows: 180, samples: 16 },
+  { cols: 960, rows: 240, samples: 12 },
 ] as const
 
 for (const grid of grids) {

@@ -51,7 +51,7 @@ export class TerminalOutputBuffer {
       }
     }
     while (index < chunk.byteLength) {
-      const enable = chunk.indexOf(0x68, index)
+      const enable = this.#synchronized ? -1 : chunk.indexOf(0x68, index)
       const disable = chunk.indexOf(0x6c, index)
       const final = enable === -1
         ? disable
