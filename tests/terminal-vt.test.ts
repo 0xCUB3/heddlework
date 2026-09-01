@@ -169,6 +169,32 @@ describe('VtEmulator', () => {
     expect(snap.viewport[0]?.text).toBe('main')
   })
 
+  it('keeps packed graphemes aligned through insertion, deletion, erase, and resize', () => {
+    const vt = new VtEmulator(8, 2)
+    vt.write('ÁBCD')
+    expect(vt.snapshot().viewport[0]?.cells[0]?.ch).toBe('Á')
+
+    vt.write(ESC + '[1;1H' + ESC + '[2@')
+    let snapshot = vt.snapshot()
+    expect(snapshot.viewport[0]?.cells.slice(0, 6).map((cell) => cell.ch)).toEqual([' ', ' ', 'Á', 'B', 'C', 'D'])
+    expect(snapshot.packedViewport?.[0]?.graphemes?.get(2)).toBe('Á')
+
+    vt.write(ESC + '[1;1H' + ESC + '[P')
+    snapshot = vt.snapshot()
+    expect(snapshot.viewport[0]?.cells.slice(0, 5).map((cell) => cell.ch)).toEqual([' ', 'Á', 'B', 'C', 'D'])
+    expect(snapshot.packedViewport?.[0]?.graphemes?.get(1)).toBe('Á')
+
+    vt.resize(4, 2)
+    snapshot = vt.snapshot()
+    expect(snapshot.viewport[0]?.cells.map((cell) => cell.ch)).toEqual([' ', 'Á', 'B', 'C'])
+    expect(snapshot.packedViewport?.[0]?.graphemes?.get(1)).toBe('Á')
+
+    vt.write(ESC + '[1;2H' + ESC + '[X')
+    snapshot = vt.snapshot()
+    expect(snapshot.viewport[0]?.cells[1]?.ch).toBe(' ')
+    expect(snapshot.packedViewport?.[0]?.graphemes).toBeUndefined()
+  })
+
   it('reuses immutable rows until their mutable source row changes', () => {
     const vt = new VtEmulator(12, 3)
     vt.write('first' + ESC + '[2;1Hsecond')

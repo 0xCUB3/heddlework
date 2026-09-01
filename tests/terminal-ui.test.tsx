@@ -6,6 +6,7 @@ import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { MemoryTerminalBackend } from '../src/terminal/backend.ts'
 import { TerminalSessionService } from '../src/terminal/service.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
+import { TerminalView } from '../src/ui/terminal-view.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
@@ -28,6 +29,50 @@ function createHarness() {
 }
 
 describeNative('terminal panels', () => {
+  it('stages interactive output before the next React or GPUI flush', async () => {
+    const terminals = new TerminalSessionService({
+      cwd: '/tmp/heddlework-terminal-ui',
+      backend: new MemoryTerminalBackend(),
+    })
+    services.push(terminals)
+    const sessionId = await terminals.spawn({ cols: 80, rows: 24 })
+    const root = createTestRoot({ width: 800, height: 420 })
+    const renderer = root.renderer as typeof root.renderer & {
+      setTerminalFrame?: (...args: unknown[]) => void
+    }
+    const setTerminalFrame = renderer.setTerminalFrame?.bind(renderer)
+    expect(setTerminalFrame).toBeDefined()
+    let stagedFrames = 0
+    renderer.setTerminalFrame = (...args: unknown[]) => {
+      stagedFrames += 1
+      setTerminalFrame!(...args)
+    }
+    try {
+      root.render(
+        <TerminalView
+          service={terminals}
+          sessionId={sessionId}
+          placement="bottom"
+          width={800}
+          height={420}
+          appearance="dark"
+        />,
+      )
+      root.renderer.flush()
+      const initialFrames = stagedFrames
+      const stateSnapshot = terminals.getStateSnapshot()
+
+      terminals.write(sessionId, 'x')
+
+      expect(stagedFrames).toBe(initialFrames + 1)
+      expect(terminals.getStateSnapshot()).toBe(stateSnapshot)
+      root.renderer.flush()
+      expect(root.renderer.getPaintedText()).toContain('x')
+    } finally {
+      root.unmount()
+    }
+  })
+
   it('opens the layout-owned bottom dock and the right terminal surface', async () => {
     const { controller, terminals } = createHarness()
     const root = createTestRoot({ width: 1_280, height: 720 })

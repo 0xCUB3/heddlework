@@ -38,7 +38,10 @@ export class TerminalSessionService {
   readonly #cwd: string
   readonly #sessions = new Map<TerminalSessionId, LiveSession>()
   readonly #listeners = new Set<() => void>()
+  readonly #stateListeners = new Set<() => void>()
+  readonly #frameListeners = new Set<(id: TerminalSessionId) => void>()
   #snapshot: TerminalServiceSnapshot
+  #stateSnapshot: TerminalServiceSnapshot
   readonly #appearancePath: string | false
   #appearance: TerminalAppearance
   #activeBottomId: TerminalSessionId | undefined
@@ -46,6 +49,8 @@ export class TerminalSessionService {
   #generation = 0
   #lastFrameAt = 0
   #frame: ReturnType<typeof setTimeout> | undefined
+  readonly #dirtyFrameIds = new Set<TerminalSessionId>()
+  #stateDirty = false
   #disposed = false
   #seq = 0
 
@@ -62,7 +67,8 @@ export class TerminalSessionService {
       options.appearance,
       readTerminalAppearance(this.#appearancePath) ?? DEFAULT_TERMINAL_APPEARANCE,
     )
-    this.#snapshot = this.#publish(false)
+    this.#snapshot = this.#createSnapshot()
+    this.#stateSnapshot = this.#snapshot
   }
 
   readonly subscribe = (listener: () => void): TerminalCleanup => {
@@ -70,7 +76,18 @@ export class TerminalSessionService {
     return () => { this.#listeners.delete(listener) }
   }
 
+  readonly subscribeState = (listener: () => void): TerminalCleanup => {
+    this.#stateListeners.add(listener)
+    return () => { this.#stateListeners.delete(listener) }
+  }
+
+  readonly subscribeFrames = (listener: (id: TerminalSessionId) => void): TerminalCleanup => {
+    this.#frameListeners.add(listener)
+    return () => { this.#frameListeners.delete(listener) }
+  }
+
   readonly getSnapshot = (): TerminalServiceSnapshot => this.#snapshot
+  readonly getStateSnapshot = (): TerminalServiceSnapshot => this.#stateSnapshot
 
   grid(id: TerminalSessionId | undefined): TerminalGridSnapshot | undefined {
     if (!id) return undefined
@@ -88,7 +105,7 @@ export class TerminalSessionService {
     if (terminalAppearancesEqual(next, this.#appearance)) return
     this.#appearance = next
     writeTerminalAppearance(this.#appearancePath, next)
-    this.#schedule(true)
+    this.#publishState()
   }
 
   resetAppearance(): void {
@@ -124,8 +141,10 @@ export class TerminalSessionService {
       const previousScrollback = session.vt.scrollbackLength
       session.vt.write(chunk)
       this.#anchorDetachedViewport(session, previousScrollback)
-      if (session.vt.title && session.vt.title !== session.info.title) session.info = { ...session.info, title: session.vt.title }
+      const titleChanged = Boolean(session.vt.title && session.vt.title !== session.info.title)
+      if (titleChanged) session.info = { ...session.info, title: session.vt.title }
       if (session.vt.synchronizedOutput) {
+        if (titleChanged) this.#publishState()
         session.synchronizedHold = true
         this.#holdSynchronizedOutput(session)
         return
@@ -137,18 +156,18 @@ export class TerminalSessionService {
       if (withinInteractiveWindow) session.lastInputAt = Number.NEGATIVE_INFINITY
       this.#releaseSynchronizedOutput(session)
       session.gridDirty = true
-      this.#schedule(completedSynchronizedFrame || interactiveResponse)
+      this.#scheduleFrame(session.info.id, completedSynchronizedFrame || interactiveResponse, titleChanged)
     }))
     session.cleanups.push(process.onExit((status) => {
       this.#releaseSynchronizedOutput(session)
       session.gridDirty = true
       session.info = { ...session.info, status }
-      this.#schedule(true)
+      this.#scheduleFrame(session.info.id, true, true)
     }))
     this.#sessions.set(id, session)
     if (!this.#activeBottomId) this.#activeBottomId = id
     if (!this.#activeRightId) this.#activeRightId = id
-    this.#schedule(true)
+    this.#publishState()
     return id
   }
 
@@ -167,7 +186,7 @@ export class TerminalSessionService {
     if (id && !this.#sessions.has(id)) return
     if (placement === 'bottom') this.#activeBottomId = id
     else this.#activeRightId = id
-    this.#schedule(true)
+    this.#publishState()
   }
 
   write(id: TerminalSessionId, data: string): void {
@@ -177,7 +196,7 @@ export class TerminalSessionService {
     session.lastInputAt = performance.now()
     if (session.synchronizedHold) {
       session.gridDirty = true
-      this.#schedule(true)
+      this.#scheduleFrame(id, true)
     }
     session.process.write(data)
   }
@@ -199,7 +218,7 @@ export class TerminalSessionService {
     session.vt.resize(nextCols, nextRows)
     session.info = { ...session.info, cols: nextCols, rows: nextRows }
     session.gridDirty = true
-    this.#schedule(true)
+    this.#scheduleFrame(id, true, true)
   }
 
   setScrollOffset(id: TerminalSessionId, offset: number): void {
@@ -209,7 +228,7 @@ export class TerminalSessionService {
     if (next === session.scrollOffset) return
     session.scrollOffset = next
     session.gridDirty = true
-    this.#schedule()
+    this.#scheduleFrame(id)
   }
 
   async close(id: TerminalSessionId): Promise<void> {
@@ -219,9 +238,10 @@ export class TerminalSessionService {
     for (const cleanup of session.cleanups.splice(0)) cleanup()
     session.process.kill()
     this.#sessions.delete(id)
+    this.#dirtyFrameIds.delete(id)
     if (this.#activeBottomId === id) this.#activeBottomId = this.#sessions.keys().next().value
     if (this.#activeRightId === id) this.#activeRightId = this.#sessions.keys().next().value
-    this.#schedule(true)
+    this.#publishState()
   }
 
   async dispose(): Promise<void> {
@@ -231,15 +251,20 @@ export class TerminalSessionService {
     const ids = [...this.#sessions.keys()]
     for (const id of ids) await this.close(id)
     this.#listeners.clear()
+    this.#stateListeners.clear()
+    this.#frameListeners.clear()
+    this.#dirtyFrameIds.clear()
   }
 
-  #schedule(immediate = false): void {
+  #scheduleFrame(id: TerminalSessionId, immediate = false, stateChanged = false): void {
+    this.#dirtyFrameIds.add(id)
+    this.#stateDirty ||= stateChanged
     if (immediate) {
       if (this.#frame) {
         clearTimeout(this.#frame)
         this.#frame = undefined
       }
-      this.#publish(true)
+      this.#publishFrames()
       return
     }
     if (this.#frame) return
@@ -247,7 +272,7 @@ export class TerminalSessionService {
     const delay = Math.max(0, TERMINAL_FRAME_MS - elapsed)
     this.#frame = setTimeout(() => {
       this.#frame = undefined
-      this.#publish(true)
+      this.#publishFrames()
     }, delay)
   }
 
@@ -257,7 +282,7 @@ export class TerminalSessionService {
       session.synchronizedTimer = undefined
       if (!this.#sessions.has(session.info.id)) return
       session.gridDirty = true
-      this.#schedule()
+      this.#scheduleFrame(session.info.id)
     }, SYNCHRONIZED_OUTPUT_STALE_MS)
   }
 
@@ -273,19 +298,41 @@ export class TerminalSessionService {
     session.synchronizedHold = false
   }
 
-  #publish(notify: boolean): TerminalServiceSnapshot {
-    if (notify) this.#lastFrameAt = performance.now()
+  #publishState(): void {
+    this.#stateDirty = false
+    this.#snapshot = this.#createSnapshot()
+    this.#stateSnapshot = this.#snapshot
+    for (const listener of this.#stateListeners) listener()
+    for (const listener of this.#listeners) listener()
+  }
+
+  #publishFrames(): void {
+    if (this.#dirtyFrameIds.size === 0) return
+    this.#lastFrameAt = performance.now()
+    const ids = [...this.#dirtyFrameIds]
+    this.#dirtyFrameIds.clear()
+    const stateChanged = this.#stateDirty
+    this.#stateDirty = false
+    this.#snapshot = this.#createSnapshot()
+    if (stateChanged) this.#stateSnapshot = this.#snapshot
+    for (const id of ids) {
+      if (!this.#sessions.has(id)) continue
+      for (const listener of this.#frameListeners) listener(id)
+    }
+    if (stateChanged) for (const listener of this.#stateListeners) listener()
+    for (const listener of this.#listeners) listener()
+  }
+
+  #createSnapshot(): TerminalServiceSnapshot {
     this.#generation += 1
     const sessions: TerminalSessionInfo[] = [...this.#sessions.values()].map((session) => session.info)
-    this.#snapshot = {
+    return {
       sessions,
       activeBottomId: this.#activeBottomId,
       activeRightId: this.#activeRightId,
       appearance: this.#appearance,
       generation: this.#generation,
     }
-    if (notify) for (const listener of this.#listeners) listener()
-    return this.#snapshot
   }
 }
 

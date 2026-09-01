@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'
@@ -6,6 +6,7 @@ import { TERMINAL_DOCK_HEADER, TERMINAL_DOCK_RESIZE } from './terminal-metrics.t
 import { TerminalToolbar } from './terminal-chrome.tsx'
 import { TerminalView } from './terminal-view.tsx'
 import type { ResolvedTheme } from './theme.ts'
+import { useTerminalServiceSnapshot } from './terminal-context.tsx'
 
 export function TerminalDock({
   service,
@@ -30,7 +31,7 @@ export function TerminalDock({
   onToggleFullscreen(): void
   onClose(): void
 }) {
-  const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const snapshot = useTerminalServiceSnapshot(service)
   const activeId = snapshot.activeBottomId ?? snapshot.sessions[0]?.id
   const [focusSerial, setFocusSerial] = useState(1)
   const requestFocus = useCallback((id = activeId) => {

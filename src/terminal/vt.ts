@@ -29,28 +29,85 @@ const DEFAULT_BG = TERMINAL_PACKED_COLOR_DEFAULT_BG
 const SYNCHRONIZED_OUTPUT_ENABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68])
 const SYNCHRONIZED_OUTPUT_DISABLE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c])
 const HIDE_CURSOR = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c])
-const FRAMEBUFFER_ASCII_GLYPHS = Array.from({ length: 0x5f }, (_, index) => String.fromCharCode(0x20 + index))
-const FRAMEBUFFER_BLOCK_GLYPHS = Array.from({ length: 0x20 }, (_, index) => String.fromCharCode(0x2580 + index))
 
 type ParserState = 'ground' | 'escape' | 'csi' | 'osc' | 'dcs' | 'charset'
 
-interface MutableCell {
-  ch: string
-  fg: number
-  bg: number
-  attrs: number
+interface MutableRow {
+  cells: Uint32Array
+  graphemes: Map<number, string> | undefined
 }
 
-function emptyCell(): MutableCell {
-  return { ch: ' ', fg: DEFAULT_FG, bg: DEFAULT_BG, attrs: 0 }
+function blankRow(
+  cols: number,
+  foreground = DEFAULT_FG,
+  background = DEFAULT_BG,
+  attrs = 0,
+): MutableRow {
+  const cells = new Uint32Array(cols * TERMINAL_PACKED_CELL_WORDS)
+  for (let word = 0; word < cells.length; word += TERMINAL_PACKED_CELL_WORDS) {
+    cells[word] = 32
+    cells[word + 1] = foreground
+    cells[word + 2] = background
+    cells[word + 3] = attrs
+  }
+  return { cells, graphemes: undefined }
 }
 
-function cloneCell(cell: MutableCell): MutableCell {
-  return { ch: cell.ch, fg: cell.fg, bg: cell.bg, attrs: cell.attrs }
+function cloneRow(row: MutableRow): MutableRow {
+  return {
+    cells: row.cells.slice(),
+    graphemes: row.graphemes ? new Map(row.graphemes) : undefined,
+  }
 }
 
-function blankRow(cols: number): MutableCell[] {
-  return Array.from({ length: cols }, () => emptyCell())
+function cellText(row: MutableRow, column: number): string {
+  const grapheme = row.graphemes?.get(column)
+  if (grapheme !== undefined) return grapheme
+  return String.fromCodePoint(row.cells[column * TERMINAL_PACKED_CELL_WORDS] ?? 32)
+}
+
+function setCellCode(
+  row: MutableRow,
+  column: number,
+  code: number,
+  foreground: number,
+  background: number,
+  attrs: number,
+): void {
+  const word = column * TERMINAL_PACKED_CELL_WORDS
+  row.cells[word] = code
+  row.cells[word + 1] = foreground
+  row.cells[word + 2] = background
+  row.cells[word + 3] = attrs
+  if (row.graphemes?.delete(column) && row.graphemes.size === 0) row.graphemes = undefined
+}
+
+function setCellText(
+  row: MutableRow,
+  column: number,
+  text: string,
+  foreground: number,
+  background: number,
+  attrs: number,
+): void {
+  const code = text.codePointAt(0) ?? 32
+  setCellCode(row, column, code, foreground, background, attrs)
+  if (text !== String.fromCodePoint(code)) {
+    row.graphemes ??= new Map()
+    row.graphemes.set(column, text)
+  }
+}
+
+function appendCellText(row: MutableRow, column: number, suffix: string): void {
+  const word = column * TERMINAL_PACKED_CELL_WORDS
+  setCellText(
+    row,
+    column,
+    cellText(row, column) + suffix,
+    row.cells[word + 1] ?? DEFAULT_FG,
+    row.cells[word + 2] ?? DEFAULT_BG,
+    row.cells[word + 3] ?? 0,
+  )
 }
 
 function csiParam(params: readonly number[], index: number, fallback: number): number {
@@ -135,9 +192,9 @@ function rowText(row: readonly { ch: string; attrs: number }[]): string {
 export class VtEmulator {
   #cols: number
   #rows: number
-  #screen: MutableCell[][]
-  #alt: MutableCell[][] | undefined
-  #scrollback: MutableCell[][] = []
+  #screen: MutableRow[]
+  #alt: MutableRow[] | undefined
+  #scrollback: MutableRow[] = []
   #x = 0
   #y = 0
   #savedX = 0
@@ -166,11 +223,11 @@ export class VtEmulator {
   #frameParams = new Int32Array(6)
   #utf8 = new TextDecoder('utf-8', { fatal: false })
   #synchronizedOutput = false
-  #rowVersions = new WeakMap<MutableCell[], number>()
-  #packedRowSnapshots = new WeakMap<MutableCell[], { cols: number; version: number; row: TerminalPackedRow }>()
-  #rowSnapshots = new WeakMap<MutableCell[], Array<{ cols: number; version: number; row: TerminalRow }>>()
+  #rowVersions = new WeakMap<MutableRow, number>()
+  #packedRowSnapshots = new WeakMap<MutableRow, { cols: number; version: number; row: TerminalPackedRow }>()
+  #rowSnapshots = new WeakMap<MutableRow, Array<{ cols: number; version: number; row: TerminalRow }>>()
   #writeVersion = 0
-  #lastTouchedRow: MutableCell[] | undefined
+  #lastTouchedRow: MutableRow | undefined
   #lastTouchedVersion = -1
   onOutput?: (data: string) => void
 
@@ -267,7 +324,7 @@ export class VtEmulator {
 
   snapshot(scrollOffset = 0): TerminalGridSnapshot {
     const offset = Math.max(0, Math.min(this.#scrollback.length, Math.floor(scrollOffset)))
-    const sources: MutableCell[][] = []
+    const sources: MutableRow[] = []
     const versions: number[] = []
     const packedViewport: TerminalPackedRow[] = []
     for (let row = 0; row < this.#rows; row += 1) {
@@ -300,32 +357,18 @@ export class VtEmulator {
     }
   }
 
-  #snapshotPackedRow(source: MutableCell[]): TerminalPackedRow {
+  #snapshotPackedRow(source: MutableRow): TerminalPackedRow {
     const version = this.#rowVersions.get(source) ?? 0
     const cached = this.#packedRowSnapshots.get(source)
     if (cached && cached.cols === this.#cols && cached.version === version) return cached.row
-    const cells = new Uint32Array(this.#cols * TERMINAL_PACKED_CELL_WORDS)
-    let graphemes: Map<number, string> | undefined
-    for (let column = 0; column < this.#cols; column += 1) {
-      const cell = source[column] ?? emptyCell()
-      const glyph = cell.ch.codePointAt(0) ?? 32
-      const glyphLength = glyph > 0xffff ? 2 : 1
-      if (cell.ch.length !== glyphLength) {
-        graphemes ??= new Map()
-        graphemes.set(column, cell.ch)
-      }
-      const word = column * TERMINAL_PACKED_CELL_WORDS
-      cells[word] = glyph
-      cells[word + 1] = cell.fg
-      cells[word + 2] = cell.bg
-      cells[word + 3] = cell.attrs
-    }
+    const cells = source.cells.slice(0, this.#cols * TERMINAL_PACKED_CELL_WORDS)
+    const graphemes = source.graphemes?.size ? new Map(source.graphemes) : undefined
     const row: TerminalPackedRow = { cells, ...(graphemes ? { graphemes } : {}) }
     this.#packedRowSnapshots.set(source, { cols: this.#cols, version, row })
     return row
   }
 
-  #materializeRow(source: MutableCell[], version: number, packed: TerminalPackedRow): TerminalRow {
+  #materializeRow(source: MutableRow, version: number, packed: TerminalPackedRow): TerminalRow {
     const snapshots = this.#rowSnapshots.get(source) ?? []
     const cached = snapshots.find((entry) => entry.cols === this.#cols && entry.version === version)
     if (cached) return cached.row
@@ -347,13 +390,22 @@ export class VtEmulator {
     return row
   }
 
-  #resizeBuffer(buffer: MutableCell[][], cols: number, rows: number): void {
-    for (const row of buffer) {
-      if (row.length < cols) {
-        while (row.length < cols) row.push(emptyCell())
-      } else if (row.length > cols) {
-        row.length = cols
+  #resizeBuffer(buffer: MutableRow[], cols: number, rows: number): void {
+    for (let rowIndex = 0; rowIndex < buffer.length; rowIndex += 1) {
+      const source = buffer[rowIndex]!
+      const sourceCols = source.cells.length / TERMINAL_PACKED_CELL_WORDS
+      if (sourceCols === cols) continue
+      const resized = blankRow(cols)
+      resized.cells.set(source.cells.subarray(0, Math.min(sourceCols, cols) * TERMINAL_PACKED_CELL_WORDS))
+      if (source.graphemes) {
+        for (const [column, text] of source.graphemes) {
+          if (column < cols) {
+            resized.graphemes ??= new Map()
+            resized.graphemes.set(column, text)
+          }
+        }
       }
+      buffer[rowIndex] = resized
     }
     if (buffer.length < rows) {
       while (buffer.length < rows) buffer.push(blankRow(cols))
@@ -508,9 +560,10 @@ export class VtEmulator {
     if (width === 0) {
       if (this.#x > 0) {
         const row = this.#screen[this.#y]!
-        const cell = row[this.#x - 1]!
-        if (!(cell.attrs & CELL_SPACER)) {
-          cell.ch += char
+        const column = this.#x - 1
+        const word = column * TERMINAL_PACKED_CELL_WORDS
+        if (!((row.cells[word + 3] ?? 0) & CELL_SPACER)) {
+          appendCellText(row, column, char)
           this.#touchRow(row)
         }
       }
@@ -531,17 +584,9 @@ export class VtEmulator {
     }
     if (this.#insert) this.#insertBlanks(width)
     const row = this.#screen[this.#y]!
-    const target = row[this.#x]!
-    target.ch = char
-    target.fg = this.#fg
-    target.bg = this.#bg
-    target.attrs = this.#attrs | (width === 2 ? CELL_WIDE : 0)
+    setCellText(row, this.#x, char, this.#fg, this.#bg, this.#attrs | (width === 2 ? CELL_WIDE : 0))
     if (width === 2 && this.#x + 1 < this.#cols) {
-      const spacer = row[this.#x + 1]!
-      spacer.ch = ' '
-      spacer.fg = this.#fg
-      spacer.bg = this.#bg
-      spacer.attrs = this.#attrs | CELL_SPACER
+      setCellCode(row, this.#x + 1, 32, this.#fg, this.#bg, this.#attrs | CELL_SPACER)
     }
     this.#touchRow(row)
     this.#x += width
@@ -565,7 +610,7 @@ export class VtEmulator {
 
     let matched = false
     let attrs = this.#attrs
-    let touchedRow: MutableCell[] | undefined
+    let touchedRow: MutableRow | undefined
     let finalX = this.#x
     let finalY = this.#y
 
@@ -837,28 +882,25 @@ export class VtEmulator {
       touchedRow = row
       let writeX = x
       if (glyphCount === 1) {
-        const glyph = singleCode >= 0x20 && singleCode <= 0x7e
-          ? FRAMEBUFFER_ASCII_GLYPHS[singleCode - 0x20]!
-          : singleCode >= 0x2580 && singleCode <= 0x259f
-            ? FRAMEBUFFER_BLOCK_GLYPHS[singleCode - 0x2580]!
-            : String.fromCodePoint(singleCode)
         if (singleWidth === 0) {
           if (writeX > 0) {
-            const target = row[writeX - 1]!
-            if (!(target.attrs & CELL_SPACER)) target.ch += glyph
+            const column = writeX - 1
+            const word = column * TERMINAL_PACKED_CELL_WORDS
+            if (!((row.cells[word + 3] ?? 0) & CELL_SPACER)) {
+              appendCellText(row, column, String.fromCodePoint(singleCode))
+            }
           }
         } else {
-          const target = row[writeX]!
-          target.ch = glyph
-          target.fg = foreground
-          target.bg = background
-          target.attrs = attrs | (singleWidth === 2 ? CELL_WIDE : 0)
+          setCellCode(
+            row,
+            writeX,
+            singleCode,
+            foreground,
+            background,
+            attrs | (singleWidth === 2 ? CELL_WIDE : 0),
+          )
           if (singleWidth === 2) {
-            const spacer = row[writeX + 1]!
-            spacer.ch = ' '
-            spacer.fg = foreground
-            spacer.bg = background
-            spacer.attrs = attrs | CELL_SPACER
+            setCellCode(row, writeX + 1, 32, foreground, background, attrs | CELL_SPACER)
           }
           writeX += singleWidth
         }
@@ -887,28 +929,25 @@ export class VtEmulator {
           const width = (code >= 0x20 && code <= 0x7e) || (code >= 0x2580 && code <= 0x259f)
             ? 1
             : cellWidth(code)
-          const glyph = code >= 0x20 && code <= 0x7e
-            ? FRAMEBUFFER_ASCII_GLYPHS[code - 0x20]!
-            : code >= 0x2580 && code <= 0x259f
-              ? FRAMEBUFFER_BLOCK_GLYPHS[code - 0x2580]!
-              : String.fromCodePoint(code)
           if (width === 0) {
             if (writeX > 0) {
-              const target = row[writeX - 1]!
-              if (!(target.attrs & CELL_SPACER)) target.ch += glyph
+              const column = writeX - 1
+              const word = column * TERMINAL_PACKED_CELL_WORDS
+              if (!((row.cells[word + 3] ?? 0) & CELL_SPACER)) {
+                appendCellText(row, column, String.fromCodePoint(code))
+              }
             }
           } else {
-            const target = row[writeX]!
-            target.ch = glyph
-            target.fg = foreground
-            target.bg = background
-            target.attrs = attrs | (width === 2 ? CELL_WIDE : 0)
+            setCellCode(
+              row,
+              writeX,
+              code,
+              foreground,
+              background,
+              attrs | (width === 2 ? CELL_WIDE : 0),
+            )
             if (width === 2) {
-              const spacer = row[writeX + 1]!
-              spacer.ch = ' '
-              spacer.fg = foreground
-              spacer.bg = background
-              spacer.attrs = attrs | CELL_SPACER
+              setCellCode(row, writeX + 1, 32, foreground, background, attrs | CELL_SPACER)
             }
             writeX += width
           }
@@ -994,11 +1033,14 @@ export class VtEmulator {
     if (x + runLength > this.#cols) return -1
     const row = this.#screen[y]!
     for (let offset = 0; offset < runLength; offset += 1) {
-      const target = row[x + offset]!
-      target.ch = text[backgroundEnd + offset]!
-      target.fg = foreground
-      target.bg = background
-      target.attrs = this.#attrs
+      setCellCode(
+        row,
+        x + offset,
+        text.charCodeAt(backgroundEnd + offset),
+        foreground,
+        background,
+        this.#attrs,
+      )
     }
     this.#touchRow(row)
     this.#y = y
@@ -1227,19 +1269,24 @@ export class VtEmulator {
     if (code === 6) this.onOutput?.(String.fromCharCode(27) + '[' + String(this.#y + 1) + ';' + String(Math.min(this.#x, this.#cols - 1) + 1) + 'R')
   }
 
-  #eraseCell(): MutableCell {
-    return { ch: ' ', fg: this.#fg, bg: this.#bg, attrs: this.#attrs & ~(CELL_WIDE | CELL_SPACER) }
+  #applyErase(row: MutableRow, column: number): void {
+    setCellCode(
+      row,
+      column,
+      32,
+      this.#fg,
+      this.#bg,
+      this.#attrs & ~(CELL_WIDE | CELL_SPACER),
+    )
   }
 
-  #applyErase(cell: MutableCell): void {
-    cell.ch = ' '
-    cell.fg = this.#fg
-    cell.bg = this.#bg
-    cell.attrs = this.#attrs & ~(CELL_WIDE | CELL_SPACER)
-  }
-
-  #eraseRow(): MutableCell[] {
-    return Array.from({ length: this.#cols }, () => this.#eraseCell())
+  #eraseRow(): MutableRow {
+    return blankRow(
+      this.#cols,
+      this.#fg,
+      this.#bg,
+      this.#attrs & ~(CELL_WIDE | CELL_SPACER),
+    )
   }
 
   #eraseDisplay(mode: number): void {
@@ -1261,27 +1308,54 @@ export class VtEmulator {
     const end = mode === 1 ? this.#x : this.#cols - 1
     const from = mode === 2 ? 0 : start
     const to = mode === 2 ? this.#cols - 1 : end
-    for (let col = from; col <= to; col += 1) this.#applyErase(row[col]!)
+    for (let col = from; col <= to; col += 1) this.#applyErase(row, col)
     this.#touchRow(row)
   }
 
   #eraseChars(count: number): void {
     const row = this.#screen[this.#y]!
-    for (let index = 0; index < count && this.#x + index < this.#cols; index += 1) this.#applyErase(row[this.#x + index]!)
+    for (let index = 0; index < count && this.#x + index < this.#cols; index += 1) {
+      this.#applyErase(row, this.#x + index)
+    }
     this.#touchRow(row)
   }
 
   #insertBlanks(count: number): void {
     const row = this.#screen[this.#y]!
-    for (let index = 0; index < count; index += 1) row.splice(this.#x, 0, this.#eraseCell())
-    row.length = this.#cols
+    const inserted = Math.min(Math.max(0, count), this.#cols - this.#x)
+    if (inserted === 0) return
+    const startWord = this.#x * TERMINAL_PACKED_CELL_WORDS
+    const destinationWord = (this.#x + inserted) * TERMINAL_PACKED_CELL_WORDS
+    const endWord = (this.#cols - inserted) * TERMINAL_PACKED_CELL_WORDS
+    row.cells.copyWithin(destinationWord, startWord, endWord)
+    if (row.graphemes) {
+      const shifted = new Map<number, string>()
+      for (const [column, text] of row.graphemes) {
+        if (column < this.#x) shifted.set(column, text)
+        else if (column < this.#cols - inserted) shifted.set(column + inserted, text)
+      }
+      row.graphemes = shifted.size ? shifted : undefined
+    }
+    for (let column = this.#x; column < this.#x + inserted; column += 1) this.#applyErase(row, column)
     this.#touchRow(row)
   }
 
   #deleteChars(count: number): void {
     const row = this.#screen[this.#y]!
-    row.splice(this.#x, count)
-    while (row.length < this.#cols) row.push(this.#eraseCell())
+    const deleted = Math.min(Math.max(0, count), this.#cols - this.#x)
+    if (deleted === 0) return
+    const destinationWord = this.#x * TERMINAL_PACKED_CELL_WORDS
+    const sourceWord = (this.#x + deleted) * TERMINAL_PACKED_CELL_WORDS
+    row.cells.copyWithin(destinationWord, sourceWord)
+    if (row.graphemes) {
+      const shifted = new Map<number, string>()
+      for (const [column, text] of row.graphemes) {
+        if (column < this.#x) shifted.set(column, text)
+        else if (column >= this.#x + deleted) shifted.set(column - deleted, text)
+      }
+      row.graphemes = shifted.size ? shifted : undefined
+    }
+    for (let column = this.#cols - deleted; column < this.#cols; column += 1) this.#applyErase(row, column)
     this.#touchRow(row)
   }
 
@@ -1328,12 +1402,12 @@ export class VtEmulator {
     else if (this.#y > 0) this.#y -= 1
   }
 
-  #pushScrollback(row: MutableCell[]): void {
-    this.#scrollback.push(row.map((cell) => cloneCell(cell)))
+  #pushScrollback(row: MutableRow): void {
+    this.#scrollback.push(cloneRow(row))
     if (this.#scrollback.length > MAX_SCROLLBACK) this.#scrollback.splice(0, this.#scrollback.length - MAX_SCROLLBACK)
   }
 
-  #touchRow(row: MutableCell[]): void {
+  #touchRow(row: MutableRow): void {
     if (this.#lastTouchedRow === row && this.#lastTouchedVersion === this.#writeVersion) return
     this.#rowVersions.set(row, this.#writeVersion)
     this.#lastTouchedRow = row

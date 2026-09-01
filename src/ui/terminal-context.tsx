@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useSyncExternalStore } from 'react'
 import type { TerminalSessionService } from '../terminal/service.ts'
-import type { TerminalServiceSnapshot } from '../terminal/types.ts'
+import type { TerminalGridSnapshot, TerminalServiceSnapshot, TerminalSessionId } from '../terminal/types.ts'
 
 const TerminalServiceContext = createContext<TerminalSessionService | undefined>(undefined)
 
@@ -38,11 +38,39 @@ export function useTerminalServiceSnapshot(
   service: TerminalSessionService,
   suspended = false,
 ): TerminalServiceSnapshot {
-  const retained = useRef(service.getSnapshot())
-  if (!suspended) retained.current = service.getSnapshot()
+  const retained = useRef(service.getStateSnapshot())
+  if (!suspended) retained.current = service.getStateSnapshot()
   const getSnapshot = useCallback(
-    () => suspended ? retained.current : service.getSnapshot(),
+    () => suspended ? retained.current : service.getStateSnapshot(),
     [service, suspended],
   )
-  return useSyncExternalStore(service.subscribe, getSnapshot, getSnapshot)
+  return useSyncExternalStore(service.subscribeState, getSnapshot, getSnapshot)
+}
+
+export function useTerminalGrid(
+  service: TerminalSessionService,
+  sessionId: TerminalSessionId | undefined,
+  suspended = false,
+): TerminalGridSnapshot | undefined {
+  const retained = useRef<{ service: TerminalSessionService; id: TerminalSessionId | undefined; grid: TerminalGridSnapshot | undefined }>({
+    service,
+    id: sessionId,
+    grid: service.grid(sessionId),
+  })
+  if (retained.current.service !== service || retained.current.id !== sessionId) {
+    retained.current = { service, id: sessionId, grid: service.grid(sessionId) }
+  } else if (!suspended) {
+    retained.current.grid = service.grid(sessionId)
+  }
+  const subscribe = useCallback((listener: () => void) => {
+    if (suspended || !sessionId) return () => {}
+    return service.subscribeFrames((changedId) => {
+      if (changedId === sessionId) listener()
+    })
+  }, [service, sessionId, suspended])
+  const getSnapshot = useCallback(
+    () => suspended ? retained.current.grid : service.grid(sessionId),
+    [service, sessionId, suspended],
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

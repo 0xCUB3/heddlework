@@ -174,9 +174,9 @@ if (latestNativeFrame && stageNativeFrame) {
   }
 }
 console.log(`framebuffer median      ${percentile(totals, 0.5).toFixed(2).padStart(9)} ms  OpenTUI sync + hidden cursor + changed-cell truecolor at ${COLS}×${ROWS}`)
-console.log(`framebuffer p95         ${percentile(totals, 0.95).toFixed(2).padStart(9)} ms  VT + React + NAPI + GPUI`)
-console.log(`frame parse median      ${percentile(parses, 0.5).toFixed(2).padStart(9)} ms  ingress + byte-native VT`)
-console.log(`frame project median    ${percentile(projections, 0.5).toFixed(2).padStart(9)} ms  React + packed frame + native transport`)
+console.log(`framebuffer p95         ${percentile(totals, 0.95).toFixed(2).padStart(9)} ms  VT + direct NAPI stage + GPUI`)
+console.log(`frame delivery median   ${percentile(parses, 0.5).toFixed(2).padStart(9)} ms  ingress + packed VT + native stage`)
+console.log(`event-loop handoff      ${percentile(projections, 0.5).toFixed(2).padStart(9)} ms  direct frame is already staged`)
 console.log(`frame flush median      ${percentile(paints, 0.5).toFixed(2).padStart(9)} ms  GPUI rasterization + layout + paint`)
 console.log(`native paint p90        ${(stats.p90Ms ?? 0).toFixed(2).padStart(9)} ms  renderer frame instrumentation`)
 if (mailboxPaints.length > 0) {

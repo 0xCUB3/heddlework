@@ -81,6 +81,38 @@ describe('TerminalSessionService', () => {
     await service.dispose()
   })
 
+  it('separates session-scoped frames from structural state updates', async () => {
+    const backend = new PushTerminalBackend()
+    const service = new TerminalSessionService({ cwd: process.cwd(), backend })
+    const id = await service.spawn({ cols: 40, rows: 4 })
+    const initialState = service.getStateSnapshot()
+    let generalNotifications = 0
+    let stateNotifications = 0
+    const frameIds: string[] = []
+    const unsubscribe = service.subscribe(() => { generalNotifications += 1 })
+    const unsubscribeState = service.subscribeState(() => { stateNotifications += 1 })
+    const unsubscribeFrames = service.subscribeFrames((changedId) => { frameIds.push(changedId) })
+
+    backend.emit(ESC + '[?2026hframe' + ESC + '[?2026l', { synchronizedFrame: true })
+
+    expect(generalNotifications).toBe(1)
+    expect(stateNotifications).toBe(0)
+    expect(frameIds).toEqual([id])
+    expect(service.getStateSnapshot()).toBe(initialState)
+    expect(service.getSnapshot()).not.toBe(initialState)
+
+    backend.emit(ESC + '[?2026h' + ESC + ']0;renamed' + String.fromCharCode(7) + ESC + '[?2026l', { synchronizedFrame: true })
+
+    expect(generalNotifications).toBe(2)
+    expect(stateNotifications).toBe(1)
+    expect(frameIds).toEqual([id, id])
+    expect(service.getStateSnapshot().sessions[0]?.title).toBe('renamed')
+    unsubscribeFrames()
+    unsubscribeState()
+    unsubscribe()
+    await service.dispose()
+  })
+
   it('publishes a transport-coalesced synchronized frame without a 60 Hz delay', async () => {
     const backend = new PushTerminalBackend()
     const service = new TerminalSessionService({ cwd: process.cwd(), backend })

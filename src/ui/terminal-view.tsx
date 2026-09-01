@@ -4,7 +4,7 @@ import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, Termi
 import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
-import { useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
+import { useTerminalGrid, useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
 import { TERMINAL_CELL_WIDTH, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, TERMINAL_PADDING_X, TERMINAL_PADDING_Y, terminalGridSize } from './terminal-metrics.ts'
 import { terminalNativeBinaryFrame, terminalNativeFrame } from './terminal-native.ts'
@@ -36,15 +36,17 @@ export const TerminalView = memo(function TerminalView({
 }) {
   const projectionSuspensionRequested = useTerminalProjectionSuspended()
   const projectionSuspended = placement === 'right' && projectionSuspensionRequested
+  const gpuix = useGpuix()
+  const renderer = gpuix?.renderer as TerminalCapableRenderer | undefined
+  const nativeTerminal = renderer?.supportsNativeTerminal?.() === true
+  const directTerminal = nativeTerminal && typeof renderer?.setTerminalFrame === 'function'
   const serviceSnapshot = useTerminalServiceSnapshot(service, projectionSuspended)
   const rendering = serviceSnapshot.appearance
-  const snapshot = !projectionSuspended && sessionId ? service.grid(sessionId) : undefined
+  const snapshot = useTerminalGrid(service, sessionId, projectionSuspended || directTerminal)
   const theme = useMemo(() => terminalPaintTheme(appearance), [appearance])
   const size = terminalGridSize(width, height)
   const sizeRef = useRef(size)
   sizeRef.current = size
-  const gpuix = useGpuix()
-  const nativeTerminal = (gpuix?.renderer as TerminalCapableRenderer | undefined)?.supportsNativeTerminal?.() === true
   const inputId = useRef<number | undefined>(undefined)
 
   useEffect(() => {
@@ -94,12 +96,14 @@ export const TerminalView = memo(function TerminalView({
   }, [service, sessionId])
 
   const onScroll = useCallback((event: { deltaY?: number }) => {
-    if (!sessionId || !snapshot) return
+    if (!sessionId) return
+    const snapshot = service.grid(sessionId)
+    if (!snapshot) return
     const delta = event.deltaY ?? 0
     if (delta === 0) return
     const next = snapshot.scrollOffset + (delta > 0 ? -1 : 1) * Math.max(1, Math.round(Math.abs(delta) / TERMINAL_LINE_HEIGHT))
     service.setScrollOffset(sessionId, next)
-  }, [service, sessionId, snapshot])
+  }, [service, sessionId])
 
   return (
     <div
@@ -121,7 +125,15 @@ export const TerminalView = memo(function TerminalView({
       onScroll={onScroll}
     >
       {projectionSuspended ? null : snapshot ? (nativeTerminal
-        ? <NativeTerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
+        ? <NativeTerminalGrid
+            service={service}
+            sessionId={sessionId!}
+            snapshot={directTerminal ? undefined : snapshot}
+            cols={size.cols}
+            rows={size.rows}
+            theme={theme}
+            rendering={rendering}
+          />
         : <TerminalGrid snapshot={snapshot} theme={theme} rendering={rendering} />
       ) : <text style={{ color: colors.textFaint, fontSize: 11 }}>No terminal session.</text>}
       <div
@@ -151,31 +163,54 @@ export const TerminalView = memo(function TerminalView({
   )
 })
 
-const NativeTerminalGrid = memo(function NativeTerminalGrid({ snapshot, theme, rendering }: { snapshot: TerminalGridSnapshot; theme: TerminalPaintTheme; rendering: TerminalAppearance }) {
+const NativeTerminalGrid = memo(function NativeTerminalGrid({
+  service,
+  sessionId,
+  snapshot,
+  cols,
+  rows,
+  theme,
+  rendering,
+}: {
+  service: TerminalSessionService
+  sessionId: TerminalSessionId
+  snapshot: TerminalGridSnapshot | undefined
+  cols: number
+  rows: number
+  theme: TerminalPaintTheme
+  rendering: TerminalAppearance
+}) {
   const gpuix = useGpuix()
   const renderer = gpuix?.renderer as TerminalCapableRenderer | undefined
   const direct = typeof renderer?.setTerminalFrame === 'function'
   const binaryCells = useRef<Uint8Array | undefined>(undefined)
-  const binaryFrame = useMemo(() => {
-    if (!direct) return undefined
-    const frame = terminalNativeBinaryFrame(snapshot, theme, rendering, binaryCells.current)
-    binaryCells.current = frame.cells
-    return frame
-  }, [direct, rendering, snapshot, theme])
-  const fallbackFrame = useMemo(
-    () => direct ? undefined : terminalNativeFrame(snapshot, theme, rendering),
-    [direct, rendering, snapshot, theme],
-  )
   const terminalId = useRef<number | undefined>(undefined)
 
-  useLayoutEffect(() => {
-    if (!binaryFrame || terminalId.current === undefined || !renderer?.setTerminalFrame) return
-    const { cells, ...metadata } = binaryFrame
+  const stageFrame = useCallback(() => {
+    if (!direct || terminalId.current === undefined || !renderer?.setTerminalFrame) return
+    const current = service.grid(sessionId)
+    if (!current) return
+    const frame = terminalNativeBinaryFrame(current, theme, rendering, binaryCells.current)
+    binaryCells.current = frame.cells
+    const { cells, ...metadata } = frame
     const payload = typeof Buffer === 'undefined'
       ? cells
       : Buffer.from(cells.buffer, cells.byteOffset, cells.byteLength)
     renderer.setTerminalFrame(terminalId.current, JSON.stringify(metadata), payload)
-  }, [binaryFrame, renderer])
+  }, [direct, renderer, rendering, service, sessionId, theme])
+
+  useLayoutEffect(() => {
+    if (!direct) return
+    stageFrame()
+    return service.subscribeFrames((changedId) => {
+      if (changedId === sessionId) stageFrame()
+    })
+  }, [direct, service, sessionId, stageFrame])
+
+  const fallbackFrame = useMemo(
+    () => direct || !snapshot ? undefined : terminalNativeFrame(snapshot, theme, rendering),
+    [direct, rendering, snapshot, theme],
+  )
 
   return React.createElement('terminal', {
     ref: (instance: { id: number } | null) => { terminalId.current = instance?.id },
@@ -183,8 +218,8 @@ const NativeTerminalGrid = memo(function NativeTerminalGrid({ snapshot, theme, r
     ...(fallbackFrame ? { frame: fallbackFrame } : {}),
     style: {
       position: 'relative',
-      width: snapshot.cols * TERMINAL_CELL_WIDTH,
-      height: snapshot.rows * TERMINAL_LINE_HEIGHT,
+      width: (snapshot?.cols ?? cols) * TERMINAL_CELL_WIDTH,
+      height: (snapshot?.rows ?? rows) * TERMINAL_LINE_HEIGHT,
       overflow: 'hidden',
     },
   })
