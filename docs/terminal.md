@@ -41,6 +41,34 @@ The UI probe pre-encodes four fully changed frames outside the timed region, cyc
 
 On the development machine, the native offscreen renderer is Retina (`100×50` logical pixels capture as `200×100`). A repeat matrix of the direct faithful path measured 1.73 ms median / 2.05 ms p95 at 220×65, 5.31 / 8.47 ms at 480×120, 8.93 / 11.39 ms at 640×180, and 18.09 / 26.54 ms at the deliberately extreme 960×240 grid. Even at 960×240, eight raw arrivals coalesced into one raster/upload in 3.09 ms median. At 2× scale with the current 7.83×17 logical-cell metrics, the 480×120 terminal surface is already approximately 7549×4104 physical pixels; 960×240 is approximately 15066×8184, near Metal's maximum texture dimension and much larger than a 5K fullscreen terminal. The 640×180 case remains below a 16.7 ms frame budget through p95. A three-second full-workbench Golden Star probe delivered 169 PTY frames at 56.3 producer FPS as exactly 169 session notifications and 169 native stages, with zero structural notifications or React commits; the terminal callback measured 0.20 ms median / 0.29 ms p90. Treat timings as hardware-dependent; synchronized provenance, realistic byte ingress, pre-commit direct staging, direct-transport capability, raw-mailbox coalescing, workload shape, node count, immutable row reuse, and single visible projection are the structural guards.
 
+### Live GPUIX window harness
+
+The offscreen probes deliberately remove the operating-system event loop. Use the live harness when the problem only appears in a real, maximized, or Retina window:
+
+```bash
+bun run benchmark:terminal:gpuix -- --fullscreen --duration 15 --overlay full --report screenshots/terminal-gpuix-live.json
+```
+
+The command creates a production `GpuixRenderer`, uses Heddlework's real window options and `startFrameLoop`, mounts the production `TerminalView`, and runs a real `Bun.Terminal` PTY. When the sibling `../opentui-examples` executable exists, the harness starts it and selects **Golden Star Demo**. Otherwise, `--fixture` is implied and a bundled 60 FPS DEC 2026 truecolor framebuffer producer supplies a deterministic full-grid workload. Use `--help` for custom commands, logical window dimensions, warmup, focus, and report options.
+
+The one-second line and final `TERMINAL_GPUIX_REPORT` JSON expose every handoff independently:
+
+- PTY complete-frame rate and wire MiB/s;
+- session notifications and direct native stages, which must remain 1:1;
+- service-to-stage time (packed projection) and the isolated NAPI call;
+- actual GPUI draw count and native draw percentiles;
+- React commits during animation;
+- macOS `tick()` rate, latency, and wall occupancy, distinct from CPU use.
+
+For an event-pump A/B with an identical producer and grid, run:
+
+```bash
+bun run benchmark:terminal:gpuix -- --fixture --duration 10 --frame-ms 8
+bun run benchmark:terminal:gpuix -- --fixture --duration 10 --frame-ms 33
+```
+
+On the development machine at 800×600, the default 8 ms loop delivered approximately 23 producer/service/stage/draw FPS even though every pipeline ratio was exactly 1.0 and GPUI draw p90 was about 0.30 ms. `tick()` itself occupied roughly 93% of wall time at a 15.6 ms median. The 33 ms diagnostic delivered approximately 55 FPS with a 0.27 ms GPUI draw p90, zero animated React commits, and 3.5% tick wall occupancy. This isolates the remaining live-window slowdown to the embedded macOS event pump starving Bun's PTY/JavaScript loop, rather than terminal projection, retained nodes, rasterization, or texture upload. The 33 ms mode is an A/B diagnostic, not a production fix: it lowers AppKit pump frequency while proving where the contention occurs.
+
 ## Native rendering versus xterm.js
 
 The xterm.js/WebGL fork in Localterm is not copied into the desktop bundle. Instead, Heddlework adds the missing low-level primitive to GPUIX: one fixed-cell `<terminal>` host consumes compact complete frames through a coalescing binary mailbox and paints directly into the GPUI scene.
