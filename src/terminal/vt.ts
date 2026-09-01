@@ -9,22 +9,30 @@ import {
   CELL_STRIKE,
   CELL_UNDERLINE,
   CELL_WIDE,
+  TERMINAL_PACKED_CELL_WORDS,
+  TERMINAL_PACKED_COLOR_DEFAULT_BG,
+  TERMINAL_PACKED_COLOR_DEFAULT_FG,
+  TERMINAL_PACKED_COLOR_INDEXED,
+  TERMINAL_PACKED_COLOR_KIND_MASK,
   type TerminalCell,
   type TerminalColor,
   type TerminalGridSnapshot,
+  type TerminalPackedRow,
   type TerminalRow,
 } from './types.ts'
 
 const MAX_SCROLLBACK = 5_000
-const DEFAULT_FG: TerminalColor = { kind: 'default-fg' }
-const DEFAULT_BG: TerminalColor = { kind: 'default-bg' }
+const DEFAULT_FG_COLOR: TerminalColor = { kind: 'default-fg' }
+const DEFAULT_BG_COLOR: TerminalColor = { kind: 'default-bg' }
+const DEFAULT_FG = TERMINAL_PACKED_COLOR_DEFAULT_FG
+const DEFAULT_BG = TERMINAL_PACKED_COLOR_DEFAULT_BG
 
 type ParserState = 'ground' | 'escape' | 'csi' | 'osc' | 'dcs' | 'charset'
 
 interface MutableCell {
   ch: string
-  fg: TerminalColor
-  bg: TerminalColor
+  fg: number
+  bg: number
   attrs: number
 }
 
@@ -43,6 +51,39 @@ function blankRow(cols: number): MutableCell[] {
 function csiParam(params: readonly number[], index: number, fallback: number): number {
   const value = params[index] ?? 0
   return value === 0 ? fallback : value
+}
+
+function scanNumericCsi(text: string, start: number, params: Int32Array): number {
+  let count = 0
+  let value = 0
+  let hasValue = false
+  for (let index = start; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    if (code >= 0x30 && code <= 0x39) {
+      value = value * 10 + code - 0x30
+      hasValue = true
+      continue
+    }
+    if (code === 0x3b) {
+      if (count >= params.length - 1) return -1
+      params[count] = hasValue ? value : 0
+      count += 1
+      value = 0
+      hasValue = false
+      continue
+    }
+    if (code >= 0x40 && code <= 0x7e) {
+      if (hasValue || count > 0) {
+        if (count >= params.length - 1) return -1
+        params[count] = hasValue ? value : 0
+        count += 1
+      }
+      params[params.length - 1] = count
+      return index + 1
+    }
+    return -1
+  }
+  return -1
 }
 
 function cellWidth(code: number): number {
@@ -69,14 +110,12 @@ function cellWidth(code: number): number {
   return 1
 }
 
-function cloneColor(color: TerminalColor): TerminalColor {
-  if (color.kind === 'indexed') return { kind: 'indexed', index: color.index }
-  if (color.kind === 'rgb') return { kind: 'rgb', r: color.r, g: color.g, b: color.b }
-  return color
-}
-
-function freezeCell(cell: MutableCell): TerminalCell {
-  return { ch: cell.ch, fg: cloneColor(cell.fg), bg: cloneColor(cell.bg), attrs: cell.attrs }
+function unpackColor(color: number): TerminalColor {
+  const kind = color & TERMINAL_PACKED_COLOR_KIND_MASK
+  if (kind === TERMINAL_PACKED_COLOR_DEFAULT_FG) return DEFAULT_FG_COLOR
+  if (kind === TERMINAL_PACKED_COLOR_DEFAULT_BG) return DEFAULT_BG_COLOR
+  if (kind === TERMINAL_PACKED_COLOR_INDEXED) return { kind: 'indexed', index: color & 0xff }
+  return { kind: 'rgb', r: (color >>> 16) & 0xff, g: (color >>> 8) & 0xff, b: color & 0xff }
 }
 
 function rowText(row: readonly { ch: string; attrs: number }[]): string {
@@ -110,8 +149,8 @@ export class VtEmulator {
   #bracketedPaste = false
   #insert = false
   #title = ''
-  #fg: TerminalColor = DEFAULT_FG
-  #bg: TerminalColor = DEFAULT_BG
+  #fg = DEFAULT_FG
+  #bg = DEFAULT_BG
   #attrs = 0
   #state: ParserState = 'ground'
   #osc = ''
@@ -119,10 +158,12 @@ export class VtEmulator {
   #csiValue = 0
   #csiHasValue = false
   #csiPrivate = false
+  #frameParams = new Int32Array(6)
   #utf8 = new TextDecoder('utf-8', { fatal: false })
   #synchronizedOutput = false
   #rowVersions = new WeakMap<MutableCell[], number>()
-  #rowSnapshots = new WeakMap<MutableCell[], { cols: number; version: number; row: TerminalRow }>()
+  #packedRowSnapshots = new WeakMap<MutableCell[], { cols: number; version: number; row: TerminalPackedRow }>()
+  #rowSnapshots = new WeakMap<MutableCell[], Array<{ cols: number; version: number; row: TerminalRow }>>()
   #writeVersion = 0
   #lastTouchedRow: MutableCell[] | undefined
   #lastTouchedVersion = -1
@@ -170,6 +211,11 @@ export class VtEmulator {
       if (this.#state === 'ground'
         && text.charCodeAt(index) === 0x1b
         && text.charCodeAt(index + 1) === 0x5b) {
+        const frameNext = this.#fastFramebufferRun(text, index)
+        if (frameNext !== -1) {
+          index = frameNext
+          continue
+        }
         const next = this.#fastCsi(text, index + 2)
         if (next !== -1) {
           index = next
@@ -200,13 +246,22 @@ export class VtEmulator {
 
   snapshot(scrollOffset = 0): TerminalGridSnapshot {
     const offset = Math.max(0, Math.min(this.#scrollback.length, Math.floor(scrollOffset)))
-    const viewport: TerminalRow[] = []
+    const sources: MutableCell[][] = []
+    const versions: number[] = []
+    const packedViewport: TerminalPackedRow[] = []
     for (let row = 0; row < this.#rows; row += 1) {
       const sourceIndex = this.#scrollback.length - offset + row
       const source = sourceIndex < this.#scrollback.length
         ? this.#scrollback[sourceIndex]!
         : this.#screen[sourceIndex - this.#scrollback.length] ?? blankRow(this.#cols)
-      viewport.push(this.#snapshotRow(source))
+      sources.push(source)
+      versions.push(this.#rowVersions.get(source) ?? 0)
+      packedViewport.push(this.#snapshotPackedRow(source))
+    }
+    let viewport: readonly TerminalRow[] | undefined
+    const materialize = () => {
+      viewport ??= packedViewport.map((packed, row) => this.#materializeRow(sources[row]!, versions[row]!, packed))
+      return viewport
     }
     return {
       cols: this.#cols,
@@ -217,20 +272,57 @@ export class VtEmulator {
       applicationCursor: this.#applicationCursor,
       bracketedPaste: this.#bracketedPaste,
       title: this.#title,
-      viewport,
+      get viewport() { return materialize() },
+      packedViewport,
       scrollback: this.#scrollback.length,
       scrollOffset: offset,
     }
   }
 
-  #snapshotRow(source: MutableCell[]): TerminalRow {
+  #snapshotPackedRow(source: MutableCell[]): TerminalPackedRow {
     const version = this.#rowVersions.get(source) ?? 0
-    const cached = this.#rowSnapshots.get(source)
+    const cached = this.#packedRowSnapshots.get(source)
     if (cached && cached.cols === this.#cols && cached.version === version) return cached.row
-    const cells = source.slice(0, this.#cols).map((cell) => freezeCell(cell))
-    while (cells.length < this.#cols) cells.push(freezeCell(emptyCell()))
+    const cells = new Uint32Array(this.#cols * TERMINAL_PACKED_CELL_WORDS)
+    let graphemes: Map<number, string> | undefined
+    for (let column = 0; column < this.#cols; column += 1) {
+      const cell = source[column] ?? emptyCell()
+      const glyph = cell.ch.codePointAt(0) ?? 32
+      const glyphLength = glyph > 0xffff ? 2 : 1
+      if (cell.ch.length !== glyphLength) {
+        graphemes ??= new Map()
+        graphemes.set(column, cell.ch)
+      }
+      const word = column * TERMINAL_PACKED_CELL_WORDS
+      cells[word] = glyph
+      cells[word + 1] = cell.fg
+      cells[word + 2] = cell.bg
+      cells[word + 3] = cell.attrs
+    }
+    const row: TerminalPackedRow = { cells, ...(graphemes ? { graphemes } : {}) }
+    this.#packedRowSnapshots.set(source, { cols: this.#cols, version, row })
+    return row
+  }
+
+  #materializeRow(source: MutableCell[], version: number, packed: TerminalPackedRow): TerminalRow {
+    const snapshots = this.#rowSnapshots.get(source) ?? []
+    const cached = snapshots.find((entry) => entry.cols === this.#cols && entry.version === version)
+    if (cached) return cached.row
+    const cells: TerminalCell[] = []
+    for (let column = 0; column < this.#cols; column += 1) {
+      const word = column * TERMINAL_PACKED_CELL_WORDS
+      const glyph = packed.cells[word] ?? 32
+      cells.push({
+        ch: packed.graphemes?.get(column) ?? String.fromCodePoint(glyph),
+        fg: unpackColor(packed.cells[word + 1] ?? TERMINAL_PACKED_COLOR_DEFAULT_FG),
+        bg: unpackColor(packed.cells[word + 2] ?? TERMINAL_PACKED_COLOR_DEFAULT_BG),
+        attrs: packed.cells[word + 3] ?? 0,
+      })
+    }
     const row: TerminalRow = { cells, text: rowText(cells) }
-    this.#rowSnapshots.set(source, { cols: this.#cols, version, row })
+    snapshots.push({ cols: this.#cols, version, row })
+    if (snapshots.length > 2) snapshots.shift()
+    this.#rowSnapshots.set(source, snapshots)
     return row
   }
 
@@ -438,6 +530,69 @@ export class VtEmulator {
     }
   }
 
+  #fastFramebufferRun(text: string, start: number): number {
+    if (this.#insert) return -1
+    const params = this.#frameParams
+    const cursorEnd = scanNumericCsi(text, start + 2, params)
+    if (cursorEnd === -1 || text.charCodeAt(cursorEnd - 1) !== 0x48 || params[5] !== 2) return -1
+    const rowNumber = params[0] === 0 ? 1 : params[0]!
+    const colNumber = params[1] === 0 ? 1 : params[1]!
+
+    if (text.charCodeAt(cursorEnd) !== 0x1b || text.charCodeAt(cursorEnd + 1) !== 0x5b) return -1
+    const foregroundEnd = scanNumericCsi(text, cursorEnd + 2, params)
+    if (foregroundEnd === -1
+      || text.charCodeAt(foregroundEnd - 1) !== 0x6d
+      || Number(params[5]) !== 5
+      || Number(params[0]) !== 38
+      || Number(params[1]) !== 2) return -1
+    const foreground = (Math.max(0, Math.min(255, params[2]!)) << 16)
+      | (Math.max(0, Math.min(255, params[3]!)) << 8)
+      | Math.max(0, Math.min(255, params[4]!))
+
+    if (text.charCodeAt(foregroundEnd) !== 0x1b || text.charCodeAt(foregroundEnd + 1) !== 0x5b) return -1
+    const backgroundEnd = scanNumericCsi(text, foregroundEnd + 2, params)
+    if (backgroundEnd === -1
+      || text.charCodeAt(backgroundEnd - 1) !== 0x6d
+      || Number(params[5]) !== 5
+      || Number(params[0]) !== 48
+      || Number(params[1]) !== 2) return -1
+    const background = (Math.max(0, Math.min(255, params[2]!)) << 16)
+      | (Math.max(0, Math.min(255, params[3]!)) << 8)
+      | Math.max(0, Math.min(255, params[4]!))
+
+    let runEnd = backgroundEnd
+    while (runEnd < text.length) {
+      const code = text.charCodeAt(runEnd)
+      if (code < 0x2580 || code > 0x259f) break
+      runEnd += 1
+    }
+    const runLength = runEnd - backgroundEnd
+    if (runLength === 0
+      || text.charCodeAt(runEnd) !== 0x1b
+      || text.charCodeAt(runEnd + 1) !== 0x5b
+      || text.charCodeAt(runEnd + 2) !== 0x30
+      || text.charCodeAt(runEnd + 3) !== 0x6d) return -1
+
+    const origin = this.#origin ? this.#scrollTop : 0
+    const y = Math.max(0, Math.min(this.#rows - 1, origin + rowNumber - 1))
+    const x = Math.max(0, Math.min(this.#cols - 1, colNumber - 1))
+    if (x + runLength > this.#cols) return -1
+    const row = this.#screen[y]!
+    for (let offset = 0; offset < runLength; offset += 1) {
+      const target = row[x + offset]!
+      target.ch = text[backgroundEnd + offset]!
+      target.fg = foreground
+      target.bg = background
+      target.attrs = this.#attrs
+    }
+    this.#touchRow(row)
+    this.#y = y
+    this.#x = x + runLength
+    this.#wrapPending = this.#wrap && this.#x >= this.#cols
+    this.#resetPen()
+    return runEnd + 4
+  }
+
   #fastCsi(text: string, start: number): number {
     this.#resetCsi()
     for (let index = start; index < text.length; index += 1) {
@@ -573,10 +728,10 @@ export class VtEmulator {
       else if (value === 29) this.#attrs &= ~CELL_STRIKE
       else if (value === 39) this.#fg = DEFAULT_FG
       else if (value === 49) this.#bg = DEFAULT_BG
-      else if (value >= 30 && value <= 37) this.#fg = { kind: 'indexed', index: value - 30 }
-      else if (value >= 40 && value <= 47) this.#bg = { kind: 'indexed', index: value - 40 }
-      else if (value >= 90 && value <= 97) this.#fg = { kind: 'indexed', index: value - 90 + 8 }
-      else if (value >= 100 && value <= 107) this.#bg = { kind: 'indexed', index: value - 100 + 8 }
+      else if (value >= 30 && value <= 37) this.#fg = TERMINAL_PACKED_COLOR_INDEXED | (value - 30)
+      else if (value >= 40 && value <= 47) this.#bg = TERMINAL_PACKED_COLOR_INDEXED | (value - 40)
+      else if (value >= 90 && value <= 97) this.#fg = TERMINAL_PACKED_COLOR_INDEXED | (value - 90 + 8)
+      else if (value >= 100 && value <= 107) this.#bg = TERMINAL_PACKED_COLOR_INDEXED | (value - 100 + 8)
       else if (value === 38 || value === 48) {
         const target = this.#parseExtendedColor(params, index)
         if (target) {
@@ -588,21 +743,16 @@ export class VtEmulator {
     }
   }
 
-  #parseExtendedColor(params: readonly number[], index: number): { color: TerminalColor; next: number } | undefined {
+  #parseExtendedColor(params: readonly number[], index: number): { color: number; next: number } | undefined {
     const mode = params[index + 1]
     if (mode === 5 && params[index + 2] !== undefined) {
-      return { color: { kind: 'indexed', index: Math.max(0, Math.min(255, params[index + 2]!)) }, next: index + 2 }
+      return { color: TERMINAL_PACKED_COLOR_INDEXED | Math.max(0, Math.min(255, params[index + 2]!)), next: index + 2 }
     }
     if (mode === 2 && params[index + 4] !== undefined) {
-      return {
-        color: {
-          kind: 'rgb',
-          r: Math.max(0, Math.min(255, params[index + 2] ?? 0)),
-          g: Math.max(0, Math.min(255, params[index + 3] ?? 0)),
-          b: Math.max(0, Math.min(255, params[index + 4] ?? 0)),
-        },
-        next: index + 4,
-      }
+      const red = Math.max(0, Math.min(255, params[index + 2] ?? 0))
+      const green = Math.max(0, Math.min(255, params[index + 3] ?? 0))
+      const blue = Math.max(0, Math.min(255, params[index + 4] ?? 0))
+      return { color: (red << 16) | (green << 8) | blue, next: index + 4 }
     }
     return undefined
   }

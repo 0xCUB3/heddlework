@@ -1,6 +1,6 @@
 diff --git a/.changeset/quiet-terminals-capture-tabs.md b/.changeset/quiet-terminals-capture-tabs.md
 new file mode 100644
-index 0000000..f84a816
+index 0000000..be46cb3
 --- /dev/null
 +++ b/.changeset/quiet-terminals-capture-tabs.md
 @@ -0,0 +1,6 @@
@@ -9,9 +9,9 @@ index 0000000..f84a816
 +"@gpuix/react": patch
 +---
 +
-+Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a packed fixed-cell terminal element backed by a nearest-sampled quarter-cell block texture, cached shaping, and direct GPUI glyph-atlas painting.
++Allow focused host elements to capture Tab and Shift+Tab without triggering native focus navigation, and add a packed fixed-cell terminal element backed by a nearest-sampled quarter-cell block texture, cached shaping, direct GPUI glyph-atlas painting, and a coalescing raw-binary frame API.
 diff --git a/README.md b/README.md
-index 0eb922b..453a47a 100644
+index 0eb922b..f660644 100644
 --- a/README.md
 +++ b/README.md
 @@ -41,7 +41,7 @@ bun add -d @types/react typescript
@@ -23,13 +23,15 @@ index 0eb922b..453a47a 100644
  typecheck.
  
  ```json
-@@ -1749,6 +1749,36 @@ assert the geometry without a screenshot. Zed's own editor paints search
+@@ -1749,6 +1749,40 @@ assert the geometry without a screenshot. Zed's own editor paints search
  highlights manually for the same reason.
  </details>
  
 +## Native terminal surface
 +
-+`<terminal>` is a low-level fixed-cell painter for applications that already own a VT parser and PTY. A complete terminal frame crosses the React bridge as one versioned `frame` prop and remains one retained host node. The `cells` value is a base64-encoded, row-major buffer of 16-byte little-endian records: `u32 glyph`, `u32 foreground RGB`, `u32 background RGB`, `u16 flags`, and two reserved bytes. A glyph with bit 31 set indexes `graphemes`; otherwise it is a Unicode scalar value. Flag bits 0–7 are wide, spacer, bold, italic, underline, strike, block-fill, and Nerd Font respectively.
++`<terminal>` is a low-level fixed-cell painter for applications that already own a VT parser and PTY. It remains one retained host node. Cells use a row-major buffer of 16-byte little-endian records: `u32 glyph`, `u32 foreground RGB`, `u32 background RGB`, `u16 flags`, and two reserved bytes. A glyph with bit 31 set indexes `graphemes`; otherwise it is a Unicode scalar value. Flag bits 0–7 are wide, spacer, bold, italic, underline, strike, block-fill, and Nerd Font respectively.
++
++The portable path sends a complete versioned `frame` prop whose `cells` value is base64:
 +
 +```tsx
 +<terminal
@@ -55,12 +57,14 @@ index 0eb922b..453a47a 100644
 +/>
 +```
 +
-+The painter decodes the frame once and uploads one nearest-sampled texture at two pixels per cell axis. Backgrounds occupy all four quarter-cell pixels; half blocks, quadrants, and shades replace the corresponding pixels with the foreground, bypassing text shaping for framebuffer graphics. Remaining text is shaped independently of ANSI colour and paints GPUI's cached monochrome glyph-atlas coverage directly with each run's foreground, so colour animation does not reshape text or create a second atlas. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries.
++Native applications can avoid base64 and React mutation JSON by rendering the host without a `frame` prop, retaining its host ID, and calling `renderer.setTerminalFrame(id, JSON.stringify(metadata), cells)`. `cells` is the raw buffer (a Node `Buffer` for the NAPI renderer, or `Uint8Array` through the React renderer contract); `metadata` contains every field above except `cells`. Feature-detect the optional method and use the complete prop as fallback. The native mailbox retains only the latest staged frame before paint, preventing source frames from building a presentation backlog.
++
++The painter decodes the frame once and uploads one nearest-sampled texture at two pixels per cell axis. Backgrounds occupy all four quarter-cell pixels; half blocks, quadrants, and shades replace the corresponding pixels with the foreground, bypassing text shaping for framebuffer graphics. Remaining text is shaped independently of ANSI colour and paints GPUI's cached monochrome glyph-atlas coverage directly with each run's foreground, so colour animation does not reshape text or create a second atlas. Emoji remain on GPUI's polychrome atlas unless the application requests a text-presentation glyph. Call the optional `renderer.supportsNativeTerminal()` capability before selecting this surface when supporting older GPUIX binaries; feature-detect `renderer.setTerminalFrame()` independently because older native-terminal builds support only the base64 prop.
 +
  ## Native text components
  
  Three elements render text with Syntect syntax highlighting computed in
-@@ -2011,6 +2041,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
+@@ -2011,6 +2045,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
  automatically. A listener alone does not put a `div` in the Tab order; add
  `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
  
@@ -75,7 +79,7 @@ index 0eb922b..453a47a 100644
  A node that listens for both `onMouseDown` and `onMouseMove` **captures the
  pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
  `onMouseMove` and `onMouseUp` keep firing after the pointer leaves the hitbox,
-@@ -2556,6 +2594,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
+@@ -2556,6 +2598,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
  - [x] Image and SVG elements (`<img>`, `<svg>`)
  - [x] Virtual lists (`<virtual-list>`)
  - [x] Native text components (`<code>`, `<diff>`, `<markdown>`)
@@ -116,22 +120,24 @@ index c23c69f..d4ae9b3 100644
  [build-dependencies]
  napi-build = "2"
 diff --git a/packages/native/index.d.ts b/packages/native/index.d.ts
-index 2d9b6e6..dd97a79 100644
+index 2d9b6e6..8c041f5 100644
 --- a/packages/native/index.d.ts
 +++ b/packages/native/index.d.ts
-@@ -31,6 +31,7 @@ export declare class GpuixRenderer {
+@@ -31,6 +31,8 @@ export declare class GpuixRenderer {
    isInitialized(): boolean
    /** Whether JavaScript must drive the native event loop with tick(). */
    requiresTick(): boolean
 +  supportsNativeTerminal(): boolean
++  setTerminalFrame(elementId: number, metadata: string, cells: Buffer): void
    /**
     * The paintable size of the window in logical pixels, excluding any
     * platform title bar. This used to answer a hardcoded 800x600, so anything
-@@ -316,6 +317,7 @@ export declare class TestGpuixRenderer {
+@@ -316,6 +318,8 @@ export declare class TestGpuixRenderer {
    advanceTime(milliseconds: number): void
    /** Get the root element ID, or null if no root is set. */
    getRootId(): number | null
 +  supportsNativeTerminal(): boolean
++  setTerminalFrame(elementId: number, metadata: string, cells: Buffer): void
    /**
     * The offscreen window size, so `useWindowSize()` reports the same numbers
     * under test as in a real window instead of falling back to a default.
@@ -157,13 +163,13 @@ index b3811c1..6cd7461 100644
  
 diff --git a/packages/native/src/custom_elements/terminal.rs b/packages/native/src/custom_elements/terminal.rs
 new file mode 100644
-index 0000000..5977913
+index 0000000..7b0d57d
 --- /dev/null
 +++ b/packages/native/src/custom_elements/terminal.rs
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,631 @@
 +use std::{
 +    collections::HashMap,
-+    sync::{Arc, Mutex},
++    sync::{Arc, Mutex, OnceLock},
 +};
 +
 +use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -190,8 +196,8 @@ index 0000000..5977913
 +        "terminal"
 +    }
 +
-+    fn create(&self, _id: u64) -> Box<dyn CustomElement> {
-+        Box::new(TerminalElement::default())
++    fn create(&self, id: u64) -> Box<dyn CustomElement> {
++        Box::new(TerminalElement::new(id))
 +    }
 +}
 +
@@ -212,6 +218,7 @@ index 0000000..5977913
 +    font_family: String,
 +    nerd_font_family: String,
 +    ligatures_enabled: bool,
++    #[serde(default)]
 +    cells: String,
 +    #[serde(default)]
 +    graphemes: Vec<String>,
@@ -266,10 +273,18 @@ index 0000000..5977913
 +
 +impl TerminalFrame {
 +    fn from_wire(frame: WireFrame) -> Option<Self> {
++        let count = frame.cols.checked_mul(frame.rows)?;
++        let cells = decode_cells(&frame.cells, count)?;
++        Self::from_cells(frame, cells)
++    }
++
++    fn from_cells(frame: WireFrame, cells: Vec<PackedCell>) -> Option<Self> {
 +        if frame.version != 2 || frame.cols == 0 || frame.rows == 0 {
 +            return None;
 +        }
-+        let cells = decode_cells(&frame.cells, frame.cols.checked_mul(frame.rows)?)?;
++        if cells.len() != frame.cols.checked_mul(frame.rows)? {
++            return None;
++        }
 +        let background = parse_color(&frame.background, gpui::transparent_black());
 +        let background_image = Arc::new(cell_image(&frame, &cells)?);
 +        let runs = build_runs(&frame, &cells);
@@ -292,6 +307,10 @@ index 0000000..5977913
 +
 +fn decode_cells(encoded: &str, count: usize) -> Option<Vec<PackedCell>> {
 +    let bytes = BASE64.decode(encoded).ok()?;
++    decode_cell_bytes(&bytes, count)
++}
++
++fn decode_cell_bytes(bytes: &[u8], count: usize) -> Option<Vec<PackedCell>> {
 +    if bytes.len() != count.checked_mul(CELL_BYTES)? {
 +        return None;
 +    }
@@ -306,6 +325,26 @@ index 0000000..5977913
 +            })
 +            .collect(),
 +    )
++}
++
++fn staged_frames() -> &'static Mutex<HashMap<u64, Arc<TerminalFrame>>> {
++    static FRAMES: OnceLock<Mutex<HashMap<u64, Arc<TerminalFrame>>>> = OnceLock::new();
++    FRAMES.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++pub(crate) fn stage_frame(id: u64, metadata: &str, bytes: &[u8]) -> Result<(), String> {
++    let frame: WireFrame = serde_json::from_str(metadata)
++        .map_err(|error| format!("Invalid terminal frame metadata: {error}"))?;
++    let count = frame
++        .cols
++        .checked_mul(frame.rows)
++        .ok_or_else(|| "Terminal frame dimensions overflow".to_string())?;
++    let cells = decode_cell_bytes(bytes, count)
++        .ok_or_else(|| "Terminal frame cell payload has the wrong length".to_string())?;
++    let frame = TerminalFrame::from_cells(frame, cells)
++        .ok_or_else(|| "Terminal frame metadata is invalid".to_string())?;
++    staged_frames().lock().unwrap().insert(id, Arc::new(frame));
++    Ok(())
 +}
 +
 +fn cell_image(frame: &WireFrame, cells: &[PackedCell]) -> Option<gpui::RenderImage> {
@@ -469,14 +508,16 @@ index 0000000..5977913
 +}
 +
 +pub struct TerminalElement {
++    id: u64,
 +    frame: Option<Arc<TerminalFrame>>,
 +    stale_images: Vec<Arc<gpui::RenderImage>>,
 +    shape_cache: Arc<Mutex<HashMap<ShapeKey, gpui::ShapedLine>>>,
 +}
 +
-+impl Default for TerminalElement {
-+    fn default() -> Self {
++impl TerminalElement {
++    fn new(id: u64) -> Self {
 +        Self {
++            id,
 +            frame: None,
 +            stale_images: Vec::new(),
 +            shape_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -493,6 +534,11 @@ index 0000000..5977913
 +    ) -> gpui::AnyElement {
 +        use gpui::prelude::*;
 +
++        if let Some(frame) = staged_frames().lock().unwrap().remove(&self.id) {
++            if let Some(previous) = self.frame.replace(frame) {
++                self.stale_images.push(previous.background_image.clone());
++            }
++        }
 +        for image in self.stale_images.drain(..) {
 +            let _ = window.drop_image(image);
 +        }
@@ -676,6 +722,7 @@ index 0000000..5977913
 +    }
 +
 +    fn destroy(&mut self) {
++        staged_frames().lock().unwrap().remove(&self.id);
 +        self.frame = None;
 +        self.stale_images.clear();
 +        self.shape_cache.lock().unwrap().clear();
@@ -684,7 +731,13 @@ index 0000000..5977913
 +
 +#[cfg(test)]
 +mod tests {
-+    use super::block_mask;
++    use super::{block_mask, stage_frame, staged_frames, CELL_BYTES};
++
++    fn metadata(cursor_x: usize) -> String {
++        format!(
++            r##"{{"version":2,"cols":1,"rows":1,"cellWidth":8,"lineHeight":18,"fontSize":13,"background":"#000000","cursorColor":"#ffffff","cursorX":{cursor_x},"cursorY":0,"cursorVisible":true,"fontFamily":"Menlo","nerdFontFamily":"Symbols Nerd Font Mono","ligaturesEnabled":true,"graphemes":[]}}"##
++        )
++    }
 +
 +    #[test]
 +    fn maps_framebuffer_blocks_to_quarter_cell_masks() {
@@ -695,6 +748,25 @@ index 0000000..5977913
 +        assert_eq!(block_mask('▙' as u32), Some(0b1101));
 +        assert_eq!(block_mask('▟' as u32), Some(0b1110));
 +        assert_eq!(block_mask('A' as u32), None);
++    }
++
++    #[test]
++    fn stages_only_the_latest_valid_binary_frame() {
++        const ID: u64 = u64::MAX - 7;
++        staged_frames().lock().unwrap().remove(&ID);
++        let mut cells = vec![0; CELL_BYTES];
++        cells[0..4].copy_from_slice(&(u32::from('A')).to_le_bytes());
++        cells[4..8].copy_from_slice(&0x00ff_ffff_u32.to_le_bytes());
++
++        stage_frame(ID, &metadata(0), &cells).unwrap();
++        stage_frame(ID, &metadata(1), &cells).unwrap();
++        let frame = staged_frames().lock().unwrap().remove(&ID).unwrap();
++
++        assert_eq!(frame.cols, 1);
++        assert_eq!(frame.rows, 1);
++        assert_eq!(frame.cursor_x, 1);
++        assert!(stage_frame(ID, &metadata(0), &cells[..CELL_BYTES - 1]).is_err());
++        assert!(!staged_frames().lock().unwrap().contains_key(&ID));
 +    }
 +}
 +
@@ -727,10 +799,10 @@ index 0000000..5977913
 +    Ok(())
 +}
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
-index 9620967..3faca85 100644
+index 9620967..19ce301 100644
 --- a/packages/native/src/renderer.rs
 +++ b/packages/native/src/renderer.rs
-@@ -1183,6 +1183,11 @@ impl GpuixRenderer {
+@@ -1183,6 +1183,24 @@ impl GpuixRenderer {
          cfg!(target_os = "macos")
      }
  
@@ -739,10 +811,23 @@ index 9620967..3faca85 100644
 +        true
 +    }
 +
++    #[napi]
++    pub fn set_terminal_frame(
++        &self,
++        element_id: f64,
++        metadata: String,
++        cells: Buffer,
++    ) -> Result<()> {
++        let id = to_element_id(element_id)?;
++        crate::custom_elements::terminal::stage_frame(id, &metadata, cells.as_ref())
++            .map_err(Error::from_reason)?;
++        self.request_invalidate()
++    }
++
      /// The paintable size of the window in logical pixels, excluding any
      /// platform title bar. This used to answer a hardcoded 800x600, so anything
      /// that turned a mouse position into layout coordinates pointed at the
-@@ -2257,6 +2262,11 @@ impl WebGpuixRenderer {
+@@ -2257,6 +2275,11 @@ impl WebGpuixRenderer {
  
      pub fn tick(&self) {}
  
@@ -754,7 +839,7 @@ index 9620967..3faca85 100644
      #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
      pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
          let window = web_sys::window()
-@@ -4096,6 +4106,30 @@ pub(crate) fn build_host_container(
+@@ -4096,6 +4119,30 @@ pub(crate) fn build_host_container(
      {
          el = el.tab_index(tab_index).tab_stop(tab_index >= 0);
      }
@@ -785,7 +870,7 @@ index 9620967..3faca85 100644
  
      // Wire up events.
      // Some events (on_hover, on_click) require a stateful element (.id()),
-@@ -4738,6 +4772,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
+@@ -4738,6 +4785,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
  /// caller customize it via a closure, then sends it through the callback.
  /// Production: queues on Node.js event loop via ThreadsafeFunction.
  /// Tests: pushes to a synchronous Vec for drainEvents().
@@ -808,16 +893,28 @@ index 9620967..3faca85 100644
      callback: &Option<EventCallback>,
      element_id: u64,
 diff --git a/packages/native/src/test_renderer.rs b/packages/native/src/test_renderer.rs
-index a9b5d71..90aeea2 100644
+index a9b5d71..1672fd2 100644
 --- a/packages/native/src/test_renderer.rs
 +++ b/packages/native/src/test_renderer.rs
-@@ -929,6 +929,11 @@ impl TestGpuixRenderer {
+@@ -929,6 +929,23 @@ impl TestGpuixRenderer {
          self.tree.lock().unwrap().root_id.map(|id| id as f64)
      }
  
 +    #[napi]
 +    pub fn supports_native_terminal(&self) -> bool {
 +        true
++    }
++
++    #[napi]
++    pub fn set_terminal_frame(
++        &self,
++        element_id: f64,
++        metadata: String,
++        cells: Buffer,
++    ) -> Result<()> {
++        let id = to_element_id(element_id)?;
++        crate::custom_elements::terminal::stage_frame(id, &metadata, cells.as_ref())
++            .map_err(Error::from_reason)
 +    }
 +
      /// The offscreen window size, so `useWindowSize()` reports the same numbers
@@ -914,16 +1011,16 @@ index 2a93c7a..366c8ec 100644
        const [secondEnabled, setSecondEnabled] = useState(true)
 diff --git a/packages/react/src/__tests__/terminal.test.tsx b/packages/react/src/__tests__/terminal.test.tsx
 new file mode 100644
-index 0000000..d1f2b18
+index 0000000..e86f1dd
 --- /dev/null
 +++ b/packages/react/src/__tests__/terminal.test.tsx
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,103 @@
 +import { afterEach, beforeEach, describe, expect, it } from "vitest"
 +import { createTestRoot, hasNativeTestRenderer, type TestRoot } from "../testing.js"
 +
 +const describeNative = hasNativeTestRenderer ? describe : describe.skip
 +
-+function frame(text: string, color = "#e7e7e7") {
++function binaryFrame(text: string, color = "#e7e7e7") {
 +  const bytes = new Uint8Array(100 * 2 * 16)
 +  const view = new DataView(bytes.buffer)
 +  const foreground = Number.parseInt(color.slice(1), 16)
@@ -950,9 +1047,14 @@ index 0000000..d1f2b18
 +    fontFamily: "Menlo",
 +    nerdFontFamily: "Symbols Nerd Font Mono",
 +    ligaturesEnabled: true,
-+    cells: Buffer.from(bytes).toString("base64"),
++    cells: bytes,
 +    graphemes: [],
 +  }
++}
++
++function frame(text: string, color = "#e7e7e7") {
++  const binary = binaryFrame(text, color)
++  return { ...binary, cells: Buffer.from(binary.cells).toString("base64") }
 +}
 +
 +describeNative("custom element: terminal", () => {
@@ -980,6 +1082,25 @@ index 0000000..d1f2b18
 +    expect(root.renderer.supportsNativeTerminal()).toBe(true)
 +    expect(root.renderer.findByType("terminal")).toHaveLength(1)
 +    expect(root.renderer.getPaintedText()).toContain(line)
++    expect(root.renderer.getRetainedElementCount()).toBe(1)
++  })
++
++  it("stages only the latest direct binary frame before paint", () => {
++    root.render(
++      <terminal testId="direct-terminal" style={{ width: 783, height: 34 }} />
++    )
++    const terminal = root.renderer.findByTestId("direct-terminal")!
++    const first = binaryFrame("B".repeat(100), "#ff6369")
++    const latest = binaryFrame("C".repeat(100), "#70d083")
++    const { cells: firstCells, ...firstMetadata } = first
++    const { cells: latestCells, ...latestMetadata } = latest
++
++    root.renderer.setTerminalFrame(terminal.id, JSON.stringify(firstMetadata), firstCells)
++    root.renderer.setTerminalFrame(terminal.id, JSON.stringify(latestMetadata), latestCells)
++    root.renderer.flush()
++
++    expect(root.renderer.getPaintedText()).toContain("C".repeat(100))
++    expect(root.renderer.getPaintedText()).not.toContain("B".repeat(100))
 +    expect(root.renderer.getRetainedElementCount()).toBe(1)
 +  })
 +
@@ -1035,18 +1156,19 @@ index 471b60a..280bdd9 100644
    "testId",
    // `highlight` is scoped by where it sits in the tree, so it has to reach a
 diff --git a/packages/react/src/testing.ts b/packages/react/src/testing.ts
-index 064174b..7f0aa33 100644
+index 064174b..445eb1d 100644
 --- a/packages/react/src/testing.ts
 +++ b/packages/react/src/testing.ts
-@@ -62,6 +62,7 @@ interface NativeTestRendererApi extends NativeRenderer {
+@@ -62,6 +62,8 @@ interface NativeTestRendererApi extends NativeRenderer {
    advanceTime(milliseconds: number): void
    getRootId(): number | null
    getWindowSize(): { width: number; height: number }
 +  supportsNativeTerminal(): boolean
++  setTerminalFrame(elementId: number, metadata: string, cells: Buffer): void
    getAllText(): string[]
    scrollTo(elementId: number, x: number, y: number): void
    scrollToItem(elementId: number, index: number, offsetInItem?: number): void
-@@ -447,6 +448,10 @@ export class TestRenderer implements NativeRenderer {
+@@ -447,6 +449,15 @@ export class TestRenderer implements NativeRenderer {
      return this.native.getWindowSize()
    }
  
@@ -1054,11 +1176,16 @@ index 064174b..7f0aa33 100644
 +    return this.native.supportsNativeTerminal()
 +  }
 +
++  setTerminalFrame(elementId: number, metadata: string, cells: Uint8Array): void {
++    const payload = Buffer.from(cells.buffer, cells.byteOffset, cells.byteLength)
++    this.native.setTerminalFrame(elementId, metadata, payload)
++  }
++
    // ── Scroll API ──────────────────────────────────────────────────
  
    /** Set the scroll offset of a scrollable element (overflow: "scroll").
 diff --git a/packages/react/src/types/host.ts b/packages/react/src/types/host.ts
-index 022ef20..a3f1ed4 100644
+index 022ef20..7845eca 100644
 --- a/packages/react/src/types/host.ts
 +++ b/packages/react/src/types/host.ts
 @@ -185,6 +185,7 @@ export type ElementType =
@@ -1111,12 +1238,14 @@ index 022ef20..a3f1ed4 100644
  /**
   * Props for the <code> custom element — a syntax-highlighted code block.
   *
-@@ -598,6 +627,8 @@ export interface NativeRenderer {
+@@ -598,6 +627,10 @@ export interface NativeRenderer {
  
    // ── Window API ─────────────────────────────────────────────────
    getWindowSize?(): { width: number; height: number }
 +  /** Whether this renderer includes the single-surface native terminal painter. */
 +  supportsNativeTerminal?(): boolean
++  /** Stage one compact binary terminal frame without routing cell bytes through React JSON. */
++  setTerminalFrame?(elementId: number, metadata: string, cells: Uint8Array): void
    getWindowInsets?(): NativeWindowInsets
    setWindowTitle?(title: string): void
    /** Bring the window forward and focus it. Reveals a `show: false` window. */

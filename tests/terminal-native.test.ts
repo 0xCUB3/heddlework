@@ -11,6 +11,7 @@ import {
   type TerminalGridSnapshot,
   type TerminalRow,
 } from '../src/terminal/types.ts'
+import { VtEmulator } from '../src/terminal/vt.ts'
 import { TERMINAL_CELL_WIDTH } from '../src/ui/terminal-metrics.ts'
 import {
   NATIVE_CELL_BOLD,
@@ -18,6 +19,7 @@ import {
   NATIVE_CELL_SPACER,
   NATIVE_CELL_WIDE,
   NATIVE_TERMINAL_CELL_BYTES,
+  terminalNativeBinaryFrame,
   terminalNativeFrame,
 } from '../src/ui/terminal-native.ts'
 import { paintTerminalCell, terminalPaintTheme } from '../src/ui/terminal-theme.ts'
@@ -63,6 +65,18 @@ function decoded(cells: string): DataView {
 }
 
 describe('native terminal frame projection', () => {
+  it('exposes identical raw and base64 native transports', () => {
+    const grid = snapshot([{ cells: [cell('A'), cell('█')], text: 'A█' }], 2)
+    const theme = terminalPaintTheme('dark')
+    const binary = terminalNativeBinaryFrame(grid, theme, APPEARANCE)
+    const encoded = terminalNativeFrame(grid, theme, APPEARANCE)
+
+    expect(binary.cells).toBeInstanceOf(Uint8Array)
+    expect(binary.cells.byteLength).toBe(2 * NATIVE_TERMINAL_CELL_BYTES)
+    expect(Buffer.from(binary.cells).toString('base64')).toBe(encoded.cells)
+    expect({ ...binary, cells: encoded.cells }).toEqual(encoded)
+  })
+
   it('packs glyphs, final colors, and cell flags into a fixed-width binary stream', () => {
     const cells = [
       cell('A', { attrs: CELL_BOLD }),
@@ -129,6 +143,24 @@ describe('native terminal frame projection', () => {
 
     expect(view.getUint32(0, true) >>> 31).toBe(1)
     expect(frame.graphemes).toEqual(['🙂\uFE0E'])
+  })
+
+  it('projects packed VT rows identically to materialized terminal cells', () => {
+    const vt = new VtEmulator(12, 2)
+    vt.write('\x1b[1;31mA\x1b[0m界e\u0301█🙂')
+    const packed = vt.snapshot()
+    const { packedViewport: _packedViewport, ...publicSnapshot } = packed
+    const materialized: TerminalGridSnapshot = {
+      ...publicSnapshot,
+      viewport: packed.viewport,
+    }
+    const nerdAppearance = { ...APPEARANCE, nerdFontEnabled: true }
+
+    for (const appearance of ['dark', 'light'] as const) {
+      const theme = terminalPaintTheme(appearance)
+      expect(terminalNativeFrame(packed, theme, nerdAppearance))
+        .toEqual(terminalNativeFrame(materialized, theme, nerdAppearance))
+    }
   })
 
   it('uses GPUI Menlo metrics and keeps a dense 100-column box payload bounded', () => {

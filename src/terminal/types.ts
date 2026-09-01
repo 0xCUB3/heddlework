@@ -29,6 +29,18 @@ export interface TerminalRow {
   readonly text: string
 }
 
+export const TERMINAL_PACKED_CELL_WORDS = 4
+export const TERMINAL_PACKED_COLOR_KIND_MASK = 0xff000000
+export const TERMINAL_PACKED_COLOR_RGB = 0
+export const TERMINAL_PACKED_COLOR_INDEXED = 0x01000000
+export const TERMINAL_PACKED_COLOR_DEFAULT_FG = 0x02000000
+export const TERMINAL_PACKED_COLOR_DEFAULT_BG = 0x03000000
+
+export interface TerminalPackedRow {
+  readonly cells: Uint32Array
+  readonly graphemes?: ReadonlyMap<number, string>
+}
+
 export interface TerminalAppearance {
   readonly fontFamily: string
   readonly nerdFontFamily: string
@@ -47,6 +59,7 @@ export interface TerminalGridSnapshot {
   readonly bracketedPaste: boolean
   readonly title: string
   readonly viewport: readonly TerminalRow[]
+  readonly packedViewport?: readonly TerminalPackedRow[]
   readonly scrollback: number
   readonly scrollOffset: number
 }

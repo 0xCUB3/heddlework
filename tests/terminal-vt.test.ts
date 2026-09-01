@@ -36,6 +36,26 @@ describe('VtEmulator', () => {
     expect(streamed.snapshot()).toEqual(complete.snapshot())
   })
 
+  it('matches fused truecolor block runs with bytewise VT parsing', () => {
+    const output = ESC + '[1m'
+      + ESC + '[2;3H' + ESC + '[38;2;1;2;3m' + ESC + '[48;2;4;5;6m' + '▀██▖' + ESC + '[0m'
+      + ESC + '[3;2H' + ESC + '[38;2;250;240;230m' + ESC + '[48;2;20;30;40m' + '▙▛' + ESC + '[0m'
+    const complete = new VtEmulator(8, 4)
+    const streamed = new VtEmulator(8, 4)
+    complete.write(output)
+    for (const byte of new TextEncoder().encode(output)) streamed.write(new Uint8Array([byte]))
+
+    expect(complete.snapshot()).toEqual(streamed.snapshot())
+    const first = complete.snapshot().viewport[1]!.cells[2]!
+    expect(first).toEqual({
+      ch: '▀',
+      fg: { kind: 'rgb', r: 1, g: 2, b: 3 },
+      bg: { kind: 'rgb', r: 4, g: 5, b: 6 },
+      attrs: 1,
+    })
+    expect(complete.snapshot().viewport[2]!.cells[1]?.attrs).toBe(0)
+  })
+
   it('parses numeric CSI state incrementally across arbitrary chunks', () => {
     const vt = new VtEmulator(10, 2)
     vt.write(ESC + '[38;2;10')
@@ -84,6 +104,7 @@ describe('VtEmulator', () => {
     const before = vt.snapshot()
 
     vt.write(ESC + '[2;7HX')
+    expect(before.viewport[1]?.text).toBe('second')
     const after = vt.snapshot()
 
     expect(after.viewport[0]).toBe(before.viewport[0])

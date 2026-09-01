@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useGpuix } from '@gpuix/react'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
 import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
@@ -6,12 +6,15 @@ import type { TerminalSessionService } from '../terminal/service.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { colors } from './theme.ts'
 import { TERMINAL_CELL_WIDTH, TERMINAL_FONT_SIZE, TERMINAL_LINE_HEIGHT, TERMINAL_PADDING_X, TERMINAL_PADDING_Y, terminalGridSize } from './terminal-metrics.ts'
-import { terminalNativeFrame } from './terminal-native.ts'
+import { terminalNativeBinaryFrame, terminalNativeFrame } from './terminal-native.ts'
 import { terminalPaintTheme, terminalRowRuns, type TerminalPaintTheme, type TerminalRunStyle } from './terminal-theme.ts'
 import type { ResolvedTheme } from './theme.ts'
 
 const CAPTURE_TAB_PROPS = { captureTab: true } as const
-type TerminalCapableRenderer = { supportsNativeTerminal?: () => boolean }
+type TerminalCapableRenderer = {
+  supportsNativeTerminal?: () => boolean
+  setTerminalFrame?: (elementId: number, metadata: string, cells: Uint8Array) => void
+}
 
 export const TerminalView = memo(function TerminalView({
   service,
@@ -145,10 +148,32 @@ export const TerminalView = memo(function TerminalView({
 })
 
 const NativeTerminalGrid = memo(function NativeTerminalGrid({ snapshot, theme, rendering }: { snapshot: TerminalGridSnapshot; theme: TerminalPaintTheme; rendering: TerminalAppearance }) {
-  const frame = useMemo(() => terminalNativeFrame(snapshot, theme, rendering), [rendering, snapshot, theme])
+  const gpuix = useGpuix()
+  const renderer = gpuix?.renderer as TerminalCapableRenderer | undefined
+  const direct = typeof renderer?.setTerminalFrame === 'function'
+  const binaryFrame = useMemo(
+    () => direct ? terminalNativeBinaryFrame(snapshot, theme, rendering) : undefined,
+    [direct, rendering, snapshot, theme],
+  )
+  const fallbackFrame = useMemo(
+    () => direct ? undefined : terminalNativeFrame(snapshot, theme, rendering),
+    [direct, rendering, snapshot, theme],
+  )
+  const terminalId = useRef<number | undefined>(undefined)
+
+  useLayoutEffect(() => {
+    if (!binaryFrame || terminalId.current === undefined || !renderer?.setTerminalFrame) return
+    const { cells, ...metadata } = binaryFrame
+    const payload = typeof Buffer === 'undefined'
+      ? cells
+      : Buffer.from(cells.buffer, cells.byteOffset, cells.byteLength)
+    renderer.setTerminalFrame(terminalId.current, JSON.stringify(metadata), payload)
+  }, [binaryFrame, renderer])
+
   return React.createElement('terminal', {
+    ref: (instance: { id: number } | null) => { terminalId.current = instance?.id },
     testId: 'terminal-grid',
-    frame,
+    ...(fallbackFrame ? { frame: fallbackFrame } : {}),
     style: {
       position: 'relative',
       width: snapshot.cols * TERMINAL_CELL_WIDTH,

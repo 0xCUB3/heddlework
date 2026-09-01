@@ -229,31 +229,34 @@ export function muteEmojiPresentation(text: string): string {
   return result
 }
 
+export function isNerdFontCodepoint(code: number): boolean {
+  return (code >= 0x23fb && code <= 0x23fe)
+    || (code >= 0x2500 && code <= 0x259f)
+    || code === 0x2630
+    || code === 0x2665
+    || code === 0x26a1
+    || (code >= 0x276c && code <= 0x2771)
+    || code === 0x2b58
+    || (code >= 0xe000 && code <= 0xe00a)
+    || (code >= 0xe0a0 && code <= 0xe0a3)
+    || (code >= 0xe0b0 && code <= 0xe0d7)
+    || (code >= 0xe200 && code <= 0xe2a9)
+    || (code >= 0xe300 && code <= 0xe3e3)
+    || (code >= 0xe5fa && code <= 0xe6b8)
+    || (code >= 0xe700 && code <= 0xe8ef)
+    || (code >= 0xea60 && code <= 0xeac7)
+    || code === 0xeac9
+    || (code >= 0xeacc && code <= 0xeb09)
+    || (code >= 0xeb0b && code <= 0xeb4e)
+    || (code >= 0xeb50 && code <= 0xec1e)
+    || (code >= 0xed00 && code <= 0xefce)
+    || (code >= 0xf000 && code <= 0xf533)
+    || (code >= 0xf0001 && code <= 0xf1af0)
+}
+
 export function isNerdFontGlyph(text: string): boolean {
   for (const character of text) {
-    const code = character.codePointAt(0) ?? 0
-    if ((code >= 0x23fb && code <= 0x23fe)
-      || (code >= 0x2500 && code <= 0x259f)
-      || code === 0x2630
-      || code === 0x2665
-      || code === 0x26a1
-      || (code >= 0x276c && code <= 0x2771)
-      || code === 0x2b58
-      || (code >= 0xe000 && code <= 0xe00a)
-      || (code >= 0xe0a0 && code <= 0xe0a3)
-      || (code >= 0xe0b0 && code <= 0xe0d7)
-      || (code >= 0xe200 && code <= 0xe2a9)
-      || (code >= 0xe300 && code <= 0xe3e3)
-      || (code >= 0xe5fa && code <= 0xe6b8)
-      || (code >= 0xe700 && code <= 0xe8ef)
-      || (code >= 0xea60 && code <= 0xeac7)
-      || code === 0xeac9
-      || (code >= 0xeacc && code <= 0xeb09)
-      || (code >= 0xeb0b && code <= 0xeb4e)
-      || (code >= 0xeb50 && code <= 0xec1e)
-      || (code >= 0xed00 && code <= 0xefce)
-      || (code >= 0xf000 && code <= 0xf533)
-      || (code >= 0xf0001 && code <= 0xf1af0)) return true
+    if (isNerdFontCodepoint(character.codePointAt(0) ?? 0)) return true
   }
   return false
 }
