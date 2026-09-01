@@ -1,3 +1,4 @@
+import { TerminalOutputBuffer } from '../src/terminal/backend.ts'
 import { VtEmulator } from '../src/terminal/vt.ts'
 import { terminalPaintTheme, terminalRowRuns } from '../src/ui/terminal-theme.ts'
 
@@ -26,8 +27,27 @@ function measure(name: string, detail: string, operation: () => void): Measureme
 }
 
 const measurements: Measurement[] = []
+const frameCell = `${ESC}[24;80H${ESC}[38;2;255;80;120m${ESC}[48;2;21;9;30m▙${ESC}[0m`
+const frameBody = frameCell.repeat(Math.ceil(500 * 1024 / frameCell.length))
+const fragmentedFrame = new TextEncoder().encode(`${ESC}[?2026h${frameBody}${ESC}[?2026l`)
+let deliveredFrames = 0
+function coalesceFragmentedFrame(): void {
+  const output = new TerminalOutputBuffer(() => { deliveredFrames += 1 })
+  for (let offset = 0; offset < fragmentedFrame.byteLength; offset += 1_024) {
+    output.write(fragmentedFrame.subarray(offset, offset + 1_024))
+  }
+  output.close()
+}
+for (let warmup = 0; warmup < 5; warmup += 1) coalesceFragmentedFrame()
+deliveredFrames = 0
 let reusedRows = 0
 let comparedRows = 0
+measurements.push(measure(
+  'frame coalescing',
+  `${Math.round(fragmentedFrame.byteLength / 1024)} KiB DEC frame in 1 KiB PTY fragments`,
+  coalesceFragmentedFrame,
+))
+
 measurements.push(measure('incremental snapshots', '2,000 writes and snapshots at 160×50', () => {
   const vt = new VtEmulator(160, 50)
   let previous = vt.snapshot()
@@ -59,6 +79,8 @@ measurements.push(measure('row projections', '1,000 full 160×50 style projectio
     for (const row of snapshot.viewport) terminalRowRuns(row.cells, theme)
   }
 }))
+
+if (deliveredFrames !== 4) throw new Error(`terminal frame coalescer delivered ${deliveredFrames} frames instead of 4`)
 
 for (const measurement of measurements) {
   console.log(`${measurement.name.padEnd(23)} ${measurement.milliseconds.toFixed(2).padStart(9)} ms  ${measurement.detail}`)

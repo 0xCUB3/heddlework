@@ -45,9 +45,31 @@ export class TerminalOutputBuffer {
       }
     }
     while (index < chunk.byteLength) {
-      const escape = chunk.indexOf(0x1b, index)
-      if (escape === -1) break
-      if (escape + 8 > chunk.byteLength) {
+      const enable = chunk.indexOf(0x68, index)
+      const disable = chunk.indexOf(0x6c, index)
+      const final = enable === -1
+        ? disable
+        : disable === -1
+          ? enable
+          : Math.min(enable, disable)
+      if (final === -1) break
+      const marker = final - SYNCHRONIZED_OUTPUT_PREFIX.length
+      let matches = marker >= index
+      for (let offset = 0; matches && offset < SYNCHRONIZED_OUTPUT_PREFIX.length; offset += 1) {
+        matches = chunk[marker + offset] === SYNCHRONIZED_OUTPUT_PREFIX[offset]
+      }
+      index = final + 1
+      if (!matches) continue
+      if (chunk[final] === 0x68) this.#synchronized = true
+      else {
+        this.#completeFrame(chunk, segmentStart, index)
+        segmentStart = index
+      }
+    }
+    if (this.#sequence === 0) {
+      const tailStart = Math.max(index, chunk.byteLength - SYNCHRONIZED_OUTPUT_PREFIX.length)
+      const escape = chunk.indexOf(SYNCHRONIZED_OUTPUT_PREFIX[0]!, tailStart)
+      if (escape !== -1) {
         index = escape
         while (index < chunk.byteLength) {
           const mode = this.#scan(chunk[index]!)
@@ -58,25 +80,6 @@ export class TerminalOutputBuffer {
             segmentStart = index
           }
         }
-        break
-      }
-      let matches = true
-      for (let offset = 1; offset < SYNCHRONIZED_OUTPUT_PREFIX.length; offset += 1) {
-        if (chunk[escape + offset] !== SYNCHRONIZED_OUTPUT_PREFIX[offset]) {
-          matches = false
-          break
-        }
-      }
-      if (!matches) {
-        index = escape + 1
-        continue
-      }
-      const final = chunk[escape + SYNCHRONIZED_OUTPUT_PREFIX.length]
-      index = escape + SYNCHRONIZED_OUTPUT_PREFIX.length + 1
-      if (final === 0x68) this.#synchronized = true
-      if (final === 0x6c) {
-        this.#completeFrame(chunk, segmentStart, index)
-        segmentStart = index
       }
     }
     this.#append(chunk.subarray(segmentStart))

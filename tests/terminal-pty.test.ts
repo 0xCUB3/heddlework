@@ -22,7 +22,8 @@ describe('terminal output buffering', () => {
     const chunks: string[] = []
     const output = new TerminalOutputBuffer((chunk) => chunks.push(decode(chunk)))
 
-    output.write(encode('\x1b[?2026hfirst'))
+    output.write(encode('\x1b[?20'))
+    output.write(encode('26hfirst'))
     output.write(encode('-second'))
     await Promise.resolve()
     expect(chunks).toEqual([])
