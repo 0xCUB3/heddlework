@@ -94,7 +94,7 @@ Settings → **Terminal** applies changes to every open terminal without restart
 - Nerd Font symbol routing and fallback family;
 - muted emoji.
 
-The native text system resolves installed font family names. Heddlework does not bundle Localterm's WOFF2 webfonts because GPUIX 0.6 does not expose runtime font-byte registration to React hosts. A full Nerd Font can also be selected directly as the primary family.
+The native text system resolves installed font family names. Heddlework does not bundle Localterm's WOFF2 webfonts because GPUix does not currently expose runtime font-byte registration to React hosts. A full Nerd Font can also be selected directly as the primary family.
 
 Preferences are stored in `terminal.json` under the platform application configuration directory:
 
@@ -112,7 +112,9 @@ Light mode enforces a 4.5:1 minimum foreground/background contrast ratio using W
 
 ## GPUIX focus boundary
 
-GPUI resolves a matching `FocusNext`/`FocusPrevious` action before raw `keyDown` dispatch. Merely swallowing that action keeps focus in the terminal but also loses the Tab byte. The terminal input therefore sets the native `captureTab` host prop, whose action handler both suppresses traversal and emits an equivalent Tab or Shift+Tab `keyDown` payload. `patches/gpuix-0.6.0-heddlework.patch` contains the tested GPUIX 0.6.0 bridge and terminal primitive, including native/React typings, direct binary frame staging, stable atlas presentation, the nonblocking AppKit pump, renderer capability detection, documentation, and regressions that assert the captured key itself. The application feature-detects both `supportsNativeTerminal()` and `setTerminalFrame()` and remains buildable against an unpatched package.
+GPUix 0.7 removed its process-wide `Tab` and `Shift+Tab` traversal bindings. Both keys now reach the focused terminal's `onKeyDown` handler directly, while applications that want traversal can call `focusNext()` or `focusPrevious()` explicitly. Heddlework therefore no longer needs the temporary `captureTab` host prop, and its terminal UI regression always sends both Tab variants through the native input pipeline.
+
+`patches/gpuix-0.7.0-heddlework.patch` contains the remaining terminal primitive and performance work on top of the published 0.7.0 release, including native/React typings, direct binary frame staging, stable atlas presentation, the nonblocking AppKit pump, renderer capability detection, and terminal regressions. The application feature-detects both `supportsNativeTerminal()` and `setTerminalFrame()` and remains buildable against an unpatched package.
 
 ## Native frame pipeline
 

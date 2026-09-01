@@ -36,7 +36,7 @@
     "benchmark:terminal:gpuix": "bun scripts/benchmark-terminal-gpuix.tsx"
   },
   "dependencies": {
-    "@gpuix/react": "0.6.0",
+    "@gpuix/react": "0.7.0",
     "@mathjax/src": "4.1.3",
     "react": "19.2.8"
   },

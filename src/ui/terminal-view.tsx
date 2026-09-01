@@ -11,7 +11,6 @@ import { terminalNativeBinaryFrame, terminalNativeFrame } from './terminal-nativ
 import { terminalPaintTheme, terminalRowRuns, type TerminalPaintTheme, type TerminalRunStyle } from './terminal-theme.ts'
 import type { ResolvedTheme } from './theme.ts'
 
-const CAPTURE_TAB_PROPS = { captureTab: true } as const
 type TerminalCapableRenderer = {
   supportsNativeTerminal?: () => boolean
   setTerminalFrame?: (elementId: number, metadata: string, cells: Uint8Array) => void
@@ -139,7 +138,6 @@ export const TerminalView = memo(function TerminalView({
       <div
         ref={(instance: { id: number } | null) => { inputId.current = instance?.id }}
         testId={'terminal-input-' + placement}
-        {...CAPTURE_TAB_PROPS}
         tabIndex={projectionSuspended ? -1 : 0}
         style={{
           position: 'absolute',

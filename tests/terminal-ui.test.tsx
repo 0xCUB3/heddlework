@@ -98,15 +98,13 @@ describeNative('terminal panels', () => {
       expect(activeBottomId).toBeDefined()
       const dockedSize = terminals.getSnapshot().sessions.find((session) => session.id === activeBottomId)!
       await automation.getByTestId('terminal-input-bottom').click()
-      const nativeTabCapture = root.renderer.findByTestId('terminal-input-bottom')?.customProps?.captureTab === true
-      if (process.env.HEDDLEWORK_REQUIRE_GPUIX_CAPTURE_TAB === '1') expect(nativeTabCapture).toBe(true)
-      root.renderer.simulateKeystrokes(nativeTabCapture ? 'tab x shift-tab y' : 'x y')
+      root.renderer.simulateKeystrokes('tab x shift-tab y')
       root.renderer.flush()
       const terminalGrid = terminals.grid(activeBottomId)
       const terminalText = terminalGrid?.viewport.map((row) => row.text).join('\n') ?? ''
       expect(terminalText).toContain('x')
       expect(terminalText).toContain('y')
-      if (nativeTabCapture) expect(terminalGrid?.cursorX).toBeGreaterThan(10)
+      expect(terminalGrid?.cursorX).toBeGreaterThan(10)
       const dockBounds = await automation.getByTestId('terminal-dock').bounds()
       const sidebarBounds = await automation.getByTestId('left-sidebar-host').bounds()
       expect(sidebarBounds.width).toBeGreaterThan(100)

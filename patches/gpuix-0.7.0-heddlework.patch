@@ -1,17 +1,11 @@
-diff --git a/.changeset/quiet-terminals-capture-tabs.md b/.changeset/quiet-terminals-capture-tabs.md
-new file mode 100644
-index 0000000..8f2b311
---- /dev/null
-+++ b/.changeset/quiet-terminals-capture-tabs.md
-@@ -0,0 +1,6 @@
-+---
-+"@gpuix/native": patch
-+"@gpuix/react": patch
-+---
-+
-+Allow focused hosts to capture Tab without native traversal, add packed fixed-cell terminal and GPUI-owned shimmer hosts, spring-rotate SVG targets, keep the embedded macOS AppKit pump nonblocking, extend native motion to flex growth and directional padding, and synthesize clicks only for the primary mouse button.
+# GPUix 0.7.0 Heddlework extension patch
+#
+# The first section applies at the GPUix repository root. The section beginning
+# with crates/gpui applies inside the checked-out zed submodule. Both are based
+# on the zed commit pinned by @gpuix/react@0.7.0.
+
 diff --git a/README.md b/README.md
-index 0eb922b..4e51478 100644
+index 1c3a08d..9b48d36 100644
 --- a/README.md
 +++ b/README.md
 @@ -41,8 +41,8 @@ bun add -d @types/react typescript
@@ -25,7 +19,7 @@ index 0eb922b..4e51478 100644
  
  ```json
  {
-@@ -672,8 +672,11 @@ This is a remount, not React Refresh. Keeping hook state needs Bun to inject
+@@ -673,8 +673,11 @@ This is a remount, not React Refresh. Keeping hook state needs Bun to inject
  Native `.node` edits still need a rebuild. See [Developing the Rust side](#developing-the-rust-side).
  
  On **macOS**, `startFrameLoop` calls `renderer.tick()` at a fixed rate (~125fps by
@@ -39,7 +33,7 @@ index 0eb922b..4e51478 100644
  
  On **Windows and Linux**, GPUI runs its normal blocking native event loop on one
  dedicated Rust UI thread. Node sends in-process commands to that thread, so
-@@ -726,7 +729,9 @@ Motion currently accepts these **numeric targets**:
+@@ -727,7 +730,9 @@ Motion currently accepts these **numeric targets**:
  | Target | Range or unit |
  |---|---|
  | `width`, `height` | pixels, zero or greater |
@@ -49,7 +43,7 @@ index 0eb922b..4e51478 100644
  | `opacity` | `0` through `1` |
  | `borderRadius` | pixels, zero or greater |
  
-@@ -1749,6 +1754,58 @@ assert the geometry without a screenshot. Zed's own editor paints search
+@@ -1797,6 +1802,58 @@ assert the geometry without a screenshot. Zed's own editor paints search
  highlights manually for the same reason.
  </details>
  
@@ -108,7 +102,7 @@ index 0eb922b..4e51478 100644
  ## Native text components
  
  Three elements render text with Syntect syntax highlighting computed in
-@@ -1927,7 +1984,8 @@ placeholder instead of crashing.
+@@ -1985,7 +2042,8 @@ placeholder instead of crashing.
  
  `<svg>` uses GPUI's **monochrome icon renderer**. Raw `source` works on desktop
  and in the browser. Desktop apps can also use a local `src` path. The icon is
@@ -118,22 +112,7 @@ index 0eb922b..4e51478 100644
  
  For application icons, prefer **raw SVG source**. It works with both GPUIX
  targets and lets a bundler embed each icon in the JavaScript bundle. Use `src`
-@@ -2011,6 +2069,14 @@ Keyboard and focus listeners create a persistent GPUI `FocusHandle`
- automatically. A listener alone does not put a `div` in the Tab order; add
- `tabIndex={0}` for that. Inputs and textareas already use tab index `0`.
- 
-+Set `captureTab` on a focused element that uses Tab itself, such as a terminal
-+or editor. Its `onKeyDown` still receives Tab and Shift+Tab, but the focus
-+navigation actions stop there instead of moving to another control:
-+
-+```tsx
-+<div tabIndex={0} captureTab onKeyDown={(event) => terminal.write(event)} />
-+```
-+
- A node that listens for both `onMouseDown` and `onMouseMove` **captures the
- pointer**, like HTML [`setPointerCapture`](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
- `onMouseMove` and `onMouseUp` keep firing after the pointer leaves the hitbox,
-@@ -2556,6 +2622,8 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
+@@ -2640,6 +2698,8 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
  - [x] Image and SVG elements (`<img>`, `<svg>`)
  - [x] Virtual lists (`<virtual-list>`)
  - [x] Native text components (`<code>`, `<diff>`, `<markdown>`)
@@ -142,31 +121,11 @@ index 0eb922b..4e51478 100644
  - [x] Cross-element text selection
  - [x] Text highlighting and search (`highlight`, `useTextSearch`)
  - [x] Headless Select, Combobox, and Tooltip
-diff --git a/packages/native/Cargo.lock b/packages/native/Cargo.lock
-index debe15c..102ba54 100644
---- a/packages/native/Cargo.lock
-+++ b/packages/native/Cargo.lock
-@@ -2526,6 +2526,7 @@ name = "gpuix-native"
- version = "0.6.0"
- dependencies = [
-  "anyhow",
-+ "base64",
-  "core-graphics 0.24.0",
-  "core-text",
-  "csscolorparser",
 diff --git a/packages/native/Cargo.toml b/packages/native/Cargo.toml
-index c23c69f..d4ae9b3 100644
+index e3dba86..6c81f0a 100644
 --- a/packages/native/Cargo.toml
 +++ b/packages/native/Cargo.toml
-@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
- [dependencies]
- serde = { version = "1", features = ["derive"] }
- serde_json = { version = "1", features = ["raw_value"] }
-+base64 = "0.22"
- anyhow = "1"
- csscolorparser = "0.8.3"
- log = "0.4"
-@@ -75,6 +76,7 @@ gpui_macos = { path = "../../zed/crates/gpui_macos", default-features = false, f
+@@ -81,6 +81,7 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_HiDpi"]
  # letting users write GPU-backed tests for their apps.
  default = ["test-support"]
  test-support = ["gpui/test-support", "gpui_platform/test-support", "gpui_macos/test-support", "gpui_macos/font-kit"]
@@ -175,19 +134,19 @@ index c23c69f..d4ae9b3 100644
  [build-dependencies]
  napi-build = "2"
 diff --git a/packages/native/index.d.ts b/packages/native/index.d.ts
-index 2d9b6e6..8c041f5 100644
+index 170109d..62dc137 100644
 --- a/packages/native/index.d.ts
 +++ b/packages/native/index.d.ts
-@@ -31,6 +31,8 @@ export declare class GpuixRenderer {
-   isInitialized(): boolean
-   /** Whether JavaScript must drive the native event loop with tick(). */
+@@ -37,6 +37,8 @@ export declare class GpuixRenderer {
+    * the last window closes so the JS frame loop can exit the process.
+    */
    requiresTick(): boolean
 +  supportsNativeTerminal(): boolean
 +  setTerminalFrame(elementId: number, metadata: string, cells: Buffer): void
    /**
     * The paintable size of the window in logical pixels, excluding any
     * platform title bar. This used to answer a hardcoded 800x600, so anything
-@@ -316,6 +318,8 @@ export declare class TestGpuixRenderer {
+@@ -331,6 +333,8 @@ export declare class TestGpuixRenderer {
    advanceTime(milliseconds: number): void
    /** Get the root element ID, or null if no root is set. */
    getRootId(): number | null
@@ -197,10 +156,10 @@ index 2d9b6e6..8c041f5 100644
     * The offscreen window size, so `useWindowSize()` reports the same numbers
     * under test as in a real window instead of falling back to a default.
 diff --git a/packages/native/src/custom_elements/img.rs b/packages/native/src/custom_elements/img.rs
-index fbe0525..49d328b 100644
+index c588627..b0f1e81 100644
 --- a/packages/native/src/custom_elements/img.rs
 +++ b/packages/native/src/custom_elements/img.rs
-@@ -159,6 +159,7 @@ pub struct SvgElement {
+@@ -190,6 +190,7 @@ pub struct SvgElement {
      src: String,
      bytes: Option<std::sync::Arc<[u8]>>,
      source: String,
@@ -208,7 +167,7 @@ index fbe0525..49d328b 100644
  }
  
  impl SvgElement {
-@@ -228,6 +229,27 @@ impl CustomElement for SvgElement {
+@@ -272,6 +273,27 @@ impl CustomElement for SvgElement {
              .and_then(|style| style.color.as_deref())
              .and_then(crate::color::parse_color_rgba)
              .unwrap_or_else(|| gpui::rgb(0xe2e2e2).into());
@@ -236,7 +195,7 @@ index fbe0525..49d328b 100644
          let mut icon = gpui::svg()
              .data(bytes)
              .flex_none()
-@@ -244,12 +266,18 @@ impl CustomElement for SvgElement {
+@@ -288,12 +310,18 @@ impl CustomElement for SvgElement {
          match key {
              "src" => self.load_src(value.as_str().unwrap_or_default().to_string()),
              "source" => self.source = value.as_str().unwrap_or_default().to_string(),
@@ -525,7 +484,7 @@ index 0000000..f42cfcb
 +}
 diff --git a/packages/native/src/custom_elements/terminal.rs b/packages/native/src/custom_elements/terminal.rs
 new file mode 100644
-index 0000000..4eafff2
+index 0000000..c70ac46
 --- /dev/null
 +++ b/packages/native/src/custom_elements/terminal.rs
 @@ -0,0 +1,960 @@
@@ -534,7 +493,7 @@ index 0000000..4eafff2
 +    sync::{Arc, Mutex, OnceLock},
 +};
 +
-+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
++use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 +use serde::Deserialize;
 +
 +use super::{CustomElement, CustomElementFactory, CustomRenderContext};
@@ -1293,7 +1252,7 @@ index 0000000..4eafff2
 +#[cfg(test)]
 +mod tests {
 +    use super::{
-+        ActiveFrame, CELL_BYTES, FrameUpdate, active_frames, block_mask, stage_frame, staged_frames,
++        active_frames, block_mask, stage_frame, staged_frames, ActiveFrame, FrameUpdate, CELL_BYTES,
 +    };
 +
 +    fn metadata(cursor_x: usize) -> String {
@@ -1612,80 +1571,11 @@ index eb719b8..055a5cd 100644
      fn disabled_initial_state_starts_at_the_target() {
          let now = Instant::now();
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
-index 9620967..d180d14 100644
+index d66ab63..13031ed 100644
 --- a/packages/native/src/renderer.rs
 +++ b/packages/native/src/renderer.rs
-@@ -13,7 +13,7 @@
- //!     setTimeout(loop, 8)
- //!   })
- #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
--use futures::{channel::mpsc, StreamExt as _};
-+use futures::{StreamExt as _, channel::mpsc};
- use gpui::AppContext as _;
- #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
- use napi::bindgen_prelude::*;
-@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
- #[cfg(any(target_os = "macos", target_family = "wasm"))]
- use std::rc::Rc;
- #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
--use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
-+use std::sync::mpsc::{RecvTimeoutError, SyncSender, sync_channel};
- use std::sync::{Arc, Mutex};
- use std::time::Duration;
- #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-@@ -36,7 +36,7 @@ use crate::custom_elements::{CustomElementRegistry, CustomRenderContext};
- use crate::element_tree::EventPayload;
- use crate::retained_tree::{RetainedTree, StyleTable};
- use crate::style::StyleDesc;
--use crate::text::{selectable_text, selection_frame_reset, SharedSelection};
-+use crate::text::{SharedSelection, selectable_text, selection_frame_reset};
- use crate::theme::Theme;
- 
- gpui::actions!(gpuix_focus, [FocusNext, FocusPrevious]);
-@@ -222,12 +222,8 @@ mod selection_scroll_tests {
-             selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(120.0))),
-             0.0
-         );
--        assert!(
--            selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(20.0))) < 0.0
--        );
--        assert!(
--            selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(220.0))) > 0.0
--        );
-+        assert!(selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(20.0))) < 0.0);
-+        assert!(selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(220.0))) > 0.0);
-         assert!(
-             selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(220.0)))
-                 > selection_scroll_step(bounds, gpui::point(gpui::px(20.0), gpui::px(200.0)))
-@@ -578,15 +574,17 @@ async fn run_ui_commands(
-                 response.send(top).ok();
-                 Ok(())
-             }
--            UiCommand::GetWindowSize { response } => window.update(cx, move |_view, window, _cx| {
--                let size = window.viewport_size();
--                response
--                    .send(WindowSize {
--                        width: f32::from(size.width) as f64,
--                        height: f32::from(size.height) as f64,
--                    })
--                    .ok();
--            }),
-+            UiCommand::GetWindowSize { response } => {
-+                window.update(cx, move |_view, window, _cx| {
-+                    let size = window.viewport_size();
-+                    response
-+                        .send(WindowSize {
-+                            width: f32::from(size.width) as f64,
-+                            height: f32::from(size.height) as f64,
-+                        })
-+                        .ok();
-+                })
-+            }
-             UiCommand::GetAutomationBounds { response } => {
-                 window.update(cx, move |_view, window, cx| {
-                     cx.notify();
-@@ -1183,6 +1181,40 @@ impl GpuixRenderer {
-         cfg!(target_os = "macos")
+@@ -1263,6 +1263,40 @@ impl GpuixRenderer {
+         ))
      }
  
 +    #[napi]
@@ -1725,30 +1615,7 @@ index 9620967..d180d14 100644
      /// The paintable size of the window in logical pixels, excluding any
      /// platform title bar. This used to answer a hardcoded 800x600, so anything
      /// that turned a mouse position into layout coordinates pointed at the
-@@ -1576,8 +1608,9 @@ impl GpuixRenderer {
-         {
-             let (response, receiver) = sync_channel(1);
-             self.send_ui_command(UiCommand::GetListScrollTop { id, response })?;
--            return Ok(recv_ui_response(receiver, "the GPUI list scroll query")?
--                .map(|top| top.to_vec()));
-+            return Ok(
-+                recv_ui_response(receiver, "the GPUI list scroll query")?.map(|top| top.to_vec())
-+            );
-         }
- 
-         #[cfg(not(any(
-@@ -1921,9 +1954,7 @@ impl GpuixRenderer {
- 
-         #[cfg(target_os = "macos")]
-         return update_window(move |_view, window, cx| {
--            crate::automation::dispatch_scroll_wheel(
--                window, cx, x, y, delta_x, delta_y, modifiers,
--            );
-+            crate::automation::dispatch_scroll_wheel(window, cx, x, y, delta_x, delta_y, modifiers);
-         });
- 
-         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
-@@ -2257,6 +2288,11 @@ impl WebGpuixRenderer {
+@@ -2400,6 +2434,11 @@ impl WebGpuixRenderer {
  
      pub fn tick(&self) {}
  
@@ -1760,93 +1627,7 @@ index 9620967..d180d14 100644
      #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
      pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
          let window = web_sys::window()
-@@ -2499,7 +2535,14 @@ impl WebGpuixRenderer {
-     ) -> Result<(), wasm_bindgen::JsValue> {
-         let modifiers = crate::automation::parse_modifiers(modifiers.as_deref());
-         update_web_window(move |_view, window, cx| {
--            crate::automation::dispatch_mouse_down(window, cx, x, y, button.unwrap_or(0), modifiers);
-+            crate::automation::dispatch_mouse_down(
-+                window,
-+                cx,
-+                x,
-+                y,
-+                button.unwrap_or(0),
-+                modifiers,
-+            );
-             cx.notify();
-         })
-     }
-@@ -2545,9 +2588,7 @@ impl WebGpuixRenderer {
-     ) -> Result<(), wasm_bindgen::JsValue> {
-         let modifiers = crate::automation::parse_modifiers(modifiers.as_deref());
-         update_web_window(move |_view, window, cx| {
--            crate::automation::dispatch_scroll_wheel(
--                window, cx, x, y, delta_x, delta_y, modifiers,
--            );
-+            crate::automation::dispatch_scroll_wheel(window, cx, x, y, delta_x, delta_y, modifiers);
-             cx.notify();
-         })
-     }
-@@ -3666,9 +3707,7 @@ impl gpui::Render for GpuixView {
-                     self.selection.clone(),
-                     move |position, app| {
-                         drag_move_view
--                            .update(app, |view, cx| {
--                                view.on_selection_mouse_move(position, cx)
--                            })
-+                            .update(app, |view, cx| view.on_selection_mouse_move(position, cx))
-                             .ok();
-                     },
-                     move |app| {
-@@ -3767,8 +3806,14 @@ pub(crate) fn build_element(
-     // resolves or counts matches that will not paint.
-     if let Some(value) = element.custom_props.get("highlight") {
-         let has_listener = element.events.contains("highlight");
--        let resolved =
--            resolve_highlight(ctx.highlights, ctx.tree, id, value, &Theme::dark(), has_listener);
-+        let resolved = resolve_highlight(
-+            ctx.highlights,
-+            ctx.tree,
-+            id,
-+            value,
-+            &Theme::dark(),
-+            has_listener,
-+        );
-         if let Some((_, Some(total))) = &resolved {
-             ctx.highlight_events.push((id, *total));
-         }
-@@ -4096,6 +4141,30 @@ pub(crate) fn build_host_container(
-     {
-         el = el.tab_index(tab_index).tab_stop(tab_index >= 0);
-     }
-+    if element
-+        .custom_props
-+        .get("captureTab")
-+        .and_then(|value| value.as_bool())
-+        == Some(true)
-+    {
-+        // A matched GPUI action stops before raw keyDown dispatch. Swallow focus
-+        // traversal here and emit the terminal-facing key event from the action.
-+        let emits_key_down = element.events.contains("keyDown");
-+        let next_callback = ctx.event_callback.clone();
-+        let previous_callback = ctx.event_callback.clone();
-+        let id = element.id;
-+        el = el
-+            .on_action(move |_: &FocusNext, _window, _cx| {
-+                if emits_key_down {
-+                    emit_captured_tab(&next_callback, id, false);
-+                }
-+            })
-+            .on_action(move |_: &FocusPrevious, _window, _cx| {
-+                if emits_key_down {
-+                    emit_captured_tab(&previous_callback, id, true);
-+                }
-+            });
-+    }
- 
-     // Wire up events.
-     // Some events (on_hover, on_click) require a stateful element (.id()),
-@@ -4106,17 +4175,19 @@ pub(crate) fn build_host_container(
+@@ -4352,17 +4391,19 @@ pub(crate) fn build_host_container(
          let callback = ctx.event_callback.clone();
          match event_type.as_str() {
              // ── Click ────────────────────────────────────────────
@@ -1873,208 +1654,11 @@ index 9620967..d180d14 100644
                      });
                  });
              }
-@@ -4738,6 +4809,21 @@ pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
- /// caller customize it via a closure, then sends it through the callback.
- /// Production: queues on Node.js event loop via ThreadsafeFunction.
- /// Tests: pushes to a synchronous Vec for drainEvents().
-+fn emit_captured_tab(callback: &Option<EventCallback>, element_id: u64, shift: bool) {
-+    emit_event_full(callback, element_id, "keyDown", |payload| {
-+        payload.key = Some("tab".to_string());
-+        payload.key_char = Some("\t".to_string());
-+        payload.is_held = Some(false);
-+        payload.modifiers = Some(
-+            gpui::Modifiers {
-+                shift,
-+                ..Default::default()
-+            }
-+            .into(),
-+        );
-+    });
-+}
-+
- pub(crate) fn emit_event_full(
-     callback: &Option<EventCallback>,
-     element_id: u64,
-@@ -4837,7 +4923,9 @@ fn parse_batch_ops(bytes: &[u8]) -> BatchResult<Vec<BatchOp<'_>>> {
- struct BatchOps<'a>(Vec<BatchOp<'a>>);
- 
- impl<'de> serde::Deserialize<'de> for BatchOps<'de> {
--    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-+    fn deserialize<D: serde::Deserializer<'de>>(
-+        deserializer: D,
-+    ) -> std::result::Result<Self, D::Error> {
-         struct OpsVisitor;
- 
-         impl<'de> serde::de::Visitor<'de> for OpsVisitor {
-@@ -4862,7 +4950,7 @@ impl<'de> serde::Deserialize<'de> for BatchOps<'de> {
-                         Err(error) => {
-                             return Err(serde::de::Error::custom(format!(
-                                 "Batch op {index}: {error}"
--                            )))
-+                            )));
-                         }
-                     }
-                 }
-@@ -4881,7 +4969,9 @@ impl<'de> serde::Deserialize<'de> for BatchOps<'de> {
- struct StrArg<'a>(std::borrow::Cow<'a, str>);
- 
- impl<'de> serde::Deserialize<'de> for StrArg<'de> {
--    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-+    fn deserialize<D: serde::Deserializer<'de>>(
-+        deserializer: D,
-+    ) -> std::result::Result<Self, D::Error> {
-         use std::borrow::Cow;
-         struct V;
-         impl<'de> serde::de::Visitor<'de> for V {
-@@ -4895,7 +4985,10 @@ impl<'de> serde::Deserialize<'de> for StrArg<'de> {
-             ) -> std::result::Result<StrArg<'de>, E> {
-                 Ok(StrArg(Cow::Borrowed(v)))
-             }
--            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<StrArg<'de>, E> {
-+            fn visit_str<E: serde::de::Error>(
-+                self,
-+                v: &str,
-+            ) -> std::result::Result<StrArg<'de>, E> {
-                 Ok(StrArg(Cow::Owned(v.to_owned())))
-             }
-             fn visit_string<E: serde::de::Error>(
-@@ -4929,7 +5022,9 @@ fn next_id<'de, A: serde::de::SeqAccess<'de>>(
- }
- 
- impl<'de> serde::Deserialize<'de> for BatchOp<'de> {
--    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-+    fn deserialize<D: serde::Deserializer<'de>>(
-+        deserializer: D,
-+    ) -> std::result::Result<Self, D::Error> {
-         struct V;
- 
-         impl<'de> serde::de::Visitor<'de> for V {
-@@ -4973,7 +5068,9 @@ impl<'de> serde::Deserialize<'de> for BatchOp<'de> {
-                     },
-                     "setEventListener" => BatchOp::SetEventListener {
-                         id: next_id(&mut seq, "id")?,
--                        event_type: next_arg::<A, StrArg>(&mut seq, "event type")?.0.into_owned(),
-+                        event_type: next_arg::<A, StrArg>(&mut seq, "event type")?
-+                            .0
-+                            .into_owned(),
-                         has_handler: next_arg(&mut seq, "hasHandler")?,
-                     },
-                     "setRoot" => BatchOp::SetRoot {
-@@ -4987,7 +5084,7 @@ impl<'de> serde::Deserialize<'de> for BatchOp<'de> {
-                     other => {
-                         return Err(serde::de::Error::custom(format!(
-                             "unknown operation: {other:?}"
--                        )))
-+                        )));
-                     }
-                 };
-                 // Trailing arguments are tolerated, as they were when the op was
-@@ -5018,7 +5115,10 @@ fn intern_style_payload(
- /// when it returns `Err`, which is what makes a batch atomic. An earlier
- /// version interned inside the apply loop, so a malformed style at the end of a
- /// batch left everything before it applied and then threw.
--fn resolve_styles(styles: &mut StyleTable, ops: &[BatchOp<'_>]) -> BatchResult<Vec<Arc<StyleDesc>>> {
-+fn resolve_styles(
-+    styles: &mut StyleTable,
-+    ops: &[BatchOp<'_>],
-+) -> BatchResult<Vec<Arc<StyleDesc>>> {
-     let mut resolved = Vec::new();
-     for (index, op) in ops.iter().enumerate() {
-         if let BatchOp::SetStyle { style, .. } = op {
-@@ -5050,8 +5150,7 @@ pub fn apply_batch_to_tree(tree: &mut RetainedTree, bytes: &[u8]) -> BatchResult
- 
-     // Phase 2: resolve styles. Touches the style table only; a failure here
-     // sweeps back out whatever this call interned.
--    let styles = resolve_styles(&mut tree.styles, &parsed)
--        .inspect_err(|_| tree.styles.sweep())?;
-+    let styles = resolve_styles(&mut tree.styles, &parsed).inspect_err(|_| tree.styles.sweep())?;
-     let mut styles = styles.into_iter();
- 
-     // Phase 3: apply. Cannot fail.
-@@ -5367,7 +5466,11 @@ mod highlight_cache_tests {
-             resolve_highlight(&mut cache, &tree, 1, &spec(1), &theme, true).expect("resolves");
-         assert_eq!(Arc::as_ptr(&context.matches), matches, "no rescan");
-         assert_eq!(changed, None, "a cursor move is not a new result");
--        assert_eq!(context.set.specs[0].active_index, Some(1), "spec still swapped");
-+        assert_eq!(
-+            context.set.specs[0].active_index,
-+            Some(1),
-+            "spec still swapped"
-+        );
-     }
- 
-     /// Editing the text must invalidate, or the wash paints over stale offsets.
-@@ -5398,8 +5501,8 @@ mod highlight_cache_tests {
-         let mut cache = HashMap::new();
- 
-         declare(&mut tree, &query("fox"));
--        let (_, changed) =
--            resolve_highlight(&mut cache, &tree, 1, &query("fox"), &theme, false).expect("resolves");
-+        let (_, changed) = resolve_highlight(&mut cache, &tree, 1, &query("fox"), &theme, false)
-+            .expect("resolves");
-         assert_eq!(changed, None, "nothing to report without a listener");
- 
-         let (_, changed) =
-@@ -5496,9 +5599,15 @@ mod batch_tests {
-     #[test]
-     fn a_null_style_is_an_error() {
-         let mut tree = RetainedTree::new();
--        let error = apply(&mut tree, r#"[["createElement",1,"div"],["setStyle",1,null]]"#)
--            .expect_err("null is not a style");
--        assert!(error.contains("Batch op 1 setStyle parse error:"), "{error}");
-+        let error = apply(
-+            &mut tree,
-+            r#"[["createElement",1,"div"],["setStyle",1,null]]"#,
-+        )
-+        .expect_err("null is not a style");
-+        assert!(
-+            error.contains("Batch op 1 setStyle parse error:"),
-+            "{error}"
-+        );
-         assert!(tree.elements.is_empty(), "and the batch stays atomic");
-     }
- 
-@@ -5549,9 +5658,8 @@ mod batch_tests {
-     fn has_handler_requires_a_bool() {
-         for (payload, expected) in [("true", true), ("false", false)] {
-             let mut tree = RetainedTree::new();
--            let json = format!(
--                r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#
--            );
-+            let json =
-+                format!(r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#);
-             apply(&mut tree, &json).expect("boolean handler state");
-             assert_eq!(
-                 tree.elements[&1].events.contains("click"),
-@@ -5562,9 +5670,8 @@ mod batch_tests {
- 
-         for payload in ["0", "1", "0.5", r#""true""#] {
-             let mut tree = RetainedTree::new();
--            let json = format!(
--                r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#
--            );
-+            let json =
-+                format!(r#"[["createElement",1,"div"],["setEventListener",1,"click",{payload}]]"#);
-             apply(&mut tree, &json).expect_err(&format!("hasHandler {payload} is not a boolean"));
-         }
-     }
-@@ -5579,7 +5686,10 @@ mod batch_tests {
-         for (json, what) in cases {
-             let mut tree = RetainedTree::new();
-             let error = apply(&mut tree, json).expect_err(what);
--            assert!(error.starts_with("Failed to parse batch:"), "{what}: {error}");
-+            assert!(
-+                error.starts_with("Failed to parse batch:"),
-+                "{what}: {error}"
-+            );
-             assert!(tree.elements.is_empty(), "{what} mutated the tree");
-         }
-     }
 diff --git a/packages/native/src/test_renderer.rs b/packages/native/src/test_renderer.rs
-index a9b5d71..325356a 100644
+index f083a40..0b257bf 100644
 --- a/packages/native/src/test_renderer.rs
 +++ b/packages/native/src/test_renderer.rs
-@@ -929,6 +929,24 @@ impl TestGpuixRenderer {
+@@ -968,6 +968,24 @@ impl TestGpuixRenderer {
          self.tree.lock().unwrap().root_id.map(|id| id as f64)
      }
  
@@ -2165,7 +1749,7 @@ index 1c005b1..66f060b 100644
    }
  }
 diff --git a/packages/react/src/__tests__/events.test.tsx b/packages/react/src/__tests__/events.test.tsx
-index d07c8ea..957c8fb 100644
+index 01f4960..b06ae7b 100644
 --- a/packages/react/src/__tests__/events.test.tsx
 +++ b/packages/react/src/__tests__/events.test.tsx
 @@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach } from "vitest"
@@ -2196,7 +1780,7 @@ index d07c8ea..957c8fb 100644
      loop.stop()
      expect(ticks).toBeGreaterThanOrEqual(2)
    })
-@@ -142,6 +145,47 @@ describeNative("events", () => {
+@@ -166,6 +169,47 @@ describeNative("events", () => {
          ]
        `)
      })
@@ -2244,60 +1828,11 @@ index d07c8ea..957c8fb 100644
    })
  
    describe("keyboard events", () => {
-diff --git a/packages/react/src/__tests__/floating-controls.test.tsx b/packages/react/src/__tests__/floating-controls.test.tsx
-index 2a93c7a..366c8ec 100644
---- a/packages/react/src/__tests__/floating-controls.test.tsx
-+++ b/packages/react/src/__tests__/floating-controls.test.tsx
-@@ -479,6 +479,44 @@ describeNative("floating controls", () => {
-     expect(testRoot.renderer.getAllText()).toContain("Focused: second")
-   })
- 
-+  it("keeps Tab and Shift+Tab on a control that captures them", () => {
-+    const received: string[] = []
-+    function Demo() {
-+      return (
-+        <div style={{ width: 400, height: 160 }}>
-+          <div
-+            autoFocus
-+            tabIndex={0}
-+            captureTab
-+            style={{ width: 100, height: 32 }}
-+            onKeyDown={(event) => received.push(`terminal:${event.modifiers.shift ? "shift-" : ""}${event.key}`)}
-+          >
-+            Terminal
-+          </div>
-+          <div
-+            tabIndex={0}
-+            style={{ width: 100, height: 32 }}
-+            onKeyDown={(event) => received.push(`outside:${event.key}`)}
-+          >
-+            Outside
-+          </div>
-+        </div>
-+      )
-+    }
-+
-+    testRoot.render(<Demo />)
-+    testRoot.renderer.simulateKeystrokes("tab a")
-+    expect(received).toEqual(["terminal:tab", "terminal:a"])
-+
-+    const terminal = testRoot.renderer
-+      .findByType("div")
-+      .find((element) => element.events.has("keyDown"))!
-+    testRoot.renderer.focusElement(terminal.id)
-+    received.length = 0
-+    testRoot.renderer.simulateKeystrokes("shift-tab b")
-+    expect(received).toEqual(["terminal:shift-tab", "terminal:b"])
-+  })
-+
-   it("removes an element from tab order when tabIndex is removed", () => {
-     function Demo() {
-       const [secondEnabled, setSecondEnabled] = useState(true)
 diff --git a/packages/react/src/__tests__/img.test.tsx b/packages/react/src/__tests__/img.test.tsx
-index 135958a..cf326cb 100644
+index 9efeeec..01d5aa4 100644
 --- a/packages/react/src/__tests__/img.test.tsx
 +++ b/packages/react/src/__tests__/img.test.tsx
-@@ -133,6 +133,33 @@ describeNative("custom element: img", () => {
+@@ -161,6 +161,33 @@ describeNative("custom element: img", () => {
  })
  
  describeNative("custom element: svg", () => {
@@ -2512,10 +2047,10 @@ index 548e7ea..dff6c63 100644
    textarea: "textarea",
    anchored: "anchored",
 diff --git a/packages/react/src/index.ts b/packages/react/src/index.ts
-index 9e88b09..45b680e 100644
+index e390088..1c968bf 100644
 --- a/packages/react/src/index.ts
 +++ b/packages/react/src/index.ts
-@@ -90,7 +90,10 @@ export type {
+@@ -92,7 +92,10 @@ export type {
    NativeRenderer,
    NativeWindowInsets,
    PublicInstance,
@@ -2523,26 +2058,14 @@ index 9e88b09..45b680e 100644
    StyleDesc,
 +  TerminalFrame,
 +  TerminalProps,
+   WindowKeyEventHandler,
+   WindowKeyEventHandlers,
  } from "./types/host.js"
- export { handleGpuixEvent } from "./reconciler/event-registry.js"
- export {
-diff --git a/packages/react/src/reconciler/host-config.ts b/packages/react/src/reconciler/host-config.ts
-index 471b60a..280bdd9 100644
---- a/packages/react/src/reconciler/host-config.ts
-+++ b/packages/react/src/reconciler/host-config.ts
-@@ -142,6 +142,7 @@ const BUILT_IN_TYPES = new Set(["div", "text"])
- const UNIVERSAL_PROPS = new Set([
-   "autoFocus",
-   "tabIndex",
-+  "captureTab",
-   "motion",
-   "testId",
-   // `highlight` is scoped by where it sits in the tree, so it has to reach a
 diff --git a/packages/react/src/reconciler/renderer.ts b/packages/react/src/reconciler/renderer.ts
-index e46224b..495b8a7 100644
+index e43c8e6..3320ef9 100644
 --- a/packages/react/src/reconciler/renderer.ts
 +++ b/packages/react/src/reconciler/renderer.ts
-@@ -42,9 +42,10 @@ export function createRenderer(
+@@ -44,9 +44,10 @@ export function createRenderer(
    return renderer
  }
  
@@ -2555,7 +2078,7 @@ index e46224b..495b8a7 100644
  
  export interface FrameLoop {
    stop: () => void
-@@ -68,8 +69,9 @@ export interface FrameLoop {
+@@ -72,8 +73,9 @@ export interface FrameLoop {
   * Each frame is scheduled only after the previous one finishes, so a slow frame
   * delays the next one instead of letting timers pile up.
   *
@@ -2567,7 +2090,7 @@ index e46224b..495b8a7 100644
   *
   * `tick()` returning false means the last window closed. The loop stops and
   * `onTerminated` runs. `render()` uses that to exit the process.
-@@ -105,7 +107,7 @@ export function startFrameLoop(
+@@ -109,7 +111,7 @@ export function startFrameLoop(
        options.onTerminated?.()
        return
      }
@@ -2577,10 +2100,10 @@ index e46224b..495b8a7 100644
    }
    loop()
 diff --git a/packages/react/src/testing.ts b/packages/react/src/testing.ts
-index 064174b..445eb1d 100644
+index 5b291e0..ccb1cf4 100644
 --- a/packages/react/src/testing.ts
 +++ b/packages/react/src/testing.ts
-@@ -62,6 +62,8 @@ interface NativeTestRendererApi extends NativeRenderer {
+@@ -66,6 +66,8 @@ interface NativeTestRendererApi extends NativeRenderer {
    advanceTime(milliseconds: number): void
    getRootId(): number | null
    getWindowSize(): { width: number; height: number }
@@ -2589,7 +2112,7 @@ index 064174b..445eb1d 100644
    getAllText(): string[]
    scrollTo(elementId: number, x: number, y: number): void
    scrollToItem(elementId: number, index: number, offsetInItem?: number): void
-@@ -447,6 +449,15 @@ export class TestRenderer implements NativeRenderer {
+@@ -464,6 +466,15 @@ export class TestRenderer implements NativeRenderer {
      return this.native.getWindowSize()
    }
  
@@ -2606,7 +2129,7 @@ index 064174b..445eb1d 100644
  
    /** Set the scroll offset of a scrollable element (overflow: "scroll").
 diff --git a/packages/react/src/types/host.ts b/packages/react/src/types/host.ts
-index 022ef20..68ff274 100644
+index 6b72d34..5527b82 100644
 --- a/packages/react/src/types/host.ts
 +++ b/packages/react/src/types/host.ts
 @@ -6,10 +6,15 @@ export interface MotionStyle {
@@ -2625,7 +2148,7 @@ index 022ef20..68ff274 100644
    borderRadius?: number
  }
  
-@@ -185,6 +190,8 @@ export type ElementType =
+@@ -199,6 +204,8 @@ export type ElementType =
    | "code"
    | "diff"
    | "markdown"
@@ -2634,16 +2157,7 @@ index 022ef20..68ff274 100644
    | "virtual-list"
  
  // ── Theme ────────────────────────────────────────────────────────────
-@@ -417,6 +424,8 @@ export interface Props {
-   autoFocus?: boolean
-   /** Native GPUI tab order. Use 0 for normal keyboard focus. */
-   tabIndex?: number
-+  /** Keep Tab and Shift+Tab on this element so its key handler can use them. */
-+  captureTab?: boolean
-   /** Stable locator id for automation. */
-   testId?: string
-   /** Internal native animation description used by motion components. */
-@@ -478,6 +487,42 @@ export interface SvgProps extends Props {
+@@ -492,6 +499,42 @@ export interface SvgProps extends Props {
    src?: string
    /** Raw SVG markup rendered directly by GPUI. */
    source?: string
@@ -2686,7 +2200,7 @@ index 022ef20..68ff274 100644
  }
  
  /**
-@@ -598,6 +643,10 @@ export interface NativeRenderer {
+@@ -615,6 +658,10 @@ export interface NativeRenderer {
  
    // ── Window API ─────────────────────────────────────────────────
    getWindowSize?(): { width: number; height: number }
@@ -2697,10 +2211,10 @@ index 022ef20..68ff274 100644
    getWindowInsets?(): NativeWindowInsets
    setWindowTitle?(title: string): void
    /** Bring the window forward and focus it. Reveals a `show: false` window. */
-diff --git a/zed/crates/gpui/src/assets.rs b/zed/crates/gpui/src/assets.rs
-index cb8b47e..71e12b6 100644
---- a/zed/crates/gpui/src/assets.rs
-+++ b/zed/crates/gpui/src/assets.rs
+diff --git a/crates/gpui/src/assets.rs b/crates/gpui/src/assets.rs
+index cb8b47ed01..71e12b6653 100644
+--- a/crates/gpui/src/assets.rs
++++ b/crates/gpui/src/assets.rs
 @@ -68,6 +68,12 @@ impl RenderImage {
          }
      }
@@ -2728,10 +2242,10 @@ index cb8b47e..71e12b6 100644
 +        assert!(RenderImage::from_bgra(2, 1, vec![0; 4]).is_none());
 +    }
  }
-diff --git a/zed/crates/gpui/src/platform.rs b/zed/crates/gpui/src/platform.rs
-index 64a84df..bc366c0 100644
---- a/zed/crates/gpui/src/platform.rs
-+++ b/zed/crates/gpui/src/platform.rs
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 64a84df390..bc366c0802 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
 @@ -1339,6 +1339,18 @@ pub trait PlatformAtlas {
          key: &AtlasKey,
          build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
@@ -2751,10 +2265,10 @@ index 64a84df..bc366c0 100644
      fn remove(&self, key: &AtlasKey);
  
      #[cfg(any(test, feature = "test-support"))]
-diff --git a/zed/crates/gpui/src/window.rs b/zed/crates/gpui/src/window.rs
-index 25f98cd..b255b93 100644
---- a/zed/crates/gpui/src/window.rs
-+++ b/zed/crates/gpui/src/window.rs
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 25f98cde6b..b255b93232 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
 @@ -3057,6 +3057,14 @@ impl Window {
          profiling::finish_frame!();
      }
@@ -2852,10 +2366,10 @@ index 25f98cd..b255b93 100644
      /// Removes an image from the sprite atlas.
      pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
          for frame_index in 0..data.frame_count() {
-diff --git a/zed/crates/gpui_apple/src/metal_atlas.rs b/zed/crates/gpui_apple/src/metal_atlas.rs
-index 9cfd445..4674718 100644
---- a/zed/crates/gpui_apple/src/metal_atlas.rs
-+++ b/zed/crates/gpui_apple/src/metal_atlas.rs
+diff --git a/crates/gpui_apple/src/metal_atlas.rs b/crates/gpui_apple/src/metal_atlas.rs
+index 9cfd445ba8..4674718147 100644
+--- a/crates/gpui_apple/src/metal_atlas.rs
++++ b/crates/gpui_apple/src/metal_atlas.rs
 @@ -59,6 +59,24 @@ impl PlatformAtlas for MetalAtlas {
          }
      }
@@ -2881,10 +2395,10 @@ index 9cfd445..4674718 100644
      fn remove(&self, key: &AtlasKey) {
          let mut lock = self.0.lock();
          let Some(tile) = lock.tiles_by_key.remove(key) else {
-diff --git a/zed/crates/gpui_apple/src/shaders.metal b/zed/crates/gpui_apple/src/shaders.metal
-index 2b52bb9..fe014e7 100644
---- a/zed/crates/gpui_apple/src/shaders.metal
-+++ b/zed/crates/gpui_apple/src/shaders.metal
+diff --git a/crates/gpui_apple/src/shaders.metal b/crates/gpui_apple/src/shaders.metal
+index 2b52bb9ecc..fe014e7370 100644
+--- a/crates/gpui_apple/src/shaders.metal
++++ b/crates/gpui_apple/src/shaders.metal
 @@ -715,8 +715,12 @@ fragment float4 polychrome_sprite_fragment(
    PolychromeSprite sprite = sprites[input.sprite_id];
    constexpr sampler atlas_texture_sampler(mag_filter::linear,
@@ -2900,10 +2414,10 @@ index 2b52bb9..fe014e7 100644
    float distance =
        quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
  
-diff --git a/zed/crates/gpui_macos/src/platform.rs b/zed/crates/gpui_macos/src/platform.rs
-index 9b6f5f2..1697921 100644
---- a/zed/crates/gpui_macos/src/platform.rs
-+++ b/zed/crates/gpui_macos/src/platform.rs
+diff --git a/crates/gpui_macos/src/platform.rs b/crates/gpui_macos/src/platform.rs
+index 9b6f5f2fd3..16979214f9 100644
+--- a/crates/gpui_macos/src/platform.rs
++++ b/crates/gpui_macos/src/platform.rs
 @@ -20,15 +20,11 @@ use cocoa::{
      },
  };
@@ -2991,10 +2505,10 @@ index 9b6f5f2..1697921 100644
      }
  }
  
-diff --git a/zed/crates/gpui_wgpu/src/shaders.wgsl b/zed/crates/gpui_wgpu/src/shaders.wgsl
-index 718cb75..e442a34 100644
---- a/zed/crates/gpui_wgpu/src/shaders.wgsl
-+++ b/zed/crates/gpui_wgpu/src/shaders.wgsl
+diff --git a/crates/gpui_wgpu/src/shaders.wgsl b/crates/gpui_wgpu/src/shaders.wgsl
+index 718cb7595d..e442a3403d 100644
+--- a/crates/gpui_wgpu/src/shaders.wgsl
++++ b/crates/gpui_wgpu/src/shaders.wgsl
 @@ -1293,13 +1293,18 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
  
  @fragment
@@ -3016,10 +2530,10 @@ index 718cb75..e442a34 100644
      let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
  
      var color = sample;
-diff --git a/zed/crates/gpui_wgpu/src/wgpu_atlas.rs b/zed/crates/gpui_wgpu/src/wgpu_atlas.rs
-index 3cf71ac..c567130 100644
---- a/zed/crates/gpui_wgpu/src/wgpu_atlas.rs
-+++ b/zed/crates/gpui_wgpu/src/wgpu_atlas.rs
+diff --git a/crates/gpui_wgpu/src/wgpu_atlas.rs b/crates/gpui_wgpu/src/wgpu_atlas.rs
+index 3cf71ac98c..c5671307df 100644
+--- a/crates/gpui_wgpu/src/wgpu_atlas.rs
++++ b/crates/gpui_wgpu/src/wgpu_atlas.rs
 @@ -127,6 +127,24 @@ impl PlatformAtlas for WgpuAtlas {
          }
      }
@@ -3045,10 +2559,10 @@ index 3cf71ac..c567130 100644
      fn remove(&self, key: &AtlasKey) {
          let mut lock = self.0.lock();
  
-diff --git a/zed/crates/gpui_windows/src/directx_atlas.rs b/zed/crates/gpui_windows/src/directx_atlas.rs
-index 6238699..0c08887 100644
---- a/zed/crates/gpui_windows/src/directx_atlas.rs
-+++ b/zed/crates/gpui_windows/src/directx_atlas.rs
+diff --git a/crates/gpui_windows/src/directx_atlas.rs b/crates/gpui_windows/src/directx_atlas.rs
+index 62386997f5..0c0888712c 100644
+--- a/crates/gpui_windows/src/directx_atlas.rs
++++ b/crates/gpui_windows/src/directx_atlas.rs
 @@ -95,6 +95,27 @@ impl PlatformAtlas for DirectXAtlas {
          }
      }
@@ -3077,10 +2591,10 @@ index 6238699..0c08887 100644
      fn remove(&self, key: &AtlasKey) {
          let mut lock = self.0.lock();
  
-diff --git a/zed/crates/gpui_windows/src/shaders.hlsl b/zed/crates/gpui_windows/src/shaders.hlsl
-index d20cb31..7a83b9c 100644
---- a/zed/crates/gpui_windows/src/shaders.hlsl
-+++ b/zed/crates/gpui_windows/src/shaders.hlsl
+diff --git a/crates/gpui_windows/src/shaders.hlsl b/crates/gpui_windows/src/shaders.hlsl
+index d20cb317db..7a83b9c07b 100644
+--- a/crates/gpui_windows/src/shaders.hlsl
++++ b/crates/gpui_windows/src/shaders.hlsl
 @@ -1256,6 +1256,13 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
  float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
      PolychromeSprite sprite = poly_sprites[input.sprite_id];
