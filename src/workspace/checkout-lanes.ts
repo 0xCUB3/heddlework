@@ -106,12 +106,33 @@ export function createCheckoutLanePlugin(root?: string): WorkbenchPlugin {
   }
 }
 
+const identityCache = new Map<string, boolean>()
+
+async function hasGitIdentity(cwd: string): Promise<boolean> {
+  const cached = identityCache.get(cwd)
+  if (cached !== undefined) return cached
+  const child = Bun.spawn(['git', 'config', 'user.email'], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited])
+  const present = exitCode === 0 && stdout.trim().length > 0 || Boolean(process.env.GIT_COMMITTER_EMAIL)
+  identityCache.set(cwd, present)
+  return present
+}
+
 function assertLaneId(laneId: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/.test(laneId)) throw new Error(`Invalid lane id: ${laneId}`)
 }
 
+// Merge commits need an identity; hosts without git config still get a deterministic one so the lane merge does not fail on identity alone.
+const FALLBACK_IDENTITY = {
+  GIT_AUTHOR_NAME: 'Heddlework',
+  GIT_AUTHOR_EMAIL: 'heddlework@localhost',
+  GIT_COMMITTER_NAME: 'Heddlework',
+  GIT_COMMITTER_EMAIL: 'heddlework@localhost',
+}
+
 async function runGit(cwd: string, args: string[]): Promise<string> {
-  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GIT_EDITOR: 'true' } })
+  const identity = await hasGitIdentity(cwd) ? {} : FALLBACK_IDENTITY
+  const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...identity, ...process.env, GIT_EDITOR: 'true' } })
   const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
   if (exitCode !== 0) throw new Error(stderr.trim() || stdout.trim() || `git ${args[0] ?? ''} exited with ${exitCode}`)
   return stdout

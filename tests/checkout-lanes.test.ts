@@ -63,6 +63,7 @@ describe('checkout lanes', () => {
     await git(workspace, 'commit', '-q', '-am', 'primary edit')
     const result = await lanes.merge(workspace, 'HW-2-1')
     expect(result.merged).toBe(false)
+    expect(result.merged === false && result.message).toContain('CONFLICT')
     await git(workspace, 'merge', '--abort')
     expect((await lanes.list(workspace)).map((entry) => entry.id)).toEqual(['HW-2-1'])
     expect(() => lanes.create(workspace, '../evil')).toThrow('Invalid lane id')

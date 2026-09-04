@@ -1,0 +1,117 @@
+{
+  "format": 1,
+  "entries": {
+    "topology/peer-seq": {
+      "key": "topology/peer-seq",
+      "value": {
+        "format": 1,
+        "next": 1
+      },
+      "version": 1,
+      "updatedAt": 1788545847017,
+      "updatedBy": {
+        "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a06da3-084e-715b-a4be-0de550c80306"
+      }
+    },
+    "topology/hosts/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": {
+      "key": "topology/hosts/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53",
+      "value": {
+        "format": 1,
+        "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "rootId": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "identity": {
+          "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+          "name": "main",
+          "kind": "main",
+          "sessionId": "01a06da3-084e-715b-a4be-0de550c80306"
+        },
+        "startedAt": 1788545847012,
+        "updatedAt": 1788553810140,
+        "expiresAt": 1788553825140
+      },
+      "version": 2472,
+      "updatedAt": 1788553810141,
+      "updatedBy": {
+        "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a06da3-084e-715b-a4be-0de550c80306"
+      }
+    },
+    "sessions/01a06da3-084e-715b-a4be-0de550c80306": {
+      "key": "sessions/01a06da3-084e-715b-a4be-0de550c80306",
+      "value": {
+        "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "name": "HED-1",
+        "label": "HED-1",
+        "kind": "peer",
+        "status": "running",
+        "runner": "pi",
+        "transport": "host",
+        "cwd": "/Users/skula/projects/heddlework",
+        "sessionId": "01a06da3-084e-715b-a4be-0de550c80306",
+        "model": "claude-code/claude-fable-5-1",
+        "thinking": "medium",
+        "startedAt": 1788545847012,
+        "updatedAt": 1788553810140,
+        "pendingMessages": false,
+        "local": false
+      },
+      "version": 2472,
+      "updatedAt": 1788553810141,
+      "updatedBy": {
+        "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a06da3-084e-715b-a4be-0de550c80306"
+      }
+    },
+    "topology/participants/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": {
+      "key": "topology/participants/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53",
+      "value": {
+        "format": 1,
+        "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "kind": "root",
+        "rootId": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "ownerHostId": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "ownerIdentityId": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "name": "main",
+        "status": "running",
+        "runner": "pi",
+        "transport": "host",
+        "capabilities": [
+          "steer",
+          "followUp",
+          "fabric"
+        ],
+        "cwd": "/Users/skula/projects/heddlework",
+        "sessionId": "01a06da3-084e-715b-a4be-0de550c80306",
+        "model": "claude-code/claude-fable-5-1",
+        "thinking": "medium",
+        "startedAt": 1788545847012,
+        "updatedAt": 1788553810140,
+        "pendingMessages": false,
+        "controlProtocol": "v1",
+        "label": "HED-1"
+      },
+      "version": 2472,
+      "updatedAt": 1788553810141,
+      "updatedBy": {
+        "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a06da3-084e-715b-a4be-0de550c80306"
+      }
+    }
+  },
+  "versions": {
+    "topology/peer-seq": 1,
+    "topology/hosts/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": 2472,
+    "sessions/01a06da3-084e-715b-a4be-0de550c80306": 2472,
+    "topology/participants/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": 2472
+  },
+  "tombstoneOrder": []
+}

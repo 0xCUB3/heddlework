@@ -111,7 +111,7 @@ The installer uses the standalone executable, a square scalable icon, and an abs
 
 ### Releases and updates
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks, builds, and packages `Heddlework.app` (macOS arm64 and x64), a Linux tarball, and a Windows zip, writes `checksums.txt`, and publishes a GitHub Release. macOS signing and notarisation run when `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` secrets exist; Windows signing runs with `WINDOWS_CERT_PFX` and `WINDOWS_CERT_PASSWORD`. Without secrets the assets carry an `-unsigned` suffix. Cut a release with `bun run release:tag patch` then `git push origin main --follow-tags`.
+Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks, builds, and packages `Heddlework.app` (macOS arm64 and x64), a Linux tarball, and a Windows zip, writes `checksums.txt`, and publishes a GitHub Release. macOS signing and notarisation run when `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` secrets exist; Windows signing runs with `WINDOWS_CERT_PFX` and `WINDOWS_CERT_PASSWORD`. Without secrets the assets carry an `-unsigned` suffix. The release job runs the typecheck and the non-UI test suites; the GPUIX UI suites stay in `check.yml` because they need a display. Cut a release with `bun run release:tag patch` then `git push origin main --follow-tags`.
 
 At startup the desktop asks GitHub for the latest release once and posts a notice with the download link when a newer version exists. Installing it is a manual download; in-place auto-update is not implemented.
 
@@ -164,12 +164,14 @@ Extension interactions are hosted in the main conversation area rather than embe
 
 ## Install later: product channels
 
-These channels describe the intended distribution path; they are **not available yet**.
+These channels describe what is still ahead; everything else in this README ships from source or from tagged GitHub Releases today.
 
 | Channel | Intended path |
 | --- | --- |
-| Desktop | Signed and notarized macOS, Windows, and Linux downloads from GitHub Releases, followed by native package-manager channels |
-| Mobile | Native wrappers around the companion PWA |
+| Codex and Claude adapters | Additional `HarnessAdapter` implementations behind the same protocol |
+| Signed desktop builds | The release workflow signs and notarises once certificate secrets are configured; until then assets are unsigned |
+| In-place updates | The startup check announces new releases; downloading and replacing the app stays manual |
+| Mobile | Native wrappers around the companion PWA; the PWA itself installs to the home screen now |
 
 ### Web workspace client
 
@@ -223,6 +225,10 @@ Heddlework follows a small supervised component model inspired by Cordis:
 - `src/workbench/plugins.ts` composes transport, session discovery, workspace diff, and controller capabilities without giving the controller concrete providers to construct.
 - `src/pi/transport.ts` defines the application-facing harness transport seam; Pi RPC is its first provider.
 - `src/protocol/` freezes the versioned surface contract: `HarnessAdapter` identity and capabilities, the `WorkbenchCommand` union, and JSON snapshot patches shared by desktop, web, and mobile; see [Harness adapter protocol](docs/harness-adapter-protocol.md).
+- `src/host/` serves that protocol over WebSocket from the desktop process or `bun run host`, and `src/web/` is the browser and PWA renderer over it.
+- `src/plugins/` discovers external workbench plugins by manifest with compatibility and trust checks; see [UI extensions](docs/ui-extensions.md).
+- `src/receipts/` records per-turn mutation receipts; `src/flows/graph.ts` and `src/workspace/checkout-lanes.ts` gate flow tasks on dependencies and isolate them in git worktrees.
+- `src/updates/` performs the startup release check; `.github/workflows/release.yml` builds and publishes tagged releases.
 - `src/workbench/controller.ts` projects harness events into UI state, owns the durable delivery queue, and rehydrates from authoritative transcripts.
 - `src/flows/runtime.ts` persists schedule intent and compiles due occurrences into the same queue primitives authored directly in chat.
 - `src/flows/projection.ts` derives Work and Triage from queue rows and Pi session summaries without a task lifecycle database; `src/flows/fabric-projection.ts` derives parallel branches from Fabric participant audits; `src/workbench/thread-metadata-store.ts` persists only local disposition, read, priority, and label annotations.
