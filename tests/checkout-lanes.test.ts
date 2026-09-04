@@ -42,7 +42,7 @@ describe('checkout lanes', () => {
 
     const merged = await lanes.merge(workspace, 'HW-1-1')
     expect(merged).toEqual({ merged: true })
-    expect(readFileSync(join(workspace, 'lane.txt'), 'utf8')).toBe('from lane\n')
+    expect(readFileSync(join(workspace, 'lane.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('from lane\n')
     expect(await lanes.list(workspace)).toEqual([])
     expect(existsSync(lane.path)).toBe(false)
 
