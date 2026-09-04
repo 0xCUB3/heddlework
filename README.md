@@ -109,6 +109,16 @@ HEDDLEWORK_PI="$(command -v pi)" ./packaging/linux/install-user.sh
 
 The installer uses the standalone executable, a square scalable icon, and an absolute-path launcher so app-grid launches do not depend on the GUI session inheriting Bun or Pi from shell startup files. See [Linux desktop integration](packaging/linux/README.md) for installed paths, GNOME cache guidance, removal, and diagnostic-log precautions.
 
+### Remote host
+
+The desktop process can serve the same workspace to browser and phone companions. Start it with `HEDDLEWORK_HOST=1`, or run the headless host on a machine without a display:
+
+```bash
+bun run host -- /path/to/repository
+```
+
+The host prints a connect link carrying a bearer token. The token is stored with owner-only permissions under the Heddlework state directory (`host-token`) and the Settings surface has a Copy connect link action. The host binds to `127.0.0.1` unless `HEDDLEWORK_HOST_BIND` says otherwise. Every remote command goes through the same controller as the desktop UI, so Pi stays the single execution authority. The wire contract is documented in [Harness adapter protocol](docs/harness-adapter-protocol.md).
+
 ### Queue behavior
 
 Submitting while an agent run is active stages the input in Heddlework's editable queue instead of immediately surrendering it to Pi's immutable RPC queue. **Enter** creates a steering row for the next healthy turn boundary; the visible **Queue** action and **Option/Alt+Enter** create a follow-up for `agent_settled`. While idle, ordinary **Enter** still starts immediately, **Queue** parks work in a paused plan, and **Enter** on an empty composer—or the primary action—resumes its oldest row. The collapsed strip is inset like an upside-down checkout bar and tucks behind the composer; expanding it springs upward into a single bounded scroll surface where rows can be edited, held, removed, moved between lanes, explicitly steered, or reordered from their left drag handles.
@@ -174,6 +184,10 @@ HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
 | `HEDDLEWORK_NO_SESSION=1` | Disable Pi session persistence |
 | `HEDDLEWORK_DEMO=1` | Use the deterministic no-credentials demo transport |
 | `HEDDLEWORK_DEBUG_OVERLAY=full` | Show GPUIX frame timings (`minimal` is also supported) |
+| `HEDDLEWORK_HOST=1` | Serve the workspace host protocol from the desktop process for web and mobile companions |
+| `HEDDLEWORK_HOST_PORT` | Host port (default `4817`) |
+| `HEDDLEWORK_HOST_BIND` | Host bind address (default `127.0.0.1`; use `0.0.0.0` to reach it from a phone on the same network) |
+| `HEDDLEWORK_WEB_ROOT` | Directory of a built web client to serve from the host |
 
 ## Architecture
 

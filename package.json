@@ -27,6 +27,7 @@
     "dev": "bun --watch src/main.tsx",
     "start": "bun src/main.tsx",
     "demo": "HEDDLEWORK_DEMO=1 bun --watch src/main.tsx",
+    "host": "bun src/host/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "check": "bun run typecheck && bun run test",

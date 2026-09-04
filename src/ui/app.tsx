@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore }
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
+import type { WorkspaceHost } from '../host/server.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
 import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
@@ -34,6 +35,7 @@ function workbenchSurfaceId(panel: RightPanel | undefined): string | undefined {
 
 export function WorkbenchApp({
   controller,
+  host,
   presenters,
   ui,
   flows,
@@ -44,6 +46,7 @@ export function WorkbenchApp({
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
   flows?: FlowRuntime | undefined
+  host?: WorkspaceHost | undefined
   themeManager?: ThemeManager
   onQuit?(): void
 }) {
@@ -263,7 +266,7 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView state={state} controller={controller} theme={theme} onThemeModeChange={(mode) => themeManager.setMode(mode)} onClose={() => setSurface('chat')} />
+            <SettingsView state={state} controller={controller} host={host} theme={theme} onThemeModeChange={(mode) => themeManager.setMode(mode)} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <div style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: 1 - fullscreenProgress, minWidth: 0, height: '100%', overflow: 'hidden' }}>
