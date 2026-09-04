@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const root = resolve(import.meta.dir, '..')
@@ -14,11 +14,15 @@ rmSync(output, { force: true })
 const compile: { outfile: string; target?: Bun.Build.CompileTarget } = { outfile: output }
 if (process.env.COMPILE_TARGET) compile.target = process.env.COMPILE_TARGET as Bun.Build.CompileTarget
 
+const packageVersion = (JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { version: string }).version
+const version = (process.env.HEDDLEWORK_VERSION ?? packageVersion).replace(/^v/, '')
+
 const result = await Bun.build({
   entrypoints: [resolve(root, 'src/main.tsx')],
   compile,
   minify: true,
   sourcemap: 'linked',
+  define: { __HEDDLEWORK_VERSION__: JSON.stringify(version) },
 })
 
 if (!result.success) {
@@ -27,4 +31,5 @@ if (!result.success) {
 }
 
 if (process.platform !== 'win32') chmodSync(output, 0o755)
-console.log(`Built ${output}`)
+// build-web.ts already emits dist/web next to the executable, which is where the desktop looks for the client.
+console.log(`Built ${output} (${version})`)

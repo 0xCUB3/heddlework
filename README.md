@@ -40,7 +40,7 @@ Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/e
 | Durable dependency graph | **Preview** — task dependencies gate dispatch, failed tasks retry, worktree lanes isolate work with an explicit merge step, and receipts record every turn |
 | Codex adapter | **Planned** |
 | Claude adapter | **Planned** |
-| Signed desktop distribution | **Planned** |
+| Signed desktop distribution | **Preview** — tagged releases build macOS, Linux, and Windows assets with checksums; unsigned until certificates are configured |
 | Web and mobile companions | **Preview** — browser client and installable PWA over the workspace host |
 
 ## Why Heddlework?
@@ -108,6 +108,12 @@ HEDDLEWORK_PI="$(command -v pi)" ./packaging/linux/install-user.sh
 ```
 
 The installer uses the standalone executable, a square scalable icon, and an absolute-path launcher so app-grid launches do not depend on the GUI session inheriting Bun or Pi from shell startup files. See [Linux desktop integration](packaging/linux/README.md) for installed paths, GNOME cache guidance, removal, and diagnostic-log precautions.
+
+### Releases and updates
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks, builds, and packages `Heddlework.app` (macOS arm64 and x64), a Linux tarball, and a Windows zip, writes `checksums.txt`, and publishes a GitHub Release. macOS signing and notarisation run when `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` secrets exist; Windows signing runs with `WINDOWS_CERT_PFX` and `WINDOWS_CERT_PASSWORD`. Without secrets the assets carry an `-unsigned` suffix. Cut a release with `bun run release:tag patch` then `git push origin main --follow-tags`.
+
+At startup the desktop asks GitHub for the latest release once and posts a notice with the download link when a newer version exists. Installing it is a manual download; in-place auto-update is not implemented.
 
 ### Remote host
 
@@ -206,6 +212,7 @@ HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
 | `HEDDLEWORK_HOST_PORT` | Host port (default `4817`) |
 | `HEDDLEWORK_HOST_BIND` | Host bind address (default `127.0.0.1`; use `0.0.0.0` to reach it from a phone on the same network) |
 | `HEDDLEWORK_WEB_ROOT` | Directory of a built web client to serve from the host |
+| `HEDDLEWORK_UPDATE_CHECK=0` | Skip the startup release check |
 | `HEDDLEWORK_TRUST_WORKSPACE=1` | Load workspace-local plugins from `.heddlework/plugins` without the Settings trust toggle |
 
 ## Architecture
@@ -253,7 +260,7 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [x] Durable one-time, interval, and daily scheduled Flow runtime
 - [x] Durable dependency graphs and safe checkout lanes
 - [x] Mutation receipts and artifact review
-- [ ] Signed desktop installers and automatic updates
+- [x] Signed desktop installers and automatic updates (signing activates when certificate secrets are configured; updates are announced, not auto-installed)
 - [x] Web workspace client
 - [x] Mobile companion clients
 

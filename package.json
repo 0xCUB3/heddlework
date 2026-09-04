@@ -28,6 +28,7 @@
     "start": "bun src/main.tsx",
     "demo": "HEDDLEWORK_DEMO=1 bun --watch src/main.tsx",
     "host": "bun src/host/main.ts",
+    "release:tag": "bun scripts/release-tag.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc --noEmit -p src/web",
     "test": "bun test",

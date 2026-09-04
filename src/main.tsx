@@ -15,6 +15,7 @@ import { flowRuntimePath } from './flows/runtime.ts'
 import { FileQueueStore, queueStorePath } from './workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from './workbench/thread-metadata-store.ts'
 import { createReceiptPlugin } from './receipts/plugin.ts'
+import { createUpdateCheckPlugin } from './updates/plugin.ts'
 import { createCheckoutLanePlugin } from './workspace/checkout-lanes.ts'
 import { receiptStorePath } from './receipts/store.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './host/plugin.ts'
@@ -63,6 +64,7 @@ kernel.mount(createWorkspaceHostPlugin({
   tokenPath: demoMode ? false : hostTokenPath(),
   staticRoot: resolveStaticRoot(),
 }))
+kernel.mount(createUpdateCheckPlugin())
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
 kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))

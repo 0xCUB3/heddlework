@@ -1,0 +1,140 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: bun-darwin-arm64
+            asset: heddlework-macos-arm64
+          - os: macos-latest
+            target: bun-darwin-x64
+            asset: heddlework-macos-x64
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            asset: heddlework-linux-x64
+          - os: windows-latest
+            target: bun-windows-x64
+            asset: heddlework-windows-x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run build
+        env:
+          COMPILE_TARGET: ${{ matrix.target }}
+          HEDDLEWORK_VERSION: ${{ github.ref_name }}
+
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MACOS_CERT_P12:-}" ]; then
+            KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+            echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security create-keychain -p tmp "$KEYCHAIN"
+            security set-keychain-settings -lut 21600 "$KEYCHAIN"
+            security unlock-keychain -p tmp "$KEYCHAIN"
+            security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+            security list-keychain -d user -s "$KEYCHAIN"
+            export SIGN_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' 'NR==1{print $2}')"
+          fi
+          ./packaging/macos/build-app.sh dist/heddlework dist/Heddlework.app "${VERSION#v}"
+          suffix=""
+          if [ -z "${SIGN_IDENTITY:-}" ]; then suffix="-unsigned"; fi
+          ditto -c -k --keepParent dist/Heddlework.app "dist/${{ matrix.asset }}${suffix}.zip"
+          if [ -n "${SIGN_IDENTITY:-}" ] && [ -n "${APPLE_ID:-}" ]; then
+            xcrun notarytool submit "dist/${{ matrix.asset }}.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+            xcrun stapler staple dist/Heddlework.app
+            rm -f "dist/${{ matrix.asset }}.zip"
+            ditto -c -k --keepParent dist/Heddlework.app "dist/${{ matrix.asset }}.zip"
+          fi
+          rm -rf dist/Heddlework.app
+
+      - name: Package Linux tarball
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          mkdir -p stage/heddlework
+          cp dist/heddlework stage/heddlework/
+          cp -r dist/web stage/heddlework/web
+          cp -r packaging/linux stage/heddlework/packaging
+          tar -C stage -czf "dist/${{ matrix.asset }}.tar.gz" heddlework
+
+      - name: Package Windows zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $suffix = ''
+          if ($env:WINDOWS_CERT_PFX) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+            & $signtool.FullName sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /f $pfx /p $env:WINDOWS_CERT_PASSWORD dist\heddlework.exe
+          } else {
+            $suffix = '-unsigned'
+          }
+          New-Item -ItemType Directory -Force stage\heddlework | Out-Null
+          Copy-Item dist\heddlework.exe stage\heddlework\
+          Copy-Item -Recurse dist\web stage\heddlework\web
+          Copy-Item packaging\windows\README.md stage\heddlework\
+          Compress-Archive -Path stage\heddlework -DestinationPath "dist\${{ matrix.asset }}$suffix.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum * > checksums.txt
+          cat checksums.txt
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prerelease=""
+          case "${{ github.ref_name }}" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "${{ github.ref_name }}" assets/* --title "Heddlework ${{ github.ref_name }}" --generate-notes $prerelease
