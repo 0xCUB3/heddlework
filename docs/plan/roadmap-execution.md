@@ -296,7 +296,7 @@ Acceptance. Workflow YAML validates (`gh workflow view release.yml` after push, 
 
 ## Status
 
-All eight phases are on `main` of `0xCUB3/heddlework`: protocol `f9345b0`, host `2f88595`, web `d3b9afd`, PWA `6c7e60d`, plugins `e947133`, receipts `46b21a3`, flows graph and lanes `bde6309`, release `660698b`. Tag `v0.1.1-rc.1` (at `e4fa9eb`) ran the release workflow to completion and published a pre-release with macOS arm64/x64, Linux, and Windows archives plus `checksums.txt`. The release job runs typecheck and the non-UI suites; the GPUIX UI suites stay in `check.yml` and were already failing on hosted macOS runners before this work (same failures on upstream). A fresh clone passes typecheck, `build:web`, and the full suite locally. The notes below are the earlier handoff and are kept for history.
+All eight phases are on `main` of `0xCUB3/heddlework`: protocol `f9345b0`, host `2f88595`, web `d3b9afd`, PWA `6c7e60d`, plugins `e947133`, receipts `46b21a3`, flows graph and lanes `bde6309`, release `660698b`. Tag `v0.1.1-rc.1` (at `e4fa9eb`) ran the release workflow to completion and published a pre-release with macOS arm64/x64, Linux, and Windows archives plus `checksums.txt`. The GPUIX UI suites had been failing on hosted macOS since before this work (same on upstream) because the runner's 1024x768 virtual display clamps test windows to tablet width; `scripts/ci-display.sh` now widens the display, and one glyph centring assertion that only held at 2x scale was fixed. `check.yml` is green at 305 pass and the release jobs run the full check on macOS and Linux. The notes below are the earlier handoff and are kept for history.
 
 ## Status at handoff (historical)
 
