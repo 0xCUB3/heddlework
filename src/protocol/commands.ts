@@ -1,3 +1,4 @@
+import type { FlowRuntime } from '../flows/runtime.ts'
 import type { ComposerImage, ThinkingLevel } from '../pi/types.ts'
 import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
@@ -41,6 +42,8 @@ export type WorkbenchCommand =
   | { type: 'addEditorImage'; image: ComposerImage }
   | { type: 'removeEditorImage'; id: string }
   | { type: 'clearReceipts'; sessionPath: string }
+  | { type: 'mergeLane'; laneId: string }
+  | { type: 'removeLane'; laneId: string }
 
 export type WorkbenchCommandType = WorkbenchCommand['type']
 
@@ -50,7 +53,7 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
   'wakeThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
-  'clearNotices', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts',
+  'clearNotices', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
 ]
 
 export function isWorkbenchCommand(value: unknown): value is WorkbenchCommand {
@@ -59,8 +62,22 @@ export function isWorkbenchCommand(value: unknown): value is WorkbenchCommand {
   return typeof type === 'string' && (WORKBENCH_COMMAND_TYPES as readonly string[]).includes(type)
 }
 
-export async function applyWorkbenchCommand(controller: WorkbenchController, command: WorkbenchCommand): Promise<void> {
+export interface WorkbenchCommandTargets {
+  flows?: Pick<FlowRuntime, 'mergeLane' | 'removeLane'> | undefined
+}
+
+export async function applyWorkbenchCommand(controller: WorkbenchController, command: WorkbenchCommand, targets: WorkbenchCommandTargets = {}): Promise<void> {
   switch (command.type) {
+    case 'mergeLane': {
+      if (!targets.flows) throw new Error('Flow runtime is not available')
+      const result = await targets.flows.mergeLane(command.laneId)
+      if (!result.merged) throw new Error(result.message)
+      return
+    }
+    case 'removeLane':
+      if (!targets.flows) throw new Error('Flow runtime is not available')
+      await targets.flows.removeLane(command.laneId)
+      return
     case 'submit':
       await controller.submit(command.text, command.queue ? { queue: true } : {})
       return

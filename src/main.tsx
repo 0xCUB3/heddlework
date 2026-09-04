@@ -15,6 +15,7 @@ import { flowRuntimePath } from './flows/runtime.ts'
 import { FileQueueStore, queueStorePath } from './workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from './workbench/thread-metadata-store.ts'
 import { createReceiptPlugin } from './receipts/plugin.ts'
+import { createCheckoutLanePlugin } from './workspace/checkout-lanes.ts'
 import { receiptStorePath } from './receipts/store.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './host/plugin.ts'
 import { startExternalPlugins } from './plugins/host.ts'
@@ -51,7 +52,8 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
   queueStore: new FileQueueStore(demoMode ? false : queueStorePath()),
   threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
 }))
-kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath() }))
+kernel.mount(createCheckoutLanePlugin())
+kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
 const hostOptions = hostOptionsFromEnvironment()
 kernel.mount(createWorkspaceHostPlugin({
   enabled: hostOptions.enabled,

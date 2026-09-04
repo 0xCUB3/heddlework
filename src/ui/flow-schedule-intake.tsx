@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import type { FlowRuntime } from '../flows/runtime.ts'
-import type { FlowMode, FlowScheduleTiming } from '../flows/types.ts'
+import type { FlowLaneKind, FlowMode, FlowScheduleTiming, FlowTaskSpec } from '../flows/types.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
@@ -15,6 +15,8 @@ export function FlowScheduleIntake({ state, runtime, onCreated, onCancel }: {
   const [title, setTitle] = useState('')
   const [mode, setMode] = useState<FlowMode>('sequential')
   const [prompts, setPrompts] = useState([''])
+  const [dependsOn, setDependsOn] = useState<string[][]>([[]])
+  const [lanes, setLanes] = useState<FlowLaneKind[]>(['shared'])
   const [model, setModel] = useState(currentModel)
   const [timingKind, setTimingKind] = useState<'once' | 'interval' | 'daily'>('once')
   const [timingValue, setTimingValue] = useState(defaultOnceValue())
@@ -28,10 +30,19 @@ export function FlowScheduleIntake({ state, runtime, onCreated, onCancel }: {
   const valid = prompts.some((prompt) => prompt.trim())
   const submit = () => {
     try {
+      const tasks: FlowTaskSpec[] | undefined = mode === 'sequential'
+        ? prompts.map((prompt, index) => ({
+          id: `t${index + 1}`,
+          prompt,
+          ...(index > 0 ? { dependsOn: dependsOn[index] && dependsOn[index]!.length > 0 ? dependsOn[index] : [`t${index}`] } : {}),
+          ...(lanes[index] === 'worktree' ? { lane: 'worktree' as const } : {}),
+        }))
+        : undefined
       const schedule = runtime.createSchedule({
         title,
         prompts,
         mode,
+        ...(tasks ? { tasks } : {}),
         ...(model ? { model } : {}),
         workspacePath: state.workspacePath,
         timing: parseTiming(timingKind, timingValue),
@@ -79,11 +90,25 @@ export function FlowScheduleIntake({ state, runtime, onCreated, onCancel }: {
                 style={{ width: '100%', minWidth: 0, padding: 10, color: colors.text, fontSize: 12, lineHeight: 18, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 9, backgroundColor: colors.input }}
                 onChange={(event) => setPrompts((current) => current.map((value, promptIndex) => promptIndex === index ? String(event.value ?? '') : value))}
               />
-              {mode === 'sequential' && prompts.length > 1 && <div style={{ alignSelf: 'flex-end' }}><Button label="Remove step" tone="quiet" compact onClick={() => setPrompts((current) => current.filter((_, promptIndex) => promptIndex !== index))} /></div>}
+              {mode === 'sequential' && (
+                <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                  {index > 0 && <ChipSelect backdropColor={colors.card} testId={`flow-depends-${index}`} label="After" value={(dependsOn[index] ?? [])[0] ?? `t${index}`} options={prompts.slice(0, index).map((_, earlier) => ({ value: `t${earlier + 1}`, label: `Step ${earlier + 1}` }))} width={160} triggerMaxWidth={140} onChange={(value) => setDependsOn((current) => current.map((deps, depIndex) => depIndex === index ? [value] : deps))} />}
+                  <ChipSelect backdropColor={colors.card} testId={`flow-lane-${index}`} label="Lane" value={lanes[index] ?? 'shared'} options={[
+                    { value: 'shared', label: 'Shared tree', detail: 'Runs in the primary working tree' },
+                    { value: 'worktree', label: 'Worktree', detail: 'Isolated git worktree on a heddlework/ branch' },
+                  ]} width={250} triggerMaxWidth={150} onChange={(value) => setLanes((current) => current.map((lane, laneIndex) => laneIndex === index ? value as FlowLaneKind : lane))} />
+                  <div style={{ flexGrow: 1 }} />
+                  {prompts.length > 1 && <Button label="Remove step" tone="quiet" compact onClick={() => {
+                    setPrompts((current) => current.filter((_, promptIndex) => promptIndex !== index))
+                    setDependsOn((current) => current.filter((_, depIndex) => depIndex !== index))
+                    setLanes((current) => current.filter((_, laneIndex) => laneIndex !== index))
+                  }} />}
+                </div>
+              )}
             </div>
           </Field>
         ))}
-        {mode === 'sequential' && <div style={{ alignSelf: 'flex-start' }}><Button testId="flow-add-step" label="Add step" icon="plus" compact onClick={() => setPrompts((current) => [...current, ''])} /></div>}
+        {mode === 'sequential' && <div style={{ alignSelf: 'flex-start' }}><Button testId="flow-add-step" label="Add step" icon="plus" compact onClick={() => { setPrompts((current) => [...current, '']); setDependsOn((current) => [...current, []]); setLanes((current) => [...current, 'shared']) }} /></div>}
       </div>
       <div testId="schedule-controls" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10 }}>
         <Field label="Cadence">

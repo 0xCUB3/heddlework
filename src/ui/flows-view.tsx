@@ -6,7 +6,7 @@ import { projectFlowActivity, type FlowActivityEntry } from '../flows/activity.t
 import { projectFlowFabricGraph, type FabricBranchStatus, type FlowFabricProjection } from '../flows/fabric-projection.ts'
 import { projectFlowRuns, terminalFlowTasks, type FlowRunProjection, type FlowTaskProjection, type FlowTaskStatus } from '../flows/projection.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
-import { flowProjectName, formatFlowDate, scheduleTimingLabel, type FlowSchedule } from '../flows/types.ts'
+import { flowProjectName, formatFlowDate, scheduleTimingLabel, type FlowRunRecord, type FlowSchedule, type FlowTaskRecord } from '../flows/types.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { queueSize } from '../workbench/queue.ts'
 import type { ThreadPriority, ToolRun, WorkbenchState } from '../workbench/state.ts'
@@ -104,7 +104,7 @@ export const FlowsView = memo(function FlowsView({ state, controller, runtime, t
       </div>
       <div style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
         {tab === 'work' && selectedTask && selectedRun ? (
-          <TaskPage task={selectedTask} run={selectedRun} controller={controller} priorityCounts={priorityCounts} labelOptions={labelOptions} onBack={() => setSelectedTaskId(undefined)} onOpenSession={onOpenSession} />
+          <TaskPage task={selectedTask} run={selectedRun} controller={controller} runtime={runtime} laneRecord={laneRecordFor(runtimeState.runs, selectedTask.id)} priorityCounts={priorityCounts} labelOptions={labelOptions} onBack={() => setSelectedTaskId(undefined)} onOpenSession={onOpenSession} />
         ) : tab === 'work' ? (
           <WorkPage runs={runs} state={state} controller={controller} priorityCounts={priorityCounts} onQueueInChat={() => { void openQueueComposer() }} onOpenTask={(task) => setSelectedTaskId(task.id)} />
         ) : tab === 'triage' ? (
@@ -279,10 +279,20 @@ function WorkGroupHeader({ group }: { group: FlowWorkGroup }) {
   )
 }
 
-function TaskPage({ task, run, controller, priorityCounts, labelOptions, onBack, onOpenSession }: {
+function laneRecordFor(runs: readonly FlowRunRecord[], taskId: string): FlowTaskRecord | undefined {
+  for (const run of runs) {
+    const record = run.tasks.find((task) => task.taskId === taskId)
+    if (record) return record
+  }
+  return undefined
+}
+
+function TaskPage({ task, run, controller, runtime, laneRecord, priorityCounts, labelOptions, onBack, onOpenSession }: {
   task: FlowTaskProjection
   run: FlowRunProjection
   controller: WorkbenchController
+  runtime: FlowRuntime
+  laneRecord: FlowTaskRecord | undefined
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   labelOptions: readonly string[]
   onBack(): void
@@ -333,8 +343,16 @@ function TaskPage({ task, run, controller, priorityCounts, labelOptions, onBack,
               <TaskProperty label="Labels"><FlowLabelPicker selected={task.labels} options={labelOptions} onChange={(labels) => controller.setThreadLabels(task.metadataKey, labels)} /></TaskProperty>
               <TaskProperty label="Model" value={task.model ?? 'Session default'} />
               {task.scheduleId && <TaskProperty label="Schedule" value={task.scheduleId} />}
+              {laneRecord && laneRecord.attempt > 1 && <TaskProperty label="Attempts" value={String(laneRecord.attempt)} />}
+              {laneRecord?.lanePath && <TaskProperty label="Lane" value={laneRecord.laneMerged ? `${laneRecord.laneBranch} (merged)` : laneRecord.laneRemoved ? `${laneRecord.laneBranch} (removed)` : laneRecord.lanePath} />}
               <TaskProperty label="Created" value={formatFlowDate(task.createdAt)} />
             </div>
+            {laneRecord?.laneId && !laneRecord.laneMerged && !laneRecord.laneRemoved && (
+              <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+                <Button testId="flow-merge-lane" label="Merge lane" icon="gitBranch" compact disabled={task.status !== 'succeeded'} onClick={() => { void runtime.mergeLane(laneRecord.laneId!) }} />
+                <Button testId="flow-remove-lane" label="Discard lane" tone="danger" compact onClick={() => { void runtime.removeLane(laneRecord.laneId!) }} />
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>DEPENDENCIES</text>
               {previous ? <DependencyRow relation="Blocked by" task={previous} onOpen={onBack} /> : <DependencyEmpty label="No prerequisite" />}

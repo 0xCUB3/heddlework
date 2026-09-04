@@ -94,7 +94,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
           return
         }
         try {
-          await applyWorkbenchCommand(options.controller, message.command)
+          await applyWorkbenchCommand(options.controller, message.command, { flows: options.flows })
           send(socket, { kind: 'result', id: message.id, ok: true })
         } catch (error) {
           send(socket, { kind: 'result', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) })

@@ -311,7 +311,7 @@ function queuedTaskTitle(item: QueuedInput, control: QueuedControl | undefined):
   return `/${control.name}${control.argument ? ` ${control.argument}` : ''}`
 }
 
-function sessionStatus(session: PiSessionSummary): FlowTaskStatus {
+export function sessionStatus(session: PiSessionSummary): FlowTaskStatus {
   if (!session.lastAssistantText && !session.lastAssistantStopReason) return 'starting'
   if (session.lastAssistantStopReason === 'toolUse' || session.lastAssistantStopReason === 'tool_use') return 'starting'
   return session.lastAssistantStopReason === 'error' || session.lastAssistantStopReason === 'aborted' || session.lastAssistantStopReason === 'length' ? 'failed' : 'succeeded'

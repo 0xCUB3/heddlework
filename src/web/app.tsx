@@ -71,7 +71,7 @@ export function WebApp() {
           {drawer === 'queue' ? <Queue state={state} /> : null}
           {drawer === 'diff' ? <Diff state={state} /> : null}
           {drawer === 'triage' ? <Triage state={state} /> : null}
-          {drawer === 'flows' ? <Flows state={state} /> : null}
+          {drawer === 'flows' ? <Flows state={state} runs={view.flows?.runs} /> : null}
           {drawer === 'settings' ? <Settings state={state} workspacePath={view.workspacePath} onDisconnect={() => workspaceClient().disconnect()} /> : null}
         </aside>
       ) : null}

@@ -3,12 +3,23 @@ export type FlowMode = 'sequential' | 'parallel'
 export type FlowLaunchSource = 'manual' | 'scheduled'
 export type FlowSource = FlowLaunchSource | 'observed' | 'queue'
 
+export type FlowLaneKind = 'shared' | 'worktree'
+
+export interface FlowTaskSpec {
+  id: string
+  prompt: string
+  dependsOn?: string[] | undefined
+  lane?: FlowLaneKind | undefined
+  retries?: number | undefined
+}
+
 export interface FlowTemplate {
   title: string
   prompts: string[]
   mode: FlowMode
   model?: string | undefined
   workspacePath: string
+  tasks?: FlowTaskSpec[] | undefined
 }
 
 export interface FlowLaunch extends FlowTemplate {
@@ -30,6 +41,12 @@ export interface FlowQueueMetadata {
   taskIndex: number
   taskCount: number
   phase: FlowQueuePhase
+  specId?: string | undefined
+  dependsOn?: string[] | undefined
+  lane?: FlowLaneKind | undefined
+  lanePath?: string | undefined
+  attempt?: number | undefined
+  retries?: number | undefined
 }
 
 export type FlowScheduleTiming =
@@ -52,9 +69,31 @@ export interface FlowScheduleInput extends FlowTemplate {
   enabled?: boolean | undefined
 }
 
+export type FlowTaskRecordStatus = 'pending' | 'dispatched' | 'completed' | 'failed' | 'blocked'
+
+export interface FlowTaskRecord {
+  specId: string
+  taskId: string
+  index: number
+  attempt: number
+  status: FlowTaskRecordStatus
+  laneId?: string | undefined
+  lanePath?: string | undefined
+  laneBranch?: string | undefined
+  laneMerged?: boolean | undefined
+  laneRemoved?: boolean | undefined
+}
+
+export interface FlowRunRecord {
+  launch: FlowLaunch
+  workspacePath: string
+  tasks: FlowTaskRecord[]
+}
+
 export interface FlowRuntimeSnapshot {
   schedules: readonly FlowSchedule[]
   pending: readonly FlowLaunch[]
+  runs: readonly FlowRunRecord[]
   lastError?: string | undefined
 }
 
@@ -75,16 +114,66 @@ export function createFlowId(prefix: 'HW' | 'SCH', now = Date.now()): string {
 }
 
 export function normalizeFlowTemplate(input: FlowTemplate): FlowTemplate {
-  const title = input.title.trim() || compactPromptTitle(input.prompts[0] ?? '') || 'Untitled flow'
-  const prompts = input.prompts.map((prompt) => prompt.trim()).filter(Boolean)
+  const explicitTasks = input.tasks?.map((task) => ({ ...task, prompt: task.prompt.trim() })).filter((task) => task.prompt) ?? []
+  const sourcePrompts = explicitTasks.length > 0 ? explicitTasks.map((task) => task.prompt) : input.prompts
+  const title = input.title.trim() || compactPromptTitle(sourcePrompts[0] ?? '') || 'Untitled flow'
+  const prompts = sourcePrompts.map((prompt) => prompt.trim()).filter(Boolean)
   if (prompts.length === 0) throw new Error('A flow needs at least one prompt')
+  const collapsed = input.mode === 'parallel' ? [prompts.join('\n\n')] : prompts
+  const tasks = explicitTasks.length > 0 && input.mode !== 'parallel'
+    ? explicitTasks.map((task) => normalizeTaskSpec(task))
+    : collapsed.map((prompt, index) => ({
+      id: `t${index + 1}`,
+      prompt,
+      ...(input.mode === 'sequential' && index > 0 ? { dependsOn: [`t${index}`] } : {}),
+    }))
+  validateFlowGraph(tasks)
   return {
     title,
-    prompts: input.mode === 'parallel' ? [prompts.join('\n\n')] : prompts,
+    prompts: tasks.map((task) => task.prompt),
     mode: input.mode,
     ...(input.model?.trim() ? { model: input.model.trim() } : {}),
     workspacePath: input.workspacePath,
+    tasks,
   }
+}
+
+function normalizeTaskSpec(task: FlowTaskSpec): FlowTaskSpec {
+  const dependsOn = [...new Set((task.dependsOn ?? []).map((id) => id.trim()).filter(Boolean))]
+  return {
+    id: task.id.trim(),
+    prompt: task.prompt,
+    ...(dependsOn.length > 0 ? { dependsOn } : {}),
+    ...(task.lane === 'worktree' ? { lane: 'worktree' as const } : {}),
+    ...(task.retries && task.retries > 0 ? { retries: Math.min(10, Math.floor(task.retries)) } : {}),
+  }
+}
+
+// Rejects unknown dependency ids and cycles so a launch can never wait on itself.
+export function validateFlowGraph(tasks: readonly FlowTaskSpec[]): void {
+  const ids = new Set<string>()
+  for (const task of tasks) {
+    if (!task.id) throw new Error('Every flow task needs an id')
+    if (ids.has(task.id)) throw new Error(`Duplicate flow task id: ${task.id}`)
+    ids.add(task.id)
+  }
+  for (const task of tasks) {
+    for (const dependency of task.dependsOn ?? []) {
+      if (dependency === task.id) throw new Error(`Task ${task.id} depends on itself`)
+      if (!ids.has(dependency)) throw new Error(`Task ${task.id} depends on unknown task ${dependency}`)
+    }
+  }
+  const state = new Map<string, 'visiting' | 'done'>()
+  const byId = new Map(tasks.map((task) => [task.id, task]))
+  const visit = (id: string, trail: string[]): void => {
+    const mark = state.get(id)
+    if (mark === 'done') return
+    if (mark === 'visiting') throw new Error(`Flow task dependencies form a cycle: ${[...trail, id].join(' -> ')}`)
+    state.set(id, 'visiting')
+    for (const dependency of byId.get(id)?.dependsOn ?? []) visit(dependency, [...trail, id])
+    state.set(id, 'done')
+  }
+  for (const task of tasks) visit(task.id, [])
 }
 
 export function formatFlowSessionName(launch: FlowLaunch, taskIndex: number): string {

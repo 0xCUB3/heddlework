@@ -37,7 +37,7 @@ Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/e
 | Fabric presentation | **Available** — rich nested `fabric_exec` activity and audit disclosures |
 | Flows projection | **Preview** — queue/session rails, per-task pages, Triage, sequential and Fabric-parallel intake |
 | Scheduled runtime | **Preview** — durable one-time, interval, and daily jobs that enqueue fresh Pi sessions |
-| Durable dependency graph | **In design** — checkout lanes and retries; mutation receipts ship in the Receipts surface |
+| Durable dependency graph | **Preview** — task dependencies gate dispatch, failed tasks retry, worktree lanes isolate work with an explicit merge step, and receipts record every turn |
 | Codex adapter | **Planned** |
 | Claude adapter | **Planned** |
 | Signed desktop distribution | **Planned** |
@@ -121,6 +121,10 @@ HEDDLEWORK_DEMO=1 bun run dev:web -- /path/to/repository
 `bun run build:web` writes the browser client to `dist/web`. The host serves those files when `HEDDLEWORK_WEB_ROOT` or `dist/web` is present, and the desktop binary looks next to itself for a `web/` folder. Open the printed connect link to use the same controller from a browser. The host also prints a QR code of the connect URL. Bind with `HEDDLEWORK_HOST_BIND=0.0.0.0` to reach it from a phone on the same network.
 
 The host prints a connect link carrying a bearer token. The token is stored with owner-only permissions under the Heddlework state directory (`host-token`) and the Settings surface has a Copy connect link action. The host binds to `127.0.0.1` unless `HEDDLEWORK_HOST_BIND` says otherwise. Every remote command goes through the same controller as the desktop UI, so Pi stays the single execution authority. The wire contract is documented in [Harness adapter protocol](docs/harness-adapter-protocol.md).
+
+### Dependency graphs and checkout lanes
+
+A sequential flow is a task graph. Each step can name the step it waits on, so independent steps run as soon as their prerequisites succeed and a failed prerequisite blocks its dependents instead of running them against a broken tree. Steps can set a retry count; a failed attempt is re-queued as a fresh session until retries run out. A step can also run in a worktree lane: Heddlework creates a git worktree on a `heddlework/<task-id>` branch under the state directory and instructs Pi to work only there. The primary tree is never reset or cleaned. When the task succeeds, the task page offers Merge lane (`git merge --no-ff`) and Discard lane; a conflict leaves the lane in place with git's message. Graph state is durable in `flows.json` and survives restarts.
 
 ### Receipts
 
@@ -247,7 +251,7 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [ ] Codex and Claude adapters
 - [x] Projection-first Flows with chat-authored sequential queues, participant-truth Fabric graphs, task pages, and Triage
 - [x] Durable one-time, interval, and daily scheduled Flow runtime
-- [ ] Durable dependency graphs and safe checkout lanes
+- [x] Durable dependency graphs and safe checkout lanes
 - [x] Mutation receipts and artifact review
 - [ ] Signed desktop installers and automatic updates
 - [x] Web workspace client
