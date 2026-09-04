@@ -14,6 +14,9 @@ import { createFlowRuntimePlugin, flowRuntimeToken } from './flows/plugin.ts'
 import { flowRuntimePath } from './flows/runtime.ts'
 import { FileQueueStore, queueStorePath } from './workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from './workbench/thread-metadata-store.ts'
+import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './host/plugin.ts'
+import { resolveStaticRoot } from './host/static-root.ts'
+import { hostTokenPath } from './host/token.ts'
 import {
   createAgentTransportPlugin,
   createSessionCatalogPlugin,
@@ -46,6 +49,15 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
   threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
 }))
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath() }))
+const hostOptions = hostOptionsFromEnvironment()
+kernel.mount(createWorkspaceHostPlugin({
+  enabled: hostOptions.enabled,
+  workspacePath,
+  port: hostOptions.port,
+  hostname: hostOptions.hostname,
+  tokenPath: demoMode ? false : hostTokenPath(),
+  staticRoot: resolveStaticRoot(),
+}))
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
 kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
@@ -60,6 +72,7 @@ kernel.mount(createAgentTransportPlugin({
 const controller = kernel.get(workbenchControllerToken)
 const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
+const host = kernel.get(workspaceHostToken)
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
   if (isGpuixWindowCloseRace(error)) process.exit(0)
@@ -86,7 +99,7 @@ const shutdown = () => {
 }
 
 render(
-  <WorkbenchApp controller={controller} flows={flows} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
+  <WorkbenchApp controller={controller} flows={flows} host={host} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   createWindowOptions(process.platform, debugOverlay()),
 )
 
