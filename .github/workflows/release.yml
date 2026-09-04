@@ -34,11 +34,17 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      # GPUIX-backed UI tests need a real display and Windows path tests are unsettled in CI; check.yml stays the gate for those.
-      - name: Run non-UI tests
+      - name: Widen the virtual display for GPUIX test windows
+        if: runner.os == 'macOS'
+        run: ./scripts/ci-display.sh
+      - name: Run checks
+        if: runner.os != 'Windows'
+        run: bun run check
+      # Windows path handling in a few suites is unsettled in CI; keep the release gate to typecheck plus the non-path suites there.
+      - name: Run checks (Windows)
+        if: runner.os == 'Windows'
         shell: bash
-        run: bun test $(ls tests/*.test.ts | grep -vE 'rpc-transport|session-switch|session-history-controller|theme-manager|extension-ui')
+        run: bun run typecheck && bun test $(ls tests/*.test.ts | grep -vE 'rpc-transport|session-switch|session-history-controller|theme-manager|extension-ui')
       - run: bun run build
         env:
           COMPILE_TARGET: ${{ matrix.target }}

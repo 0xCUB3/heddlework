@@ -22,5 +22,7 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
+      # Hosted macOS runners boot a 1024x768 virtual display, which clamps GPUIX test windows to tablet width.
+      - run: ./scripts/ci-display.sh
       - run: bun run check
       - run: bun run build
