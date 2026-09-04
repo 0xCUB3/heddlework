@@ -1,6 +1,7 @@
 import React from 'react'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
 import { hostConnectUrl, lanConnectUrl, type WorkspaceHost } from '../host/server.ts'
+import type { PluginHost } from '../plugins/host.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
@@ -14,6 +15,7 @@ export function SettingsView({
   state,
   controller,
   host,
+  pluginHost,
   theme,
   onThemeModeChange,
   onClose,
@@ -21,6 +23,7 @@ export function SettingsView({
   state: WorkbenchState
   controller: WorkbenchController
   host?: WorkspaceHost | undefined
+  pluginHost?: PluginHost | undefined
   theme: ThemeSnapshot
   onThemeModeChange(mode: ThemeMode): void
   onClose(): void
@@ -68,10 +71,28 @@ export function SettingsView({
               </SettingsActions>
             </SettingsSection>
           ) : null}
+          {pluginHost ? <PluginsSection pluginHost={pluginHost} /> : null}
           <div testId="settings-bottom-spacer" style={{ height: 52, flexShrink: 0 }} />
         </div>
       </div>
     </div>
+  )
+}
+
+function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
+  const report = React.useSyncExternalStore(pluginHost.subscribe, pluginHost.getReport)
+  return (
+    <SettingsSection title="Plugins" description="Third-party workbench plugins loaded from the state directory or this workspace.">
+      <SettingsRow testId="settings-plugins-empty" icon="panel" label="Workspace" value={report.workspaceTrusted ? 'Trusted' : 'Not trusted'} />
+      {report.entries.length === 0 ? (
+        <SettingsRow testId="settings-plugins-none" icon="circle" label="External plugins" value="No external plugins" />
+      ) : report.entries.map((entry) => (
+        <SettingsRow key={entry.id} icon="circle" label={entry.name ?? entry.id} value={`${entry.version ?? ''} ${entry.status}${entry.error ? ` — ${entry.error}` : ''}`.trim()} />
+      ))}
+      <SettingsActions>
+        <Button label={report.workspaceTrusted ? 'Untrust workspace' : 'Trust workspace'} compact onClick={() => void pluginHost.setWorkspaceTrusted(!report.workspaceTrusted)} />
+      </SettingsActions>
+    </SettingsSection>
   )
 }
 

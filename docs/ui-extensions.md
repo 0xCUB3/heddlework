@@ -72,6 +72,57 @@ The kernel waits to activate a plugin until its required services exist, suspend
 
 Session discovery and workspace diffs are independent services rather than concrete controller imports. These seams are intentionally enough to guide new work; Heddlework does not yet need the full profile, bundle, isolation, or hundreds-of-slots surface of a mature Cordis application.
 
+## External plugins
+
+Heddlework loads third-party plugins at startup from two roots:
+
+- `<state dir>/plugins/*/heddlework-plugin.json`
+- `<workspace>/.heddlework/plugins/*/heddlework-plugin.json`
+
+Workspace plugins load only when the workspace is trusted. Trust is stored in `<state dir>/trusted-workspaces.json`. `HEDDLEWORK_TRUST_WORKSPACE=1` overrides that check for one process.
+
+Manifest schema:
+
+```json
+{
+  "id": "acme.review",
+  "name": "Acme Review",
+  "version": "1.0.0",
+  "entry": "index.ts",
+  "heddlework": { "api": "1" }
+}
+```
+
+`heddlework.api` is compatible when its major version matches `HEDDLEWORK_PLUGIN_API_VERSION` (`1`). `^1` is accepted. Incompatible or throwing plugins are recorded in a load report and skipped; the host keeps running.
+
+The entry default-export is a `WorkbenchPlugin` or a factory `(api) => WorkbenchPlugin`. The factory receives the `src/plugin-api.ts` namespace.
+
+Minimal surface plugin:
+
+```ts
+export default function examplePlugin(api: typeof import('../../src/plugin-api.ts')) {
+  return {
+    id: 'example.hello',
+    requires: [api.workbenchUiRegistryToken],
+    activate(ctx) {
+      ctx.effect(() => ctx.get(api.workbenchUiRegistryToken).register({
+        id: 'example.hello',
+        surfaces: [{
+          id: 'example.hello.panel',
+          title: 'Hello',
+          description: 'Example external surface.',
+          icon: 'panel',
+          component: () => null,
+        }],
+      }))
+    },
+  }
+}
+```
+
+Settings shows the load report and a Trust workspace toggle. Permissions, additional UI seats, and a public package SDK remain future work.
+
 ## Deferred
 
-External package discovery, compatibility metadata, permissions, additional UI seats, and a public package SDK remain future work. Until then, plugins are mounted in the application composition root and use source-level TypeScript contracts.
+Permissions, additional UI seats, and a public package SDK remain future work.
+

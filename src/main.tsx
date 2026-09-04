@@ -15,6 +15,7 @@ import { flowRuntimePath } from './flows/runtime.ts'
 import { FileQueueStore, queueStorePath } from './workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from './workbench/thread-metadata-store.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './host/plugin.ts'
+import { startExternalPlugins } from './plugins/host.ts'
 import { resolveStaticRoot } from './host/static-root.ts'
 import { hostTokenPath } from './host/token.ts'
 import {
@@ -68,6 +69,7 @@ kernel.mount(createAgentTransportPlugin({
   ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
   piArgs: piArgumentsFromEnvironment(),
 }))
+const pluginHost = await startExternalPlugins(kernel, workspacePath, { trustPath: demoMode ? false : undefined })
 
 const controller = kernel.get(workbenchControllerToken)
 const flows = kernel.get(flowRuntimeToken)
@@ -99,7 +101,7 @@ const shutdown = () => {
 }
 
 render(
-  <WorkbenchApp controller={controller} flows={flows} host={host} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
+  <WorkbenchApp controller={controller} flows={flows} host={host} pluginHost={pluginHost} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   createWindowOptions(process.platform, debugOverlay()),
 )
 

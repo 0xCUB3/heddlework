@@ -198,6 +198,7 @@ HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
 | `HEDDLEWORK_HOST_PORT` | Host port (default `4817`) |
 | `HEDDLEWORK_HOST_BIND` | Host bind address (default `127.0.0.1`; use `0.0.0.0` to reach it from a phone on the same network) |
 | `HEDDLEWORK_WEB_ROOT` | Directory of a built web client to serve from the host |
+| `HEDDLEWORK_TRUST_WORKSPACE=1` | Load workspace-local plugins from `.heddlework/plugins` without the Settings trust toggle |
 
 ## Architecture
 
@@ -237,7 +238,7 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [x] Virtualized transcript and large-diff paths
 - [x] Diff, settings, notification, and surface shells
 - [x] Cordis-style service/event lifetimes and in-process UI surface manifests
-- [ ] External plugin discovery and compatibility metadata
+- [x] External plugin discovery and compatibility metadata
 - [x] Stable harness adapter protocol
 - [ ] Codex and Claude adapters
 - [x] Projection-first Flows with chat-authored sequential queues, participant-truth Fabric graphs, task pages, and Triage

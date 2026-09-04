@@ -48,3 +48,8 @@ export type {
   WorkbenchUiExtension,
   WorkbenchUiSnapshot,
 } from './ui/extensions.ts'
+export { HEDDLEWORK_PLUGIN_API_VERSION, isCompatible, parsePluginManifest } from './plugins/manifest.ts'
+export type { PluginManifest } from './plugins/manifest.ts'
+export type { PluginLoadEntry, PluginLoadReport, PluginLoadStatus } from './plugins/loader.ts'
+export { pluginReportToken } from './plugins/host.ts'
+export type { PluginHost } from './plugins/host.ts'

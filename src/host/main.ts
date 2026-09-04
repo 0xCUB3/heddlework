@@ -18,6 +18,7 @@ import { hostConnectUrl, lanConnectUrl } from './server.ts'
 import { qrAscii } from '../web/qr.ts'
 import { resolveStaticRoot } from './static-root.ts'
 import { hostTokenPath } from './token.ts'
+import { startExternalPlugins } from '../plugins/host.ts'
 
 // Headless entry: the same kernel as the desktop shell without GPUIX, serving the workspace over the host protocol.
 const workspacePath = resolveWorkspacePath()
@@ -47,6 +48,7 @@ kernel.mount(createAgentTransportPlugin({
   ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
   piArgs: piArgumentsFromEnvironment(),
 }))
+await startExternalPlugins(kernel, workspacePath, { trustPath: demoMode ? false : undefined })
 
 const controller = kernel.get(workbenchControllerToken)
 const host = kernel.get(workspaceHostToken)
