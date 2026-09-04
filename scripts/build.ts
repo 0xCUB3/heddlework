@@ -5,8 +5,11 @@ const root = resolve(import.meta.dir, '..')
 const dist = resolve(root, 'dist')
 const output = resolve(dist, process.platform === 'win32' ? 'heddlework.exe' : 'heddlework')
 
-rmSync(dist, { recursive: true, force: true })
+const web = Bun.spawnSync([process.execPath, resolve(root, 'scripts/build-web.ts')], { cwd: root, stdout: 'inherit', stderr: 'inherit' })
+if (web.exitCode !== 0) throw new Error('Failed to build the web workspace client')
+
 mkdirSync(dist, { recursive: true })
+rmSync(output, { force: true })
 
 const compile: { outfile: string; target?: Bun.Build.CompileTarget } = { outfile: output }
 if (process.env.COMPILE_TARGET) compile.target = process.env.COMPILE_TARGET as Bun.Build.CompileTarget

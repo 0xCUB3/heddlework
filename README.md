@@ -41,7 +41,7 @@ Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/e
 | Codex adapter | **Planned** |
 | Claude adapter | **Planned** |
 | Signed desktop distribution | **Planned** |
-| Web and mobile companions | **Longer term** |
+| Web and mobile companions | **Preview** — browser client over the workspace host; mobile PWA still planned |
 
 ## Why Heddlework?
 
@@ -115,7 +115,10 @@ The desktop process can serve the same workspace to browser and phone companions
 
 ```bash
 bun run host -- /path/to/repository
+HEDDLEWORK_DEMO=1 bun run dev:web -- /path/to/repository
 ```
+
+`bun run build:web` writes the browser client to `dist/web`. The host serves those files when `HEDDLEWORK_WEB_ROOT` or `dist/web` is present, and the desktop binary looks next to itself for a `web/` folder. Open the printed connect link to use the same controller from a browser.
 
 The host prints a connect link carrying a bearer token. The token is stored with owner-only permissions under the Heddlework state directory (`host-token`) and the Settings surface has a Copy connect link action. The host binds to `127.0.0.1` unless `HEDDLEWORK_HOST_BIND` says otherwise. Every remote command goes through the same controller as the desktop UI, so Pi stays the single execution authority. The wire contract is documented in [Harness adapter protocol](docs/harness-adapter-protocol.md).
 
@@ -152,10 +155,13 @@ These channels describe the intended distribution path; they are **not available
 | Channel | Intended path |
 | --- | --- |
 | Desktop | Signed and notarized macOS, Windows, and Linux downloads from GitHub Releases, followed by native package-manager channels |
-| Web | An installable browser/PWA client connected to a local or remote Heddlework host |
-| Mobile | Companion clients for steering, approvals, notifications, task triage, and artifact review |
+| Mobile | Companion PWA and later native wrappers for steering, approvals, notifications, task triage, and artifact review |
 
-The desktop application remains the primary environment for local repositories, terminals, worktrees, and native agent processes. Web and mobile are planned as additional surfaces over the same workspace model, not separate products.
+### Web workspace client
+
+The browser client in `src/web/` is a second renderer over the same host protocol. After `bun run build:web` or `bun run dev:web`, open the host connect link to use sessions, the transcript, queue, flows, diffs, and settings without GPUIX. It is a preview, not a signed product channel.
+
+The desktop application remains the primary environment for local repositories, terminals, worktrees, and native agent processes. Web and mobile stay additional surfaces over the same workspace model, not separate products.
 
 ## Current workflow
 
@@ -235,7 +241,7 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [ ] Durable dependency graphs and safe checkout lanes
 - [ ] Mutation receipts and artifact review
 - [ ] Signed desktop installers and automatic updates
-- [ ] Web workspace client
+- [x] Web workspace client
 - [ ] Mobile companion clients
 
 ## Development

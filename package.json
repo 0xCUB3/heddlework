@@ -29,19 +29,24 @@
     "demo": "HEDDLEWORK_DEMO=1 bun --watch src/main.tsx",
     "host": "bun src/host/main.ts",
     "typecheck": "tsc --noEmit",
+    "typecheck:web": "tsc --noEmit -p src/web",
     "test": "bun test",
-    "check": "bun run typecheck && bun run test",
+    "check": "bun run typecheck && bun run typecheck:web && bun run test",
+    "build:web": "bun scripts/build-web.ts",
+    "dev:web": "bun scripts/dev-web.ts",
     "build": "bun scripts/build.ts"
   },
   "dependencies": {
     "@gpuix/react": "0.6.0",
     "@mathjax/src": "4.1.3",
-    "react": "19.2.8"
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",
     "@types/node": "26.4.0",
     "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
     "typescript": "7.0.2"
   },
   "workspaces": [
