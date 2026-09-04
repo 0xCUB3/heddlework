@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mayAutomateBrowser } from '../src/browser/adapter.ts'
@@ -56,7 +56,9 @@ describe('browser sessions', () => {
       ],
     })
 
+    const generation = service.getSnapshot().tabs[0]!.generation
     service.applyNativeState(first, {
+      generation,
       url: 'http://localhost:3000/dashboard',
       title: 'Dashboard',
       loading: false,
@@ -66,8 +68,8 @@ describe('browser sessions', () => {
     })
     expect(service.getSnapshot().tabs[0]).toMatchObject({ title: 'Dashboard', status: 'ready', canGoBack: true })
 
-    service.applyNativeState(first, { loading: false, error: 'Navigation failed' })
-    service.applyNativeState(first, { title: 'Failed dashboard', loading: false })
+    service.applyNativeState(first, { generation, loading: false, error: 'Navigation failed' })
+    service.applyNativeState(first, { generation, title: 'Failed dashboard', loading: false })
     expect(service.getSnapshot().tabs[0]).toMatchObject({ title: 'Failed dashboard', status: 'error', error: 'Navigation failed' })
 
     service.command(first, 'back')
@@ -76,7 +78,7 @@ describe('browser sessions', () => {
       { kind: 'focus', serial: 4 },
     ])
     expect(service.getSnapshot().tabs[0]?.error).toBeUndefined()
-    service.applyNativeState(first, { commandSerial: 4 })
+    service.applyNativeState(first, { generation, commandSerial: 4 })
     service.command(first, 'clearData')
     service.command(first, 'reload')
     expect(service.getSnapshot().tabs[0]?.commands).toEqual([
@@ -84,12 +86,51 @@ describe('browser sessions', () => {
       { kind: 'reload', serial: 6 },
       { kind: 'focus', serial: 7 },
     ])
-    service.applyNativeState(first, { commandSerial: 6 })
+    service.applyNativeState(first, { generation, commandSerial: 6 })
     expect(service.getSnapshot().tabs[0]?.commands).toEqual([{ kind: 'focus', serial: 7 }])
-    const popup = service.openRequested(first, 'https://example.com/login')
+    const popup = service.openRequested(first, generation, 'https://example.com/login')
     expect(popup).toBeDefined()
     expect(service.getSnapshot()).toMatchObject({ activeTabId: popup })
     expect(service.getSnapshot().tabs.find((tab) => tab.id === popup)).toMatchObject({ profileId: 'workspace' })
+  })
+
+  it('rejects native events from an earlier profile generation', () => {
+    const { service } = serviceHarness()
+    const tabId = service.createTab({ profileId: 'workspace', address: 'https://example.com' })
+    const oldGeneration = service.getSnapshot().tabs[0]!.generation
+
+    service.switchTabProfile(tabId, 'personal')
+    const switched = service.getSnapshot().tabs[0]!
+    expect(switched).toMatchObject({ profileId: 'personal', generation: oldGeneration + 1 })
+
+    service.applyNativeState(tabId, { generation: oldGeneration, title: 'stale', loading: false, commandSerial: 99 })
+    expect(service.openRequested(tabId, oldGeneration, 'https://stale.example')).toBeUndefined()
+    expect(service.getSnapshot().tabs).toHaveLength(1)
+    expect(service.getSnapshot().tabs[0]).toMatchObject({ title: 'Loading…', status: 'loading' })
+
+    service.applyNativeState(tabId, { generation: switched.generation, title: 'current', loading: false })
+    expect(service.getSnapshot().tabs[0]).toMatchObject({ title: 'current', status: 'ready' })
+    service.dispose()
+  })
+
+  it('does not reuse generations when the service is recreated during hot reload', () => {
+    const root = mkdtempSync(join(tmpdir(), 'heddlework-browser-reload-'))
+    directories.push(root)
+    const statePath = join(root, 'browser.json')
+    const dataRoot = join(root, 'data')
+    const first = new BrowserSessionService({ statePath, dataRoot })
+    const tabId = first.createTab({ address: 'https://example.com' })
+    const oldGeneration = first.getSnapshot().tabs[0]!.generation
+    first.dispose()
+    expect(first.openRequested(tabId, oldGeneration, 'https://stale.example')).toBeUndefined()
+    expect(() => first.applyNativeState(tabId, { generation: oldGeneration, title: 'stale' })).not.toThrow()
+
+    const replacement = new BrowserSessionService({ statePath, dataRoot })
+    const restored = replacement.getSnapshot().tabs.find((tab) => tab.id === tabId)!
+    expect(restored.generation).toBeGreaterThan(oldGeneration)
+    replacement.applyNativeState(tabId, { generation: oldGeneration, title: 'stale' })
+    expect(replacement.getSnapshot().tabs.find((tab) => tab.id === tabId)?.title).not.toBe('stale')
+    replacement.dispose()
   })
 
   it('skips malformed persisted records instead of crashing startup', () => {
@@ -110,13 +151,74 @@ describe('browser sessions', () => {
     service.dispose()
   })
 
+  it('serializes real processes that address one profile root through symlink aliases', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'heddlework-browser-alias-lock-'))
+    directories.push(root)
+    const dataRoot = join(root, 'data')
+    const aliasRoot = join(root, 'data-alias')
+    const releasePath = join(root, 'release')
+    mkdirSync(dataRoot)
+    symlinkSync(dataRoot, aliasRoot)
+    const persistenceModule = new URL('../src/browser/persistence.ts', import.meta.url).href
+    const ownerSource = `
+      import { existsSync } from 'node:fs'
+      import { claimBrowserDataRoot } from ${JSON.stringify(persistenceModule)}
+      const claim = claimBrowserDataRoot(${JSON.stringify(dataRoot)})
+      console.log(JSON.stringify(claim))
+      while (!existsSync(${JSON.stringify(releasePath)})) await Bun.sleep(10)
+    `
+    const owner = Bun.spawn([process.execPath, '-e', ownerSource], { stdout: 'pipe', stderr: 'pipe' })
+    const reader = owner.stdout.getReader()
+    const announcement = await reader.read()
+    expect(JSON.parse(new TextDecoder().decode(announcement.value))).toMatchObject({ acquired: true })
+
+    const contenderSource = `
+      import { claimBrowserDataRoot } from ${JSON.stringify(persistenceModule)}
+      console.log(JSON.stringify(claimBrowserDataRoot(${JSON.stringify(aliasRoot)})))
+    `
+    const contender = Bun.spawn([process.execPath, '-e', contenderSource], { stdout: 'pipe', stderr: 'pipe' })
+    const contenderOutput = await new Response(contender.stdout).text()
+    expect(await contender.exited).toBe(0)
+    expect(JSON.parse(contenderOutput)).toMatchObject({ acquired: false })
+
+    writeFileSync(releasePath, '')
+    reader.releaseLock()
+    expect(await owner.exited).toBe(0)
+  })
+
+  it('fails closed without reading or writing when another process owns the profile root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'heddlework-browser-locked-'))
+    directories.push(root)
+    const statePath = join(root, 'browser.json')
+    const dataRoot = join(root, 'data')
+    const persisted = JSON.stringify({
+      version: 1,
+      profiles: [{ id: 'profile-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Must not load', kind: 'workspace', persistent: true, agentAccess: 'allowed', builtIn: false }],
+      defaultProfileId: 'workspace',
+      tabs: [],
+    })
+    writeFileSync(statePath, persisted)
+    writeFileSync(`${dataRoot}.lock`, '1\n')
+
+    const service = new BrowserSessionService({ statePath, dataRoot })
+    service.setEngine({ kind: 'cef', available: true, message: 'Chromium', profileIsolation: 'full' })
+    expect(service.canInitializeNativeBrowser()).toBe(false)
+    expect(service.runtimeProfile('workspace')).toBeUndefined()
+    expect(service.getSnapshot().engine).toMatchObject({ kind: 'unavailable', available: false })
+    expect(service.getSnapshot().profiles.some((profile) => profile.name === 'Must not load')).toBe(false)
+    service.createTab({ address: 'https://example.com' })
+    service.dispose()
+    expect(readFileSync(statePath, 'utf8')).toBe(persisted)
+    expect(existsSync(`${statePath}.lock`)).toBe(false)
+  })
+
   it('isolates profile paths and never restores private tabs', () => {
     const { statePath, dataRoot, service } = serviceHarness()
     const workspaceTab = service.createTab({ profileId: 'workspace', address: 'https://example.com' })
     const privateTab = service.createTab({ profileId: 'private', address: 'https://secret.example' })
     expect(service.runtimeProfile('workspace')).toEqual({
       id: 'workspace',
-      path: join(dataRoot, 'profiles', 'workspace'),
+      path: join(realpathSync(dataRoot), 'profiles', 'workspace'),
       incognito: false,
       agentAccess: 'allowed',
     })

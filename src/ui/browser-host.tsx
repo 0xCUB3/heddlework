@@ -15,6 +15,11 @@ interface BrowserEvent {
   value?: string | undefined
 }
 
+interface BrowserValueEvent {
+  generation: number
+  value: string
+}
+
 export function BrowserNativeHost({ service, suspended = false }: { service: BrowserSessionService; suspended?: boolean }) {
   const renderer = useGpuixRequired() as BrowserRenderer
   const snapshot = useBrowserSnapshot(service)
@@ -35,9 +40,10 @@ export function BrowserNativeHost({ service, suspended = false }: { service: Bro
         const bounds = shown ? placement.bounds : { x: 0, y: 0, width: 1, height: 1 }
         return (
           <browser
-            key={tab.id}
+            key={`${tab.id}:${tab.generation}`}
             testId={`native-browser-${tab.id}`}
             source={tab.url}
+            generation={tab.generation}
             profileId={profile.id}
             profilePath={profile.path}
             incognito={profile.incognito}
@@ -56,12 +62,12 @@ export function BrowserNativeHost({ service, suspended = false }: { service: Bro
               if (state) service.applyNativeState(tab.id, state)
             }}
             onBrowserOpen={(event: BrowserEvent) => {
-              const value = String(event.value ?? '')
-              if (value) service.openRequested(tab.id, value)
+              const opened = parseBrowserValue(event.value)
+              if (opened) service.openRequested(tab.id, opened.generation, opened.value)
             }}
             onBrowserError={(event: BrowserEvent) => {
-              const error = String(event.value ?? 'Native browser failed')
-              service.applyNativeState(tab.id, { loading: false, error })
+              const failure = parseBrowserValue(event.value)
+              if (failure) service.applyNativeState(tab.id, { generation: failure.generation, loading: false, error: failure.value })
             }}
           />
         )
@@ -104,8 +110,24 @@ function parseBrowserState(value: string | undefined): BrowserNativeState | unde
   if (!value) return undefined
   try {
     const parsed = JSON.parse(value) as BrowserNativeState
-    return parsed && typeof parsed === 'object' ? parsed : undefined
+    return parsed && typeof parsed === 'object' && validGeneration(parsed.generation) ? parsed : undefined
   } catch {
     return undefined
   }
+}
+
+function parseBrowserValue(value: string | undefined): BrowserValueEvent | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(value) as BrowserValueEvent
+    return parsed && typeof parsed === 'object' && validGeneration(parsed.generation) && typeof parsed.value === 'string'
+      ? parsed
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function validGeneration(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0
 }

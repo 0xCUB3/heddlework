@@ -24,6 +24,7 @@ export interface BrowserTab {
   createdAt: number
   lastActiveAt: number
   materialized: boolean
+  generation: number
   commandSerial: number
   commands: BrowserCommand[]
 }
@@ -47,6 +48,7 @@ export interface BrowserCommand {
 }
 
 export interface BrowserNativeState {
+  generation: number
   url?: string | undefined
   title?: string | undefined
   loading?: boolean | undefined

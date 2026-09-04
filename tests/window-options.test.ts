@@ -9,10 +9,18 @@ describe('createWindowOptions', () => {
       height: 820,
       debugFrameOverlay: 'minimal',
       browserRootCachePath: '/profiles',
+      nativeBrowserEnabled: true,
       titlebarTransparent: true,
       windowBackground: 'blurred',
       trafficLightX: 16,
       trafficLightY: 17,
+    })
+  })
+
+  test('can disable native browser initialization before the renderer starts', () => {
+    expect(createWindowOptions('darwin', 'hidden', '/profiles', false)).toMatchObject({
+      browserRootCachePath: '/profiles',
+      nativeBrowserEnabled: false,
     })
   })
 
@@ -25,6 +33,7 @@ describe('createWindowOptions', () => {
         height: 820,
         debugFrameOverlay: 'hidden',
         browserRootCachePath: '/profiles',
+        nativeBrowserEnabled: true,
         windowBackground: 'opaque',
       })
       expect('titlebarTransparent' in options).toBeFalse()

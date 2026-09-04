@@ -8,8 +8,8 @@ import type {
 
 export interface BrowserSurfaceEvents {
   stateChanged(state: BrowserNativeState): void
-  openRequested(url: string): void
-  failed(message: string): void
+  openRequested(generation: number, url: string): void
+  failed(generation: number, message: string): void
 }
 
 export interface BrowserSurfaceSession {

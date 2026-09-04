@@ -90,6 +90,7 @@ describeNative('browser panel', () => {
         url: 'http://localhost:4173/app',
         materialized: true,
         status: 'loading',
+        commandSerial: 2,
       })
       expect(await automation.getByTestId('browser-unavailable').count()).toBe(1)
       expect(root.renderer.findByType('browser')).toHaveLength(0)
@@ -97,7 +98,8 @@ describeNative('browser panel', () => {
       expect(browser.getSnapshot().placement?.visible).toBe(true)
       const activeTabId = browser.getSnapshot().activeTabId
       expect(activeTabId).toBeDefined()
-      browser.applyNativeState(activeTabId!, { loading: false, error: 'Navigation failed' })
+      const activeGeneration = browser.getSnapshot().tabs.find((tab) => tab.id === activeTabId)!.generation
+      browser.applyNativeState(activeTabId!, { generation: activeGeneration, loading: false, error: 'Navigation failed' })
       await Bun.sleep(40)
       root.renderer.flush()
       expect(await automation.getByTestId('browser-error').count()).toBe(1)

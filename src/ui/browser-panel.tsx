@@ -131,7 +131,6 @@ function BrowserToolbar({
           onBlur={() => setEditing(false)}
           onChange={(event) => setDraft(String(event.value ?? ''))}
           onSubmit={submit}
-          onKeyDown={(event) => { if (event.key === 'enter') submit() }}
         />
       </div>
       <div testId="browser-profile-button" tabIndex={0} style={{ height: 28, maxWidth: 100, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: 7, paddingRight: 7, borderRadius: 7, borderWidth: 1, borderColor: profileMenuOpen ? colors.primary : colors.borderStrong, backgroundColor: profileMenuOpen ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onToggleProfileMenu} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onToggleProfileMenu() }}>

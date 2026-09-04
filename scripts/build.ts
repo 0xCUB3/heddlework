@@ -1,6 +1,8 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, relative, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { dirname, join, relative, resolve } from 'node:path'
+import { readCefArtifactInventory, verifyCefArtifactInventory } from './cef-artifacts.ts'
 
 const root = resolve(import.meta.dir, '..')
 const appVersion = (JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0'
@@ -9,42 +11,85 @@ const nativeDirectory = resolveNativeDirectory()
 const withoutChromium = process.env.HEDDLEWORK_WITHOUT_CEF === '1'
 const cefDirectory = nativeDirectory && !withoutChromium ? resolve(nativeDirectory, 'cef') : undefined
 const bundleChromium = process.platform === 'darwin' && cefDirectory != null && existsSync(cefDirectory)
+let cefStagingRoot: string | undefined
+let cefPackagingDirectory: string | undefined
+let nativePackagingDirectory: string | undefined
 if (process.platform === 'darwin' && !withoutChromium) {
   if (!nativeDirectory || !cefDirectory || !bundleChromium) {
     throw new Error('A macOS production build requires a CEF-enabled @gpuix/native package; set HEDDLEWORK_WITHOUT_CEF=1 only for an explicit browser-free build')
   }
-  validateCefArtifacts(nativeDirectory, cefDirectory)
+  const staged = stageCefArtifacts(nativeDirectory, cefDirectory)
+  cefStagingRoot = staged.root
+  cefPackagingDirectory = staged.cef
+  nativePackagingDirectory = staged.native
 }
 const appBundle = resolve(dist, 'Heddlework.app')
 const output = bundleChromium
   ? resolve(appBundle, 'Contents', 'MacOS', 'Heddlework')
   : resolve(dist, process.platform === 'win32' ? 'heddlework.exe' : 'heddlework')
 
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(dirname(output), { recursive: true })
+try {
+  rmSync(dist, { recursive: true, force: true })
+  mkdirSync(dirname(output), { recursive: true })
 
-const compile: { outfile: string; target?: Bun.Build.CompileTarget } = { outfile: output }
-if (process.env.COMPILE_TARGET) compile.target = process.env.COMPILE_TARGET as Bun.Build.CompileTarget
+  const compile: { outfile: string; target?: Bun.Build.CompileTarget } = { outfile: output }
+  if (process.env.COMPILE_TARGET) compile.target = process.env.COMPILE_TARGET as Bun.Build.CompileTarget
 
-const result = await Bun.build({
-  entrypoints: [resolve(root, 'src/main.tsx')],
-  compile,
-  minify: true,
-  sourcemap: 'external',
-})
+  const result = await Bun.build({
+    entrypoints: [resolve(root, 'src/main.tsx')],
+    compile,
+    minify: true,
+    sourcemap: 'external',
+    ...(nativePackagingDirectory ? { plugins: [verifiedNativePlugin(nativePackagingDirectory)] } : {}),
+  })
 
-if (!result.success) {
-  for (const log of result.logs) console.error(log)
-  throw new Error('Failed to compile Heddlework')
+  if (!result.success) {
+    for (const log of result.logs) console.error(log)
+    throw new Error('Failed to compile Heddlework')
+  }
+
+  if (process.platform !== 'win32') chmodSync(output, 0o755)
+  if (bundleChromium) {
+    const sourceMap = resolve(dirname(output), 'main.js.map')
+    if (existsSync(sourceMap)) renameSync(sourceMap, resolve(dist, 'Heddlework.js.map'))
+  }
+  if (bundleChromium && cefPackagingDirectory && nativePackagingDirectory) {
+    validateCefArtifacts(nativePackagingDirectory, cefPackagingDirectory)
+    packageMacApp(appBundle, cefPackagingDirectory, output)
+  }
+  console.log(`Built ${bundleChromium ? appBundle : output}`)
+} finally {
+  if (cefStagingRoot) rmSync(cefStagingRoot, { recursive: true, force: true })
 }
 
-if (process.platform !== 'win32') chmodSync(output, 0o755)
-if (bundleChromium) {
-  const sourceMap = resolve(dirname(output), 'main.js.map')
-  if (existsSync(sourceMap)) renameSync(sourceMap, resolve(dist, 'Heddlework.js.map'))
+function stageCefArtifacts(nativeRoot: string, cefSource: string): { root: string; cef: string; native: string } {
+  const stagingRoot = mkdtempSync(join(tmpdir(), 'heddlework-cef-stage-'))
+  const stagedNative = join(stagingRoot, 'native')
+  const stagedCef = join(stagedNative, 'cef')
+  const nativeName = `gpuix-native.darwin-${process.arch}.node`
+  try {
+    mkdirSync(stagedNative)
+    cpSync(resolve(nativeRoot, 'index.js'), resolve(stagedNative, 'index.js'))
+    cpSync(resolveNativeAddon(nativeRoot, nativeName), resolve(stagedNative, nativeName))
+    cpSync(cefSource, stagedCef, { recursive: true, verbatimSymlinks: true })
+    validateCefArtifacts(stagedNative, stagedCef)
+    return { root: stagingRoot, cef: stagedCef, native: stagedNative }
+  } catch (error) {
+    rmSync(stagingRoot, { recursive: true, force: true })
+    throw error
+  }
 }
-if (bundleChromium && cefDirectory) packageMacApp(appBundle, cefDirectory, output)
-console.log(`Built ${bundleChromium ? appBundle : output}`)
+
+function verifiedNativePlugin(stagedNative: string): Bun.BunPlugin {
+  return {
+    name: 'verified-native-package',
+    setup(build) {
+      build.onResolve({ filter: /^@gpuix\/native$/u }, () => ({
+        path: resolve(stagedNative, 'index.js'),
+      }))
+    },
+  }
+}
 
 function packageMacApp(bundle: string, cefSource: string, executable: string): void {
   const contents = resolve(bundle, 'Contents')
@@ -56,8 +101,9 @@ function packageMacApp(bundle: string, cefSource: string, executable: string): v
   cpSync(
     resolve(cefSource, 'Chromium Embedded Framework.framework'),
     chromiumFramework,
-    { recursive: true },
+    { recursive: true, verbatimSymlinks: true },
   )
+  readCefArtifactInventory(chromiumFramework)
   signBundle(chromiumFramework)
   copyChromiumHelpers(cefSource, frameworks)
   if (existsSync(resolve(cefSource, 'CREDITS.html'))) {
@@ -86,7 +132,7 @@ function copyChromiumHelpers(cefSource: string, frameworks: string): void {
     if (!existsSync(source)) throw new Error(`Missing required Chromium helper bundle: ${source}`)
 
     const destination = resolve(frameworks, `${helperName}.app`)
-    cpSync(source, destination, { recursive: true })
+    cpSync(source, destination, { recursive: true, verbatimSymlinks: true })
     const contents = resolve(destination, 'Contents')
     renameSync(resolve(contents, 'MacOS', sourceName), resolve(contents, 'MacOS', helperName))
     writeFileSync(resolve(contents, 'Info.plist'), helperInfoPlist(helperName, variant.identifierSuffix))
@@ -128,27 +174,31 @@ interface CefArtifactManifest {
   arch: string
   minMacOS: string
   nativeAddon: { path: string; sha256: string }
-  framework: { path: string; sha256: string }
-  helpers: Record<string, { path: string; sha256: string }>
+  artifacts: unknown
 }
 
 function validateCefArtifacts(nativeRoot: string, cefRoot: string): void {
   const manifestPath = resolve(cefRoot, 'manifest.json')
   if (!existsSync(manifestPath)) throw new Error(`CEF artifact manifest is missing: ${manifestPath}`)
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as CefArtifactManifest
-  if (manifest.schemaVersion !== 1 || manifest.platform !== 'darwin' || manifest.arch !== process.arch || manifest.minMacOS !== '13.0' || !Number.isSafeInteger(manifest.cefApiVersion)) {
+  if (manifest.schemaVersion !== 2 || manifest.platform !== 'darwin' || manifest.arch !== process.arch || manifest.minMacOS !== '13.0' || !Number.isSafeInteger(manifest.cefApiVersion)) {
     throw new Error('CEF artifact manifest is incompatible with this Heddlework build')
   }
   const nativeName = `gpuix-native.darwin-${process.arch}.node`
   verifyArtifact(resolveNativeAddon(nativeRoot, nativeName), manifest.nativeAddon, nativeName)
-  const frameworkPath = 'Chromium Embedded Framework.framework/Chromium Embedded Framework'
-  verifyArtifact(resolve(cefRoot, frameworkPath), manifest.framework, frameworkPath)
-  for (const suffix of ['', ' (Alerts)', ' (GPU)', ' (Plugin)', ' (Renderer)']) {
-    const name = `GPUix Chromium Helper${suffix}`
-    const relativePath = `${name}.app/Contents/MacOS/${name}`
-    const entry = manifest.helpers[name]
-    if (!entry) throw new Error(`CEF artifact manifest omits ${name}`)
-    verifyArtifact(resolve(cefRoot, relativePath), entry, relativePath)
+  verifyCefArtifactInventory(cefRoot, manifest.artifacts)
+  const requiredExecutables = [
+    'Chromium Embedded Framework.framework/Chromium Embedded Framework',
+    ...['', ' (Alerts)', ' (GPU)', ' (Plugin)', ' (Renderer)'].map((suffix) => {
+      const name = `GPUix Chromium Helper${suffix}`
+      return `${name}.app/Contents/MacOS/${name}`
+    }),
+  ]
+  for (const path of requiredExecutables) {
+    const entry = manifest.artifacts && typeof manifest.artifacts === 'object'
+      ? (manifest.artifacts as Record<string, { type?: string }>)[path]
+      : undefined
+    if (entry?.type !== 'file') throw new Error(`CEF artifact manifest omits ${path}`)
   }
 }
 

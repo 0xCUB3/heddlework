@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readdirSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
-import { readBrowserState, writeBrowserState } from './persistence.ts'
+import { join, resolve } from 'node:path'
+import { claimBrowserDataRoot, readBrowserState, writeBrowserState } from './persistence.ts'
 import {
   DEFAULT_BROWSER_PROFILES,
   UNAVAILABLE_BROWSER_ENGINE,
@@ -23,11 +23,23 @@ import { isBrowserUrlAllowed, resolveBrowserAddress } from './url.ts'
 const MAX_RESTORED_TABS = 24
 const NATIVE_STATE_PERSIST_DELAY_MS = 300
 
+const generationGlobal = globalThis as typeof globalThis & {
+  __heddleworkBrowserGeneration?: number | undefined
+}
+
+function nextBrowserGeneration(): number {
+  const generation = (generationGlobal.__heddleworkBrowserGeneration ?? 0) + 1
+  if (!Number.isSafeInteger(generation)) throw new Error('Browser generation sequence is exhausted')
+  generationGlobal.__heddleworkBrowserGeneration = generation
+  return generation
+}
+
 export class BrowserSessionService {
   readonly #listeners = new Set<() => void>()
   readonly #statePath: string | false
-  readonly #dataRoot: string
+  readonly #profilesRoot: string
   readonly #profiles = new Map<string, BrowserProfile>()
+  readonly #profileLockError: string | undefined
   readonly #tabs = new Map<string, BrowserTab>()
   #defaultProfileId = 'workspace'
   #activeTabId: string | undefined
@@ -39,11 +51,15 @@ export class BrowserSessionService {
   #disposed = false
 
   constructor(options: { statePath?: string | false; dataRoot: string; cleanupOrphanedProfiles?: boolean }) {
-    this.#statePath = options.statePath ?? false
-    this.#dataRoot = options.dataRoot
-    const restored = readBrowserState(this.#statePath)
+    const requestedStatePath = options.statePath ?? false
+    const claim = claimBrowserDataRoot(options.dataRoot, requestedStatePath)
+    this.#statePath = claim.statePath ?? requestedStatePath
+    this.#profilesRoot = claim.profilesRoot ?? join(resolve(options.dataRoot), 'profiles')
+    this.#profileLockError = claim.acquired ? undefined : claim.message ?? 'Browser profile storage is unavailable.'
+    const restored = claim.acquired ? readBrowserState(this.#statePath) : undefined
     this.#restore(restored)
-    if (restored && options.cleanupOrphanedProfiles !== false) removeOrphanedProfileData(this.#dataRoot, this.#profiles)
+    if (claim.acquired && restored && options.cleanupOrphanedProfiles !== false) removeOrphanedProfileData(this.#profilesRoot, this.#profiles)
+    if (this.#profileLockError) this.#engine = lockedBrowserEngine(this.#profileLockError)
     this.#snapshot = this.#createSnapshot()
   }
 
@@ -53,6 +69,14 @@ export class BrowserSessionService {
   }
 
   readonly getSnapshot = (): BrowserSnapshot => this.#snapshot
+
+  canInitializeNativeBrowser(): boolean {
+    return !this.#profileLockError
+  }
+
+  nativeProfileRoot(): string | undefined {
+    return this.#profileLockError ? undefined : this.#profilesRoot
+  }
 
   ensureTab(): string {
     if (this.#activeTabId) {
@@ -85,6 +109,7 @@ export class BrowserSessionService {
       createdAt: now,
       lastActiveAt: now,
       materialized: Boolean(url) && options.activate !== false,
+      generation: nextBrowserGeneration(),
       commandSerial: url ? 2 : 0,
       commands: url
         ? [{ serial: 1, kind: 'navigate', value: url }, { serial: 2, kind: 'focus' }]
@@ -151,8 +176,9 @@ export class BrowserSessionService {
   }
 
   applyNativeState(id: string, state: BrowserNativeState): void {
+    if (this.#disposed) return
     const tab = this.#tabs.get(id)
-    if (!tab) return
+    if (!tab || state.generation !== tab.generation) return
     const url = state.url && isBrowserUrlAllowed(state.url) ? state.url : tab.url
     const includesError = Object.prototype.hasOwnProperty.call(state, 'error')
     const status = includesError && state.error
@@ -193,10 +219,11 @@ export class BrowserSessionService {
     this.#commit(true)
   }
 
-  openRequested(sourceId: string, address: string): string | undefined {
+  openRequested(sourceId: string, generation: number, address: string): string | undefined {
+    if (this.#disposed) return undefined
     const source = this.#tabs.get(sourceId)
     const url = resolveBrowserAddress(address)
-    if (!source || !url) return undefined
+    if (!source || source.generation !== generation || !url) return undefined
     return this.createTab({ profileId: source.profileId, address: url })
   }
 
@@ -205,6 +232,7 @@ export class BrowserSessionService {
     if (!tab || !this.#profiles.has(profileId) || tab.profileId === profileId) return
     this.#replaceTab(tabId, {
       profileId,
+      generation: nextBrowserGeneration(),
       canGoBack: false,
       canGoForward: false,
       error: undefined,
@@ -251,11 +279,12 @@ export class BrowserSessionService {
       if (tab.profileId === id) this.switchTabProfile(tab.id, 'workspace')
     }
     this.#commit()
-    this.#profileDataRemovals.add(join(this.#dataRoot, 'profiles', safePathSegment(id)))
+    this.#profileDataRemovals.add(join(this.#profilesRoot, safePathSegment(id)))
     return true
   }
 
   flushRemovedProfileData(): void {
+    if (this.#profileLockError) return
     for (const path of this.#profileDataRemovals) rmSync(path, { recursive: true, force: true })
     this.#profileDataRemovals.clear()
   }
@@ -267,11 +296,12 @@ export class BrowserSessionService {
   }
 
   runtimeProfile(id: string): BrowserRuntimeProfile | undefined {
+    if (this.#profileLockError) return undefined
     const profile = this.#profiles.get(id)
     if (!profile) return undefined
     return {
       id: profile.id,
-      path: profile.persistent ? join(this.#dataRoot, 'profiles', safePathSegment(profile.id)) : '',
+      path: profile.persistent ? join(this.#profilesRoot, safePathSegment(profile.id)) : '',
       incognito: !profile.persistent,
       agentAccess: profile.agentAccess,
     }
@@ -298,8 +328,9 @@ export class BrowserSessionService {
   }
 
   setEngine(engine: BrowserEngineStatus): void {
-    if (engineEqual(this.#engine, engine)) return
-    this.#engine = engine
+    const effective = this.#profileLockError ? lockedBrowserEngine(this.#profileLockError) : engine
+    if (engineEqual(this.#engine, effective)) return
+    this.#engine = effective
     this.#publish(false)
   }
 
@@ -332,6 +363,7 @@ export class BrowserSessionService {
         createdAt: finiteTimestamp(saved.createdAt),
         lastActiveAt: finiteTimestamp(saved.lastActiveAt),
         materialized: false,
+        generation: nextBrowserGeneration(),
         commandSerial: 0,
         commands: [],
       })
@@ -368,6 +400,7 @@ export class BrowserSessionService {
   }
 
   #persist(): void {
+    if (this.#profileLockError) return
     const persistentTabs = [...this.#tabs.values()]
       .filter((tab) => this.#profiles.get(tab.profileId)?.persistent)
       .map(({ id, profileId, url, title, createdAt, lastActiveAt }) => ({ id, profileId, url, title, createdAt, lastActiveAt }))
@@ -444,6 +477,10 @@ function boundsEqual(a: BrowserSurfaceBounds, b: BrowserSurfaceBounds): boolean 
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
+function lockedBrowserEngine(message: string): BrowserEngineStatus {
+  return { kind: 'unavailable', available: false, message, profileIsolation: 'limited' }
+}
+
 function engineEqual(a: BrowserEngineStatus, b: BrowserEngineStatus): boolean {
   return a.kind === b.kind && a.available === b.available && a.message === b.message && a.profileIsolation === b.profileIsolation
 }
@@ -452,8 +489,7 @@ function safePathSegment(value: string): string {
   return value.replace(/[^a-z0-9-]/giu, '-')
 }
 
-function removeOrphanedProfileData(dataRoot: string, profiles: ReadonlyMap<string, BrowserProfile>): void {
-  const root = join(dataRoot, 'profiles')
+function removeOrphanedProfileData(root: string, profiles: ReadonlyMap<string, BrowserProfile>): void {
   const retained = new Set([...profiles.keys()].map(safePathSegment))
   try {
     for (const entry of readdirSync(root, { withFileTypes: true })) {

@@ -137,7 +137,12 @@ process.once('SIGTERM', shutdown)
 render(
   <WorkbenchApp controller={controller} flows={flows} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} onQuit={shutdown} />,
   {
-    ...createWindowOptions(process.platform, debugOverlay()),
+    ...createWindowOptions(
+      process.platform,
+      debugOverlay(),
+      browsers.nativeProfileRoot() ?? '',
+      browsers.canInitializeNativeBrowser(),
+    ),
     ...(browserSmokeUrl ? { focus: false, show: false } : {}),
     onTerminated: shutdown,
   },

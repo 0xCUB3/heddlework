@@ -5,6 +5,7 @@ export function createWindowOptions(
   platform: NodeJS.Platform,
   debugFrameOverlay: NonNullable<RenderOptions['debugFrameOverlay']>,
   browserRootCachePath = browserProfilesRoot(platform),
+  nativeBrowserEnabled = true,
 ): RenderOptions {
   const common = {
     title: 'Heddlework',
@@ -12,6 +13,7 @@ export function createWindowOptions(
     height: 820,
     debugFrameOverlay,
     browserRootCachePath,
+    nativeBrowserEnabled,
   }
 
   if (platform === 'darwin') {

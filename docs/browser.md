@@ -30,11 +30,17 @@ so navigation state survives tab switches without painting over GPUI controls.
 ## Process model
 
 Packaged `.app` builds run CEF in multi-process, sandboxed mode. Native Chromium
-fails closed outside a valid macOS application bundle; it does not attempt to
-launch staged helpers from `bun run dev`, because CEF's macOS rendezvous and
-sandbox model requires a coherent main bundle. Use the packaged build workflow
-below to exercise Chromium. Unbundled development still renders the Browser
-surface with an actionable unavailable-engine error.
+requires the current executable to be an immediate child of `Contents/MacOS` in
+a bundle with an `Info.plist`, then performs a strict deep code-signature check.
+In production it canonicalizes the bundle's
+`Contents/Frameworks` directory, framework, framework binary, and helper, then
+rejects any symlink chain that leaves the owning application bundle. Runtime
+environment variables and package/source-tree CEF directories are ignored.
+Chromium fails closed outside a valid macOS application bundle and does not
+attempt to launch staged helpers from `bun run dev`, because CEF's macOS
+rendezvous and sandbox model requires a coherent main bundle. Use the packaged
+build workflow below to exercise Chromium. Unbundled development still renders
+the Browser surface with an actionable unavailable-engine error.
 
 The main Heddlework process owns the browser process and native child view.
 Dedicated signed helper app variants run renderer, GPU, utility, plugin, and
@@ -50,10 +56,12 @@ GPUix reports browser support through:
 If the feature or runtime assets are missing, the right panel remains usable and
 shows an unavailable-engine state. There is no silent WKWebView fallback.
 
-`GPUIX_CEF_DEBUG=1` enables native lifecycle logging. Setting
-`GPUIX_CEF_REMOTE_DEBUGGING_PORT` to a port from 1024 through 65535 also opens
-an unauthenticated local Chrome DevTools Protocol endpoint and must be limited to
-explicit development sessions.
+`GPUIX_CEF_DEBUG=1` enables native lifecycle logging. The production addon
+ignores CEF runtime, sandbox, and remote-debugging environment overrides. GPUix
+library developers can compile its explicit `cef-development-overrides` feature;
+only that build honors `GPUIX_CEF_REMOTE_DEBUGGING_PORT`, which opens an
+unauthenticated local Chrome DevTools Protocol endpoint and must be limited to an
+explicit development session.
 
 ## Profiles and persistence
 
@@ -84,8 +92,15 @@ The built-in policies are:
 Tab metadata and non-private session restoration live in
 `~/Library/Application Support/Heddlework/browser.json` on macOS (with equivalent
 platform config roots). The file is written atomically with mode `0600`.
-Cookies, cache, local storage, service workers, and credentials remain within the
-selected CEF request context; they are not copied into Heddlework's metadata.
+Before reading state, Heddlework creates and canonicalizes the data root,
+profiles root, and state parent. Process-lifetime locks cover those canonical
+identities, so lexical and symlink aliases in separate processes contend for the
+same profile/state stores. Native CEF and every profile operation receive the
+same canonical profiles root covered by the lock. Contention fails closed before
+reading state, exposing profile paths, initializing CEF, or writing metadata; it
+never reclaims a lock held by a live process. Cookies,
+cache, local storage, service workers, and credentials remain within the selected
+CEF request context; they are not copied into Heddlework's metadata.
 
 ## Navigation and agent access
 
@@ -99,7 +114,12 @@ commands use an ordered FIFO with monotonically increasing serials and native
 acknowledgements, so one React commit cannot collapse adjacent actions and a
 rerender cannot execute an acknowledged action twice. CEF reports URL, title,
 loading, back/forward availability, and the completed command serial
-asynchronously to the owning tab.
+asynchronously to the owning tab. Each logical tab/profile incarnation has a
+process-global monotonic generation that is not reset by hot reload. Heddlework
+passes it into the native surface, GPUix stamps state, popup, and error events
+with it, and the service rejects callbacks from an
+older generation. This prevents queued events from a destroyed profile surface
+from mutating or opening tabs in its replacement.
 
 Agent automation is a separate capability from user interaction. Workspace
 profiles allow it, personal/private profiles deny it, and a `prompt` policy
@@ -136,12 +156,21 @@ intentionally use a browser-disabled test renderer.
 
 GPUix stages the pinned CEF framework, five helper bundles, and a hashed artifact
 manifest in `packages/native/cef/`. Its macOS CI job runs the same
-`build:browser --target aarch64-apple-darwin` path, uploads `cef/` with the
-native addon, and restores it before publishing `@gpuix/native`; a release
-cannot silently publish the browser-free macOS binary. On macOS, Heddlework's
-`scripts/build.ts` requires that manifest and verifies it against the exact
-native addon, framework, helpers, architecture, and CEF API build before
-creating:
+`build:browser --target aarch64-apple-darwin` path, archives `cef/` to preserve
+modes and symlinks, uploads it with the native addon, and restores it before
+publishing `@gpuix/native`. Publish CI then packs and extracts both the root and
+Darwin platform npm packages and verifies every extracted CEF entry plus the
+native addon against the manifest; a release cannot silently publish an
+incomplete or browser-free macOS package.
+
+On macOS, Heddlework's `scripts/build.ts` copies the runtime, loader, and addon
+into a private staging directory with verbatim relative symlinks. It validates
+that immutable snapshot, aliases Bun compilation to its verified native loader,
+and packages only from the same snapshot. The schema-v2 verifier rejects any
+missing, extra, modified, permission/special-mode-changed, or symlink-changed
+entry across the complete CEF framework/helper tree. The build rechecks copied
+framework symlink containment before signing and verifies the exact native
+addon, architecture, and CEF API build before creating:
 
 ```text
 dist/Heddlework.app/
