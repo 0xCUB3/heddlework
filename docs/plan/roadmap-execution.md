@@ -293,3 +293,9 @@ Acceptance. Workflow YAML validates (`gh workflow view release.yml` after push, 
 - If an existing test enumerates plugins mounted by `src/main.tsx`, update it when adding the host, receipts, or plugin-loader plugins.
 - If Bun's `WebSocket` client in tests lacks a feature, use `Bun.connect` only as a last resort; the standard `WebSocket` global works in Bun 1.4.
 - Never modify files under `node_modules/` or `dist/`.
+
+## Status at handoff
+
+- Phase 1 is complete on `main` (commit `f9345b0`, `feat(protocol)`).
+- Phase 2 is implemented on branch `phase-2-host` (`src/host/*`, `tests/host-*.test.ts`, README env table and Remote host section). Its own tests pass and `bun src/host/main.ts` runs in demo mode. One pre-existing UI test fails on that branch: `tests/ui.test.tsx` "renders and operates the T3-style native workbench shell", assertion at line 577, because the new Remote access section in `src/ui/settings-view.tsx` pushes the `settings-alpha` row below the settings viewport. Fix by placing the Remote access section after About, or by shrinking it to one row when `host` is undefined, then run `bun run check`, squash to `feat(host): ...`, and merge to `main`.
+- Phases 3 to 8 are not started.
