@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { GitCheckoutLanes, laneBranch } from '../src/workspace/checkout-lanes.ts'
+import { comparableLanePath, GitCheckoutLanes, laneBranch } from '../src/workspace/checkout-lanes.ts'
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } })
@@ -28,9 +28,11 @@ describe('checkout lanes', () => {
     const lane = await lanes.create(workspace, 'HW-1-1')
     expect(lane.branch).toBe(laneBranch('HW-1-1'))
     expect(existsSync(join(lane.path, 'README.md'))).toBe(true)
-    expect(await git(workspace, 'worktree', 'list')).toContain(lane.path)
+    expect((await git(workspace, 'worktree', 'list')).toLowerCase().replace(/\\/g, '/')).toContain(comparableLanePath(lane.path).toLowerCase())
     expect((await lanes.list(workspace)).map((entry) => entry.id)).toEqual(['HW-1-1'])
-    expect(await lanes.create(workspace, 'HW-1-1')).toEqual(lane)
+    const again = await lanes.create(workspace, 'HW-1-1')
+    expect(again.branch).toBe(lane.branch)
+    expect(comparableLanePath(again.path)).toBe(comparableLanePath(lane.path))
 
     writeFileSync(join(lane.path, 'lane.txt'), 'from lane\n')
     await git(lane.path, 'add', '.')
@@ -44,9 +46,9 @@ describe('checkout lanes', () => {
     expect(await lanes.list(workspace)).toEqual([])
     expect(existsSync(lane.path)).toBe(false)
 
-    const again = await lanes.create(workspace, 'HW-1-2')
+    const second = await lanes.create(workspace, 'HW-1-2')
     await lanes.remove(workspace, 'HW-1-2')
-    expect(existsSync(again.path)).toBe(false)
+    expect(existsSync(second.path)).toBe(false)
     expect(await git(workspace, 'worktree', 'list')).not.toContain('HW-1-2')
     rmSync(workspace, { recursive: true, force: true })
     rmSync(root, { recursive: true, force: true })

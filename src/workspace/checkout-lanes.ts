@@ -33,7 +33,13 @@ export function lanesRoot(platform: NodeJS.Platform = process.platform, environm
 
 export function lanePath(root: string, workspacePath: string, laneId: string): string {
   const hash = createHash('sha1').update(resolve(workspacePath)).digest('hex').slice(0, 12)
-  return join(existsSync(root) ? realpathSync(root) : resolve(root), hash, laneId)
+  return join(existsSync(root) ? realpathSync.native(root) : resolve(root), hash, laneId)
+}
+
+// git prints worktree paths with forward slashes on every platform, so compare in that form.
+export function comparableLanePath(path: string): string {
+  const normalized = (existsSync(path) ? realpathSync.native(path) : resolve(path)).replace(/\\/g, '/')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
 // Git worktrees keyed by workspace hash and lane id. The primary working tree is never checked out, reset, or cleaned here.
@@ -49,7 +55,7 @@ export class GitCheckoutLanes implements CheckoutLaneService {
     const path = lanePath(this.#root, workspacePath, laneId)
     const branch = laneBranch(laneId)
     const existing = (await this.list(workspacePath)).find((lane) => lane.id === laneId)
-    if (existing) return existing
+    if (existing) return { ...existing, path }
     mkdirSync(resolve(path, '..'), { recursive: true })
     const branches = await runGit(workspacePath, ['branch', '--list', branch])
     const args = branches.trim() ? ['worktree', 'add', path, branch] : ['worktree', 'add', '-b', branch, path]

@@ -29,11 +29,11 @@
           "sessionId": "01a06da3-084e-715b-a4be-0de550c80306"
         },
         "startedAt": 1788545847012,
-        "updatedAt": 1788553810140,
-        "expiresAt": 1788553825140
+        "updatedAt": 1788553976665,
+        "expiresAt": 1788553991665
       },
-      "version": 2472,
-      "updatedAt": 1788553810141,
+      "version": 2528,
+      "updatedAt": 1788553976665,
       "updatedBy": {
         "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
         "name": "main",
@@ -56,12 +56,12 @@
         "model": "claude-code/claude-fable-5-1",
         "thinking": "medium",
         "startedAt": 1788545847012,
-        "updatedAt": 1788553810140,
+        "updatedAt": 1788553976665,
         "pendingMessages": false,
         "local": false
       },
-      "version": 2472,
-      "updatedAt": 1788553810141,
+      "version": 2528,
+      "updatedAt": 1788553976666,
       "updatedBy": {
         "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
         "name": "main",
@@ -92,13 +92,13 @@
         "model": "claude-code/claude-fable-5-1",
         "thinking": "medium",
         "startedAt": 1788545847012,
-        "updatedAt": 1788553810140,
+        "updatedAt": 1788553976665,
         "pendingMessages": false,
         "controlProtocol": "v1",
         "label": "HED-1"
       },
-      "version": 2472,
-      "updatedAt": 1788553810141,
+      "version": 2528,
+      "updatedAt": 1788553976666,
       "updatedBy": {
         "id": "session:01a06da3-084e-715b-a4be-0de550c80306",
         "name": "main",
@@ -109,9 +109,9 @@
   },
   "versions": {
     "topology/peer-seq": 1,
-    "topology/hosts/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": 2472,
-    "sessions/01a06da3-084e-715b-a4be-0de550c80306": 2472,
-    "topology/participants/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": 2472
+    "topology/hosts/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": 2528,
+    "sessions/01a06da3-084e-715b-a4be-0de550c80306": 2528,
+    "topology/participants/c1602e044367fd251f5956999e325e59f829bf0d7a8f5eb9534408d7e1b3df53": 2528
   },
   "tombstoneOrder": []
 }
