@@ -1,4 +1,5 @@
 import { existsSync, statSync } from 'node:fs'
+import { networkInterfaces } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import {
@@ -146,6 +147,21 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
 
 export function hostConnectUrl(host: Pick<WorkspaceHost, 'url' | 'token'>): string {
   return `${host.url}/?token=${encodeURIComponent(host.token)}`
+}
+
+export function lanIPv4(): string | undefined {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === 'IPv4' && !address.internal) return address.address
+    }
+  }
+  return undefined
+}
+
+export function lanConnectUrl(host: Pick<WorkspaceHost, 'port' | 'hostname' | 'token' | 'url'>): string {
+  if (host.hostname !== '0.0.0.0' && host.hostname !== '::') return hostConnectUrl(host)
+  const ip = lanIPv4() ?? '127.0.0.1'
+  return `http://${ip}:${host.port}/?token=${encodeURIComponent(host.token)}`
 }
 
 function authorized(request: Request, url: URL, token: string): boolean {

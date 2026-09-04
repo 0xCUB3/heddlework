@@ -14,7 +14,8 @@ import {
 import { FileQueueStore, queueStorePath } from '../workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from '../workbench/thread-metadata-store.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './plugin.ts'
-import { hostConnectUrl } from './server.ts'
+import { hostConnectUrl, lanConnectUrl } from './server.ts'
+import { qrAscii } from '../web/qr.ts'
 import { resolveStaticRoot } from './static-root.ts'
 import { hostTokenPath } from './token.ts'
 
@@ -61,9 +62,11 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 console.log(`Heddlework host serving ${workspacePath}`)
-console.log(`  url    ${host.url}`)
+console.log(`  url     ${host.url}`)
 console.log(`  connect ${hostConnectUrl(host)}`)
-if (!demoMode) console.log(`  token  ${hostTokenPath()}`)
+if (host.hostname === '0.0.0.0' || host.hostname === '::') console.log(`  lan     ${lanConnectUrl(host)}`)
+if (!demoMode) console.log(`  token   ${hostTokenPath()}`)
+console.log(qrAscii(lanConnectUrl(host)))
 void controller.start()
 
 function resolveWorkspacePath(): string {

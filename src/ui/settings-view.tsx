@@ -1,6 +1,6 @@
 import React from 'react'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
-import { hostConnectUrl, type WorkspaceHost } from '../host/server.ts'
+import { hostConnectUrl, lanConnectUrl, type WorkspaceHost } from '../host/server.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
@@ -60,8 +60,11 @@ export function SettingsView({
             <SettingsSection title="Remote access" description="Web and mobile companions connect to this desktop process over the workspace host protocol.">
               <SettingsRow testId="settings-host-url" icon="circle" label="Host" value={host.url} tone="success" />
               <SettingsRow icon="panel" label="Bound to" value={host.hostname === '127.0.0.1' ? 'This computer only' : `${host.hostname} (network)`} />
+              {host.hostname === '0.0.0.0' || host.hostname === '::' ? (
+                <SettingsRow icon="circle" label="Phone link" value={lanConnectUrl(host)} />
+              ) : null}
               <SettingsActions>
-                <Button label="Copy connect link" compact onClick={() => void copyTextToClipboard(hostConnectUrl(host)).then((copied) => controller.notify(copied ? 'info' : 'warning', copied ? 'Copied host connect link with token' : 'No system clipboard command is available'))} />
+                <Button label="Copy connect link" compact onClick={() => void copyTextToClipboard(host.hostname === '0.0.0.0' || host.hostname === '::' ? lanConnectUrl(host) : hostConnectUrl(host)).then((copied) => controller.notify(copied ? 'info' : 'warning', copied ? 'Copied host connect link with token' : 'No system clipboard command is available'))} />
               </SettingsActions>
             </SettingsSection>
           ) : null}

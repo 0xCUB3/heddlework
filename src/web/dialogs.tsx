@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { questionnaireFromTool, type AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
 import type { WorkbenchSnapshot } from '../protocol/index.ts'
 import { workspaceClient } from './store.ts'
@@ -19,6 +19,10 @@ export function Dialogs({ state }: { state: WorkbenchSnapshot }) {
     void workspaceClient().send({ type: 'respondToDialog', ...payload })
   }
 
+  if (dialog.method === 'confirm') {
+    return <ConfirmSheet title={dialog.title} message={dialog.message} deadlineAt={dialog.deadlineAt} onApprove={() => respond({ confirmed: true })} onDeny={() => respond({ confirmed: false, cancelled: true })} />
+  }
+
   return (
     <div className="web-dialog" role="dialog" aria-label={dialog.title}>
       <h2>{dialog.title}</h2>
@@ -26,18 +30,33 @@ export function Dialogs({ state }: { state: WorkbenchSnapshot }) {
       {dialog.method === 'select' ? (dialog.options ?? []).map((option) => (
         <button key={option} type="button" onClick={() => respond({ value: option })}>{option}</button>
       )) : null}
-      {dialog.method === 'confirm' ? (
-        <div className="web-composer-row">
-          <button type="button" onClick={() => respond({ confirmed: true })}>Confirm</button>
-          <button type="button" onClick={() => respond({ confirmed: false, cancelled: true })}>Cancel</button>
-        </div>
-      ) : null}
       {dialog.method === 'input' || dialog.method === 'editor' ? (
         <PromptDialog placeholder={dialog.placeholder} prefill={dialog.prefill} onSubmit={(value) => respond({ value })} onCancel={() => respond({ cancelled: true })} />
       ) : null}
       {dialog.method === 'tree' ? (dialog.treeOptions ?? []).map((option) => (
         <button key={option.entryId} type="button" onClick={() => respond({ value: option.entryId })}>{option.title}</button>
       )) : null}
+    </div>
+  )
+}
+
+function ConfirmSheet({ title, message, deadlineAt, onApprove, onDeny }: { title: string; message?: string | undefined; deadlineAt?: number | undefined; onApprove: () => void; onDeny: () => void }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (deadlineAt === undefined) return
+    const timer = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(timer)
+  }, [deadlineAt])
+  const remaining = deadlineAt === undefined ? undefined : Math.max(0, Math.ceil((deadlineAt - now) / 1000))
+  return (
+    <div className="web-dialog web-dialog-confirm web-sheet" role="dialog" aria-label={title}>
+      <h2>{title}</h2>
+      {message ? <p>{message}</p> : null}
+      {remaining !== undefined ? <p className="web-meta">{remaining}s</p> : null}
+      <div className="web-composer-row">
+        <button type="button" className="web-approve" onClick={onApprove}>Approve</button>
+        <button type="button" className="web-deny" onClick={onDeny}>Deny</button>
+      </div>
     </div>
   )
 }

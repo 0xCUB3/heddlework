@@ -41,7 +41,7 @@ Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/e
 | Codex adapter | **Planned** |
 | Claude adapter | **Planned** |
 | Signed desktop distribution | **Planned** |
-| Web and mobile companions | **Preview** — browser client over the workspace host; mobile PWA still planned |
+| Web and mobile companions | **Preview** — browser client and installable PWA over the workspace host |
 
 ## Why Heddlework?
 
@@ -118,7 +118,7 @@ bun run host -- /path/to/repository
 HEDDLEWORK_DEMO=1 bun run dev:web -- /path/to/repository
 ```
 
-`bun run build:web` writes the browser client to `dist/web`. The host serves those files when `HEDDLEWORK_WEB_ROOT` or `dist/web` is present, and the desktop binary looks next to itself for a `web/` folder. Open the printed connect link to use the same controller from a browser.
+`bun run build:web` writes the browser client to `dist/web`. The host serves those files when `HEDDLEWORK_WEB_ROOT` or `dist/web` is present, and the desktop binary looks next to itself for a `web/` folder. Open the printed connect link to use the same controller from a browser. The host also prints a QR code of the connect URL. Bind with `HEDDLEWORK_HOST_BIND=0.0.0.0` to reach it from a phone on the same network.
 
 The host prints a connect link carrying a bearer token. The token is stored with owner-only permissions under the Heddlework state directory (`host-token`) and the Settings surface has a Copy connect link action. The host binds to `127.0.0.1` unless `HEDDLEWORK_HOST_BIND` says otherwise. Every remote command goes through the same controller as the desktop UI, so Pi stays the single execution authority. The wire contract is documented in [Harness adapter protocol](docs/harness-adapter-protocol.md).
 
@@ -155,11 +155,15 @@ These channels describe the intended distribution path; they are **not available
 | Channel | Intended path |
 | --- | --- |
 | Desktop | Signed and notarized macOS, Windows, and Linux downloads from GitHub Releases, followed by native package-manager channels |
-| Mobile | Companion PWA and later native wrappers for steering, approvals, notifications, task triage, and artifact review |
+| Mobile | Native wrappers around the companion PWA |
 
 ### Web workspace client
 
 The browser client in `src/web/` is a second renderer over the same host protocol. After `bun run build:web` or `bun run dev:web`, open the host connect link to use sessions, the transcript, queue, flows, diffs, and settings without GPUIX. It is a preview, not a signed product channel.
+
+### Mobile companion PWA
+
+The same client is installable. On iOS Safari use Share → Add to Home Screen. On Android Chrome use Install app or Add to Home Screen. Below 720 px the companion uses a Chat / Queue / Triage / Diff tab bar, a pinned composer, and confirm dialogs as a bottom sheet. Local notifications fire when the tab is hidden and a turn finishes or an approval appears. Native wrappers are still later work.
 
 The desktop application remains the primary environment for local repositories, terminals, worktrees, and native agent processes. Web and mobile stay additional surfaces over the same workspace model, not separate products.
 
@@ -242,7 +246,7 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [ ] Mutation receipts and artifact review
 - [ ] Signed desktop installers and automatic updates
 - [x] Web workspace client
-- [ ] Mobile companion clients
+- [x] Mobile companion clients
 
 ## Development
 
