@@ -1,5 +1,6 @@
 import type { PiSessionEntry, PiSessionTreeNode } from './session-tree.ts'
-import type { AgentTransport, TransportStatus } from './transport.ts'
+import type { TransportStatus } from './transport.ts'
+import { describePiAdapter, type HarnessAdapter, type HarnessCapabilities } from '../protocol/adapter.ts'
 import type { PiForkMessage, PiImageContent, PiMessage, PiModel, PiSessionState, RpcCommand, RpcRecord, ThinkingLevel } from './types.ts'
 
 const models: PiModel[] = [
@@ -7,7 +8,10 @@ const models: PiModel[] = [
   { provider: 'demo', id: 'fast', name: 'Demo Fast', reasoning: false, contextWindow: 128_000 },
 ]
 
-export class DemoTransport implements AgentTransport {
+export class DemoTransport implements HarnessAdapter {
+  readonly id = 'demo'
+  readonly displayName = 'Demo transport'
+  readonly capabilities: HarnessCapabilities = describePiAdapter()
   readonly #events = new Set<(event: RpcRecord) => void>()
   readonly #statuses = new Set<(status: TransportStatus) => void>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()

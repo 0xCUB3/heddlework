@@ -182,6 +182,7 @@ Heddlework follows a small supervised component model inspired by Cordis:
 - `src/core/kernel.ts` owns deferred service injection, typed events, keyed contributions, dependent lifetimes, and reverse-order cleanup.
 - `src/workbench/plugins.ts` composes transport, session discovery, workspace diff, and controller capabilities without giving the controller concrete providers to construct.
 - `src/pi/transport.ts` defines the application-facing harness transport seam; Pi RPC is its first provider.
+- `src/protocol/` freezes the versioned surface contract: `HarnessAdapter` identity and capabilities, the `WorkbenchCommand` union, and JSON snapshot patches shared by desktop, web, and mobile; see [Harness adapter protocol](docs/harness-adapter-protocol.md).
 - `src/workbench/controller.ts` projects harness events into UI state, owns the durable delivery queue, and rehydrates from authoritative transcripts.
 - `src/flows/runtime.ts` persists schedule intent and compiles due occurrences into the same queue primitives authored directly in chat.
 - `src/flows/projection.ts` derives Work and Triage from queue rows and Pi session summaries without a task lifecycle database; `src/flows/fabric-projection.ts` derives parallel branches from Fabric participant audits; `src/workbench/thread-metadata-store.ts` persists only local disposition, read, priority, and label annotations.
@@ -213,7 +214,7 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [x] Diff, settings, notification, and surface shells
 - [x] Cordis-style service/event lifetimes and in-process UI surface manifests
 - [ ] External plugin discovery and compatibility metadata
-- [ ] Stable harness adapter protocol
+- [x] Stable harness adapter protocol
 - [ ] Codex and Claude adapters
 - [x] Projection-first Flows with chat-authored sequential queues, participant-truth Fabric graphs, task pages, and Triage
 - [x] Durable one-time, interval, and daily scheduled Flow runtime

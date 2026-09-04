@@ -9,7 +9,8 @@ import {
   parseTreeNavigateBridgeEvent,
   type TreeNavigateBridgeEvent,
 } from './fabric-bridge.ts'
-import type { AgentTransport, TransportStatus } from './transport.ts'
+import type { TransportStatus } from './transport.ts'
+import { describePiAdapter, type HarnessAdapter, type HarnessCapabilities } from '../protocol/adapter.ts'
 import type { RpcCommand, RpcRecord } from './types.ts'
 
 export interface PiRpcTransportOptions {
@@ -34,7 +35,10 @@ interface PendingTreeNavigation {
   timer: ReturnType<typeof setTimeout>
 }
 
-export class PiRpcTransport implements AgentTransport {
+export class PiRpcTransport implements HarnessAdapter {
+  readonly id = 'pi-rpc'
+  readonly displayName = 'Pi (RPC)'
+  readonly capabilities: HarnessCapabilities = describePiAdapter()
   readonly #options: PiRpcTransportOptions
   readonly #eventListeners = new Set<(event: RpcRecord) => void>()
   readonly #statusListeners = new Set<(status: TransportStatus) => void>()

@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto'
-import { basename } from 'node:path'
 
 export type FlowMode = 'sequential' | 'parallel'
 export type FlowLaunchSource = 'manual' | 'scheduled'
@@ -72,7 +70,7 @@ export interface ParsedFlowSessionName {
 
 export function createFlowId(prefix: 'HW' | 'SCH', now = Date.now()): string {
   const time = now.toString(36).slice(-6).toUpperCase()
-  const entropy = randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()
+  const entropy = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()
   return `${prefix}-${time}${entropy}`
 }
 
@@ -151,7 +149,13 @@ export function compactPromptTitle(prompt: string): string {
 }
 
 export function flowProjectName(workspacePath: string): string {
-  return basename(workspacePath) || workspacePath
+  return basenameOf(workspacePath) || workspacePath
+}
+
+function basenameOf(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const index = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return index === -1 ? trimmed : trimmed.slice(index + 1)
 }
 
 function compactSessionTitle(title: string): string {
