@@ -31,6 +31,7 @@
     "test": "bun test",
     "check": "bun run typecheck && bun run test",
     "build": "bun scripts/build.ts",
+    "smoke:browser": "bun scripts/smoke-browser.ts",
     "benchmark:terminal": "bun scripts/benchmark-terminal.ts && bun scripts/benchmark-terminal-ui.tsx",
     "benchmark:terminal:hires": "bun scripts/benchmark-terminal-hires.ts",
     "benchmark:terminal:gpuix": "bun scripts/benchmark-terminal-gpuix.tsx"

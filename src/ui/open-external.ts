@@ -74,11 +74,21 @@ export async function pickWorkspaceDirectory(): Promise<WorkspaceDirectoryPick> 
   return { error: `Could not open a folder picker (${failures.join(', ')} not available)` }
 }
 
+export function systemTargetCommand(target: string, platform: NodeJS.Platform = process.platform): DirectoryPickerCommand {
+  if (platform === 'darwin') return { command: '/usr/bin/open', args: [target] }
+  if (platform === 'win32') return { command: 'explorer.exe', args: [target] }
+  return { command: 'xdg-open', args: [target] }
+}
+
 function openSystemTarget(target: string): void {
-  const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'
-  const args = process.platform === 'win32' ? ['/c', 'start', '', target] : [target]
-  const child = spawn(command, args, { stdio: 'ignore', detached: true })
-  child.unref()
+  const launch = systemTargetCommand(target)
+  try {
+    const child = spawn(launch.command, launch.args, { stdio: 'ignore', detached: true, windowsHide: true })
+    child.on('error', () => {})
+    child.unref()
+  } catch {
+    // External launch failures are non-fatal and leave the current surface open.
+  }
 }
 
 function captureProcessOutput(command: string, args: string[]): Promise<string | undefined> {

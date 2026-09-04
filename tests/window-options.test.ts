@@ -3,11 +3,12 @@ import { createWindowOptions } from '../src/window-options.ts'
 
 describe('createWindowOptions', () => {
   test('uses transparent custom chrome only on macOS', () => {
-    expect(createWindowOptions('darwin', 'minimal')).toEqual({
+    expect(createWindowOptions('darwin', 'minimal', '/profiles')).toEqual({
       title: 'Heddlework',
       width: 1240,
       height: 820,
       debugFrameOverlay: 'minimal',
+      browserRootCachePath: '/profiles',
       titlebarTransparent: true,
       windowBackground: 'blurred',
       trafficLightX: 16,
@@ -17,12 +18,13 @@ describe('createWindowOptions', () => {
 
   test('leaves native titlebars available on Linux and Windows', () => {
     for (const platform of ['linux', 'win32'] as const) {
-      const options = createWindowOptions(platform, 'hidden')
+      const options = createWindowOptions(platform, 'hidden', '/profiles')
       expect(options).toEqual({
         title: 'Heddlework',
         width: 1240,
         height: 820,
         debugFrameOverlay: 'hidden',
+        browserRootCachePath: '/profiles',
         windowBackground: 'opaque',
       })
       expect('titlebarTransparent' in options).toBeFalse()

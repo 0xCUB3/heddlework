@@ -3,6 +3,8 @@ import type { WorkbenchPlugin } from '../core/kernel.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { DiffPanel } from './diff-panel.tsx'
+import { useOptionalBrowserService } from './browser-context.tsx'
+import { BrowserPanel } from './browser-panel.tsx'
 import {
   workbenchUiRegistryToken,
   type WorkbenchSurfaceContribution,
@@ -24,6 +26,36 @@ export function createCoreUiExtensionPlugin(): WorkbenchPlugin {
       ctx.effect(() => registry.register(createCoreUiExtension(controller)))
     },
   }
+}
+
+function BrowserSurface(props: WorkbenchSurfaceProps) {
+  const service = useOptionalBrowserService()
+  if (!service) {
+    return (
+      <SurfacePlaceholderPanel
+        descriptor={{ id: 'browser', title: 'Browser', description: 'Open a local app or URL.', icon: 'globe' }}
+        fullscreen={props.fullscreen}
+        fullscreenProgress={props.fullscreenProgress}
+        {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
+        panelWidth={props.panelWidth}
+        onToggleFullscreen={props.onToggleFullscreen}
+        onNew={props.onNewSurface}
+        onClose={props.onClose}
+      />
+    )
+  }
+  return (
+    <BrowserPanel
+      service={service}
+      fullscreen={props.fullscreen}
+      fullscreenProgress={props.fullscreenProgress}
+      {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })}
+      panelWidth={props.panelWidth}
+      onToggleFullscreen={props.onToggleFullscreen}
+      onNewSurface={props.onNewSurface}
+      onClose={props.onClose}
+    />
+  )
 }
 
 function TerminalSurface(props: WorkbenchSurfaceProps) {
@@ -79,7 +111,14 @@ export function createCoreUiExtension(controller: WorkbenchController): Workbenc
   return {
     id: 'heddlework.core',
     surfaces: [
-      placeholder('browser', 'Browser', 'Open a local app or URL.', 'globe', 10),
+      {
+        id: 'browser',
+        title: 'Browser',
+        description: 'Open a local app or URL.',
+        icon: 'globe',
+        order: 10,
+        component: BrowserSurface,
+      },
       {
         id: 'terminal',
         title: 'Terminal',

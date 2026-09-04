@@ -10,6 +10,8 @@ describe('native window lifecycle', () => {
     at commitRoot (/project/node_modules/react-reconciler/react-reconciler.development.js:12848:11)`
 
     expect(isGpuixWindowCloseRace(error)).toBe(true)
+    expect(isGpuixWindowCloseRace(new AggregateError([error]))).toBe(true)
+    expect(isGpuixWindowCloseRace(new AggregateError([error, new Error('CEF shutdown failed')]))).toBe(false)
   })
 
   it('does not classify unrelated application or renderer failures as shutdown', () => {
@@ -18,6 +20,9 @@ describe('native window lifecycle', () => {
     const rendererFailure = new Error('invalid element')
     rendererFailure.stack = 'at resetAfterCommit (/project/node_modules/@gpuix/react/dist/reconciler/host-config.js:225:32)'
     expect(isGpuixWindowCloseRace(rendererFailure)).toBe(false)
+    expect(isGpuixWindowCloseRace(new AggregateError([rendererFailure]))).toBe(false)
+    expect(isGpuixWindowCloseRace(new AggregateError([rendererFailure, new Error('CEF failed')]))).toBe(false)
+    expect(isGpuixWindowCloseRace(new AggregateError([]))).toBe(false)
     expect(isGpuixWindowCloseRace('window not found')).toBe(false)
   })
 })

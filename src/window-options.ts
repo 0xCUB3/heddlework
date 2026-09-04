@@ -1,14 +1,17 @@
 import type { RenderOptions } from '@gpuix/react'
+import { browserProfilesRoot } from './browser/persistence.ts'
 
 export function createWindowOptions(
   platform: NodeJS.Platform,
   debugFrameOverlay: NonNullable<RenderOptions['debugFrameOverlay']>,
+  browserRootCachePath = browserProfilesRoot(platform),
 ): RenderOptions {
   const common = {
     title: 'Heddlework',
     width: 1240,
     height: 820,
     debugFrameOverlay,
+    browserRootCachePath,
   }
 
   if (platform === 'darwin') {

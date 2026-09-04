@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import type { TerminalSessionService } from '../terminal/service.ts'
+import type { BrowserSessionService } from '../browser/service.ts'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
@@ -17,6 +18,7 @@ export function SettingsView({
   titlebarInset,
   onThemeModeChange,
   terminals,
+  browsers,
   onClose,
 }: {
   state: WorkbenchState
@@ -25,6 +27,7 @@ export function SettingsView({
   titlebarInset?: number | undefined
   onThemeModeChange(mode: ThemeMode): void
   terminals?: TerminalSessionService | undefined
+  browsers?: BrowserSessionService | undefined
   onClose(): void
 }) {
   const { mobile, compact, contentGutter } = useResponsiveLayout()
@@ -56,6 +59,7 @@ export function SettingsView({
           </SettingsSection>
 
           {terminals ? <TerminalSettings service={terminals} /> : null}
+          {browsers ? <BrowserSettings service={browsers} /> : null}
 
           <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
             <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
@@ -107,6 +111,24 @@ function SettingsControlRow({ label, description, children }: { label: string; d
       {!mobile && <div style={{ flexGrow: 1 }} />}
       {children}
     </div>
+  )
+}
+
+function BrowserSettings({ service }: { service: BrowserSessionService }) {
+  const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot, service.getSnapshot)
+  return (
+    <SettingsSection title="Browser" description="App-owned profiles keep browser identities separate. Personal profiles are never exposed to agents; workspace profiles require the policy shown below.">
+      <SettingsRow icon="globe" label="Native engine" value={snapshot.engine.available ? snapshot.engine.message : 'Unavailable'} tone={snapshot.engine.available ? 'success' : 'normal'} />
+      {snapshot.profiles.map((profile) => (
+        <SettingsControlRow key={profile.id} label={profile.name} description={`${profile.persistent ? 'Persistent' : 'Ephemeral'} · Agent access ${profile.agentAccess}`}>
+          {profile.id === snapshot.defaultProfileId
+            ? <text style={{ color: colors.success, fontSize: 10, fontWeight: 650 }}>Default</text>
+            : profile.persistent
+              ? <Button label="Make default" compact onClick={() => service.setDefaultProfile(profile.id)} />
+              : <text style={{ color: colors.textFaint, fontSize: 10 }}>Private</text>}
+        </SettingsControlRow>
+      ))}
+    </SettingsSection>
   )
 }
 

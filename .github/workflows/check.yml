@@ -24,3 +24,5 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun run build
+        env:
+          HEDDLEWORK_WITHOUT_CEF: '1'
