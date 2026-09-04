@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { WorkbenchSnapshot } from '../protocol/index.ts'
 import { workspaceClient } from './store.ts'
+import { Receipts } from './receipts.tsx'
 
 export function Diff({ state }: { state: WorkbenchSnapshot }) {
   const diff = state.workspaceDiff
@@ -15,6 +16,7 @@ export function Diff({ state }: { state: WorkbenchSnapshot }) {
         {file ? <button type="button" onClick={() => setWrap((value) => !value)}>{wrap ? 'Unwrap' : 'Wrap'}</button> : null}
       </div>
       {diff.status === 'error' ? <p className="web-error">{diff.error}</p> : null}
+      {!file ? <Receipts state={state} /> : null}
       {diff.files.length === 0 ? <p className="web-meta">No changes</p> : null}
       {!file ? (
         <ul className="web-list">

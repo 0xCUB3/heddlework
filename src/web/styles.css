@@ -54,6 +54,7 @@ textarea { width: 100%; min-height: 4.5rem; resize: vertical; background: var(--
 .web-pill-running, .web-pill-starting { color: var(--warning); }
 .web-patch { overflow: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre; }
 .web-patch-wrap { white-space: pre-wrap; }
+.web-receipt-status { font-size: 11px; padding: 0 0.35rem; border-radius: 4px; background: var(--raised); color: var(--text-muted); margin-right: 0.35rem; }
 .web-patch-add { background: var(--diff-add); display: block; }
 .web-patch-del { background: var(--diff-del); display: block; }
 .web-patch-hunk { background: var(--diff-hunk); display: block; }

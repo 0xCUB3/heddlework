@@ -61,6 +61,7 @@ import { normalizeThreadLabels, type ThreadMetadataStoreService } from './thread
 import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
+import type { MutationReceipt } from '../receipts/types.ts'
 
 const SESSION_PAGE_SIZE = 120
 const RECONNECT_BASE_DELAY_MS = 1_000
@@ -788,6 +789,22 @@ export class WorkbenchController {
 
   clearNotices(): void {
     this.#patch({ notices: [] })
+  }
+
+  setReceipts(receipts: MutationReceipt[]): void {
+    this.#patch({ receipts })
+  }
+
+  #receiptClearListeners = new Set<(sessionPath: string) => void>()
+
+  onClearReceipts(listener: (sessionPath: string) => void): () => void {
+    this.#receiptClearListeners.add(listener)
+    return () => { this.#receiptClearListeners.delete(listener) }
+  }
+
+  clearReceipts(sessionPath: string): void {
+    for (const listener of this.#receiptClearListeners) listener(sessionPath)
+    if (this.#state.receipts.some((receipt) => receipt.sessionPath === sessionPath)) this.#patch({ receipts: [] })
   }
 
   settleThread(path: string): void {

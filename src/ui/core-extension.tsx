@@ -3,6 +3,7 @@ import type { WorkbenchPlugin } from '../core/kernel.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { DiffPanel } from './diff-panel.tsx'
+import { ReceiptsPanel } from './receipts-view.tsx'
 import {
   workbenchUiRegistryToken,
   type WorkbenchSurfaceContribution,
@@ -43,6 +44,11 @@ export function createCoreUiExtension(controller: WorkbenchController): Workbenc
     )
   }
 
+  function ReceiptsSurface(props: WorkbenchSurfaceProps) {
+    const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+    return <ReceiptsPanel receipts={state.receipts} controller={controller} fullscreen={props.fullscreen} fullscreenProgress={props.fullscreenProgress} {...(props.fullscreenLocked === undefined ? {} : { fullscreenLocked: props.fullscreenLocked })} onToggleFullscreen={props.onToggleFullscreen} onNewSurface={props.onNewSurface} onClose={props.onClose} />
+  }
+
   return {
     id: 'heddlework.core',
     surfaces: [
@@ -57,6 +63,14 @@ export function createCoreUiExtension(controller: WorkbenchController): Workbenc
         order: 40,
         component: DiffSurface,
         onOpen: () => { void controller.refreshWorkspaceDiff() },
+      },
+      {
+        id: 'receipts',
+        title: 'Receipts',
+        description: 'What each turn changed in the workspace.',
+        icon: 'check',
+        order: 45,
+        component: ReceiptsSurface,
       },
       placeholder('agents', 'Agents', 'Watch subagents and workflows run.', 'bot', 50),
     ],

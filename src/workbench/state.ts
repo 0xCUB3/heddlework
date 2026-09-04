@@ -3,6 +3,7 @@ import type { PiSessionTreeOption } from '../pi/session-tree.ts'
 import { BUILTIN_SLASH_COMMANDS } from '../pi/slash-commands.ts'
 import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import { createQueueState, type WorkbenchQueueState } from './queue.ts'
+import type { MutationReceipt } from '../receipts/types.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 export type NoticeKind = 'info' | 'warning' | 'error'
@@ -121,6 +122,7 @@ export interface WorkbenchState {
   questionnaireCollapsed: string | undefined
   editorText: string
   editorImages: ComposerImage[]
+  receipts: MutationReceipt[]
   windowTitle: string
 }
 
@@ -149,6 +151,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     threadLifecycle: {},
     workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
     stats: undefined,
+    receipts: [],
     statusItems: {},
     widgets: {},
     dialog: undefined,

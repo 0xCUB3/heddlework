@@ -40,6 +40,7 @@ export type WorkbenchCommand =
   | { type: 'setEditorText'; text: string }
   | { type: 'addEditorImage'; image: ComposerImage }
   | { type: 'removeEditorImage'; id: string }
+  | { type: 'clearReceipts'; sessionPath: string }
 
 export type WorkbenchCommandType = WorkbenchCommand['type']
 
@@ -49,7 +50,7 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
   'wakeThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
-  'clearNotices', 'setEditorText', 'addEditorImage', 'removeEditorImage',
+  'clearNotices', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts',
 ]
 
 export function isWorkbenchCommand(value: unknown): value is WorkbenchCommand {
@@ -171,6 +172,9 @@ export async function applyWorkbenchCommand(controller: WorkbenchController, com
       return
     case 'addEditorImage':
       controller.addEditorImage(command.image)
+      return
+    case 'clearReceipts':
+      controller.clearReceipts(command.sessionPath)
       return
     case 'removeEditorImage':
       controller.removeEditorImage(command.id)

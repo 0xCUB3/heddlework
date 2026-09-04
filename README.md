@@ -37,7 +37,7 @@ Today, Heddlework is a fast native desktop preview for [Pi](https://github.com/e
 | Fabric presentation | **Available** — rich nested `fabric_exec` activity and audit disclosures |
 | Flows projection | **Preview** — queue/session rails, per-task pages, Triage, sequential and Fabric-parallel intake |
 | Scheduled runtime | **Preview** — durable one-time, interval, and daily jobs that enqueue fresh Pi sessions |
-| Durable dependency graph | **In design** — checkout lanes, retries, mutation receipts, and artifacts |
+| Durable dependency graph | **In design** — checkout lanes and retries; mutation receipts ship in the Receipts surface |
 | Codex adapter | **Planned** |
 | Claude adapter | **Planned** |
 | Signed desktop distribution | **Planned** |
@@ -121,6 +121,10 @@ HEDDLEWORK_DEMO=1 bun run dev:web -- /path/to/repository
 `bun run build:web` writes the browser client to `dist/web`. The host serves those files when `HEDDLEWORK_WEB_ROOT` or `dist/web` is present, and the desktop binary looks next to itself for a `web/` folder. Open the printed connect link to use the same controller from a browser. The host also prints a QR code of the connect URL. Bind with `HEDDLEWORK_HOST_BIND=0.0.0.0` to reach it from a phone on the same network.
 
 The host prints a connect link carrying a bearer token. The token is stored with owner-only permissions under the Heddlework state directory (`host-token`) and the Settings surface has a Copy connect link action. The host binds to `127.0.0.1` unless `HEDDLEWORK_HOST_BIND` says otherwise. Every remote command goes through the same controller as the desktop UI, so Pi stays the single execution authority. The wire contract is documented in [Harness adapter protocol](docs/harness-adapter-protocol.md).
+
+### Receipts
+
+After every turn that changes files, Heddlework records a mutation receipt: the files touched with added, modified, or deleted status, line counts, the patch (up to 200 KiB per file), and the tool names Pi called. Receipts are Heddlework-owned annotations stored in `receipts.json` under the state directory, capped at 200 per session; Pi's transcript is never altered. Open the Receipts surface in the right panel on desktop, or the Diff tab on web and mobile, to review or clear them.
 
 ### Queue behavior
 
@@ -244,7 +248,7 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 - [x] Projection-first Flows with chat-authored sequential queues, participant-truth Fabric graphs, task pages, and Triage
 - [x] Durable one-time, interval, and daily scheduled Flow runtime
 - [ ] Durable dependency graphs and safe checkout lanes
-- [ ] Mutation receipts and artifact review
+- [x] Mutation receipts and artifact review
 - [ ] Signed desktop installers and automatic updates
 - [x] Web workspace client
 - [x] Mobile companion clients
