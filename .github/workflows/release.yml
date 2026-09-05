@@ -22,6 +22,8 @@ concurrency:
 jobs:
   build:
     name: build (${{ matrix.target }})
+    # Tooling prereleases such as gpuix-* carry no app build; only v* tags produce desktop assets.
+    if: startsWith(github.event.release.tag_name || github.ref_name, 'v')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -160,6 +162,7 @@ jobs:
 
   ios:
     name: ios (TestFlight)
+    if: startsWith(github.event.release.tag_name || github.ref_name, 'v')
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
