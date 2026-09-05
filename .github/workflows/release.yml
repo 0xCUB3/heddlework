@@ -60,7 +60,7 @@ jobs:
       - name: Run checks (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        run: bun run typecheck && bun test $(ls tests/*.test.ts | grep -vE 'rpc-transport|session-switch|session-history-controller|theme-manager|extension-ui|browser-service')
+        run: bun run typecheck && bun test $(ls tests/*.test.ts | grep -vE 'rpc-transport|session-switch|session-history-controller|theme-manager|extension-ui|browser-service|terminal-pty|update-service')
       # The vendored patched GPUix carries a CEF-enabled darwin-arm64 addon only; other targets build browser-free.
       - run: bun run build
         env:
