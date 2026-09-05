@@ -41,6 +41,6 @@ The launcher does not redirect output into a file. Run it from a terminal when d
 
 ## Notes for distribution packagers
 
-Install `io.github.monotykamary.heddlework.desktop` after replacing `@HEDDLEWORK_EXEC@` with the package's absolute launcher path. Install `media/heddlework-icon.svg` as `io.github.monotykamary.heddlework.svg` in the platform icon theme.
+Install `io.github.monotykamary.heddlework.desktop` after replacing `@HEDDLEWORK_EXEC@` with the package's absolute launcher path. Install `media/heddlework-icon.svg` as `io.github.monotykamary.heddlework.svg` in the platform icon theme, and the PNG sizes in `packaging/linux/icons/` under the matching `hicolor/<size>x<size>/apps` directories. All of them come from `bun run icons`.
 
 `StartupWMClass=heddlework` is a best-effort X11 hint. GPUIX 0.5.1 does not expose GPUI's application-ID option, so reliable Wayland dock grouping requires an upstream API addition.

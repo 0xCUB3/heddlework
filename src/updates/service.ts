@@ -70,7 +70,7 @@ export class UpdateService {
     this.#options = options
     const platform = options.platform ?? process.platform
     const install = options.install ?? detectInstall({ platform })
-    const enabled = (options.enabled ?? true) && install.kind !== 'source'
+    const enabled = (options.enabled ?? true) && install.kind !== 'source' && install.kind !== 'dev'
     this.#state = {
       enabled,
       status: enabled ? 'idle' : 'disabled',
@@ -84,7 +84,10 @@ export class UpdateService {
       releaseNotes: null,
       downloadPercent: null,
       checkedAt: null,
-      message: enabled ? null : install.kind === 'source' ? 'Automatic updates are only available in packaged builds.' : 'Automatic updates are turned off.',
+      message: enabled ? null
+        : install.kind === 'source' ? 'Automatic updates are only available in packaged builds.'
+        : install.kind === 'dev' ? 'This is a development install; rebuild it with bun run install:dev.'
+        : 'Automatic updates are turned off.',
       errorContext: null,
     }
   }

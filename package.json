@@ -36,6 +36,8 @@
     "build:web": "bun scripts/build-web.ts",
     "dev:web": "bun scripts/dev-web.ts",
     "build": "bun scripts/build.ts",
+    "install:dev": "bun scripts/install-dev.ts",
+    "icons": "bun scripts/generate-icons.ts",
     "gpuix:fetch": "scripts/fetch-gpuix.sh",
     "gpuix:build": "scripts/build-gpuix.sh",
     "smoke:browser": "bun scripts/smoke-browser.ts",

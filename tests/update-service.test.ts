@@ -61,6 +61,8 @@ describe('install detection', () => {
     expect(detectInstall({ platform: 'darwin', execPath: '/Applications/Heddlework.app/Contents/MacOS/heddlework', ...brew }).kind).toBe('homebrew')
     expect(detectInstall({ platform: 'darwin', execPath: '/tmp/other/Heddlework.app/Contents/MacOS/heddlework', ...brew }).kind).toBe('macos-app')
     expect(detectInstall({ platform: 'darwin', execPath: '/usr/local/bin/bun', exists: none }).kind).toBe('source')
+    const dev = (p: string) => p === '/Users/test/Applications/Heddlework Dev.app/Contents/Resources/dev-install.json'
+    expect(detectInstall({ platform: 'darwin', execPath: '/Users/test/Applications/Heddlework Dev.app/Contents/MacOS/Heddlework', exists: dev })).toEqual({ kind: 'dev', root: '/Users/test/Applications/Heddlework Dev.app', managedCommand: 'bun run install:dev' })
     expect(detectInstall({ platform: 'win32', execPath: 'C:\\Users\\me\\scoop\\apps\\heddlework\\current\\heddlework.exe', exists: none }).managedCommand).toBe('scoop update heddlework')
     expect(detectInstall({ platform: 'win32', execPath: 'C:\\Apps\\heddlework\\heddlework.exe', exists: none })).toEqual({ kind: 'windows-portable', root: 'C:\\Apps\\heddlework' })
     expect(detectInstall({ platform: 'linux', execPath: '/usr/lib/heddlework/heddlework', exists: (p) => p === '/usr/bin/apt-get' }).managedCommand).toContain('apt')

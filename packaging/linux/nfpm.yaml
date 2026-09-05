@@ -27,5 +27,20 @@ contents:
     dst: /usr/share/applications/io.github.monotykamary.heddlework.desktop
   - src: ./media/heddlework-icon.svg
     dst: /usr/share/icons/hicolor/scalable/apps/io.github.monotykamary.heddlework.svg
+  # Raster sizes for desktops that do not render SVG icons (older GNOME shells, some panels); scripts/generate-icons.ts makes them.
+  - src: ./packaging/linux/icons/16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/io.github.monotykamary.heddlework.png
+  - src: ./packaging/linux/icons/32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/io.github.monotykamary.heddlework.png
+  - src: ./packaging/linux/icons/48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/io.github.monotykamary.heddlework.png
+  - src: ./packaging/linux/icons/64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/io.github.monotykamary.heddlework.png
+  - src: ./packaging/linux/icons/128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/io.github.monotykamary.heddlework.png
+  - src: ./packaging/linux/icons/256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/io.github.monotykamary.heddlework.png
+  - src: ./packaging/linux/icons/512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/io.github.monotykamary.heddlework.png
   - src: ./LICENSE
     dst: /usr/share/doc/heddlework/copyright

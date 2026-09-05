@@ -11,6 +11,10 @@ const appVersion = (process.env.HEDDLEWORK_VERSION ?? packageVersion).replace(/^
 const dist = resolve(root, 'dist')
 const nativeDirectory = resolveNativeDirectory()
 const withoutChromium = process.env.HEDDLEWORK_WITHOUT_CEF === '1'
+// scripts/install-dev.ts sets this so the bundle can sit beside a release install with its own name and identifier.
+const devInstall = process.env.HEDDLEWORK_DEV_INSTALL === '1'
+const bundleName = devInstall ? 'Heddlework Dev' : 'Heddlework'
+const bundleIdentifier = devInstall ? 'io.github.monotykamary.heddlework.dev' : 'io.github.monotykamary.heddlework'
 const cefDirectory = nativeDirectory && !withoutChromium ? resolve(nativeDirectory, 'cef') : undefined
 const bundleChromium = process.platform === 'darwin' && cefDirectory != null && existsSync(cefDirectory)
 let cefStagingRoot: string | undefined
@@ -43,8 +47,17 @@ try {
     rmSync(resolve(dist, 'web'), { recursive: true, force: true })
   }
 
-  const compile: { outfile: string; target?: Bun.Build.CompileTarget } = { outfile: output }
+  const compile: { outfile: string; target?: Bun.Build.CompileTarget; windows?: { icon: string; title: string; publisher: string; description: string } } = { outfile: output }
   if (process.env.COMPILE_TARGET) compile.target = process.env.COMPILE_TARGET as Bun.Build.CompileTarget
+  // Bun embeds the icon and version resources into Windows executables at compile time.
+  if ((compile.target ?? `bun-${process.platform}`).startsWith('bun-windows')) {
+    compile.windows = {
+      icon: resolve(root, 'packaging', 'windows', 'heddlework.ico'),
+      title: 'Heddlework',
+      publisher: 'Heddlework',
+      description: 'Workspace for coding-agent sessions, task graphs, and diffs',
+    }
+  }
 
   const result = await Bun.build({
     entrypoints: [resolve(root, 'src/main.tsx')],
@@ -124,6 +137,10 @@ function packageMacApp(bundle: string, cefSource: string, executable: string): v
   const icon = resolve(root, 'packaging', 'macos', 'Heddlework.icns')
   if (existsSync(icon)) cpSync(icon, resolve(resources, 'Heddlework.icns'))
   writeFileSync(resolve(contents, 'Info.plist'), appInfoPlist())
+  if (devInstall) {
+    // src/updates/installer.ts reads this and reports the install as a development build so the updater leaves it alone.
+    writeFileSync(resolve(resources, 'dev-install.json'), `${JSON.stringify({ repository: root, builtAt: new Date().toISOString() }, null, 2)}\n`)
+  }
 
   const launcher = resolve(dist, 'heddlework')
   symlinkSync(relative(dist, executable), launcher)
@@ -282,11 +299,11 @@ function appInfoPlist(): string {
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
-  <key>CFBundleDisplayName</key><string>Heddlework</string>
+  <key>CFBundleDisplayName</key><string>${bundleName}</string>
   <key>CFBundleExecutable</key><string>Heddlework</string>
-  <key>CFBundleIdentifier</key><string>io.github.monotykamary.heddlework</string>
+  <key>CFBundleIdentifier</key><string>${bundleIdentifier}</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>Heddlework</string>
+  <key>CFBundleName</key><string>${bundleName}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${appVersion}</string>
   <key>CFBundleSignature</key><string>????</string>

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, posix, resolve, win32 } from 'node:path'
 import type { ReleaseAsset } from './feed.ts'
 
-export type InstallKind = 'macos-app' | 'linux-portable' | 'windows-portable' | 'homebrew' | 'scoop' | 'linux-package' | 'source'
+export type InstallKind = 'macos-app' | 'linux-portable' | 'windows-portable' | 'homebrew' | 'scoop' | 'linux-package' | 'source' | 'dev'
 
 export interface InstallLocation {
   kind: InstallKind
@@ -70,6 +70,8 @@ export function detectInstall(options: DetectInstallOptions = {}): InstallLocati
     if (!match) return { kind: 'source', root: dirname(execPath) }
     const root = match[1]!
     if (homebrewOwns(root, exists, realpath, readdir)) return { kind: 'homebrew', root, managedCommand: 'brew upgrade --cask heddlework' }
+    // scripts/install-dev.ts builds bundles from a checkout; those are refreshed by the watcher, not by releases.
+    if (exists(`${root}/Contents/Resources/dev-install.json`)) return { kind: 'dev', root, managedCommand: 'bun run install:dev' }
     return { kind: 'macos-app', root }
   }
   if (platform === 'win32') {

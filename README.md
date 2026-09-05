@@ -313,6 +313,14 @@ bun run test
 bun run build
 ```
 
+### Local install that tracks your changes
+
+`bun run install:dev` builds the Chromium-bundled app and installs it as `~/Applications/Heddlework Dev.app`, with its own bundle identifier so it sits beside a release install. Add `--watch` to rebuild and relaunch it whenever `src/`, `scripts/`, or `packaging/` change (a rebuild takes about ten seconds). `--dir <folder>` or `HEDDLEWORK_DEV_DIR` picks another folder, and `--no-launch` skips opening it. The updater recognises these bundles and stays out of the way.
+
+### Icons
+
+Every platform icon derives from `media/heddlework-icon.svg`. `bun run icons` regenerates the macOS `.icns`, the Windows `.ico`, the Linux hicolor PNG set, the PWA PNGs, and the iOS marketing icon; it needs macOS for `sips` and `iconutil`. Commit the outputs, since CI on the other platforms only consumes them.
+
 ### Patched GPUix
 
 The native terminal, the Chromium panel, shimmer text, and a few motion and event fixes need changes to GPUix that are not in the published `@gpuix/*` packages yet. `patches/gpuix-0.7.0-heddlework.patch` carries them. `package.json` pins `@gpuix/react` and `@gpuix/native` to tarballs under `vendor/gpuix/`, which are gitignored and come from one of two places.

@@ -7,13 +7,17 @@ data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
 bin_dir=${HEDDLEWORK_BIN_DIR:-"$HOME/.local/bin"}
 app_dir=${HEDDLEWORK_APP_DIR:-"$data_home/heddlework"}
 applications_dir="$data_home/applications"
-icons_dir="$data_home/icons/hicolor/scalable/apps"
+icons_root="$data_home/icons/hicolor"
+icons_dir="$icons_root/scalable/apps"
 desktop_id=io.github.monotykamary.heddlework
 launcher="$bin_dir/heddlework"
 installed_binary="$app_dir/heddlework"
 icon="$icons_dir/$desktop_id.svg"
 desktop_file="$applications_dir/$desktop_id.desktop"
 template="$repo_root/packaging/linux/$desktop_id.desktop"
+# In the source tree the SVG lives in media/; the release tarball keeps a copy beside the PNG set under packaging/linux/icons.
+icon_source="$repo_root/media/heddlework-icon.svg"
+[ -f "$icon_source" ] || icon_source="$repo_root/packaging/linux/icons/heddlework-icon.svg"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -78,7 +82,13 @@ esac
 
 install -d "$app_dir" "$bin_dir" "$applications_dir" "$icons_dir"
 install -m 755 "$source_binary" "$installed_binary"
-install -m 644 "$repo_root/media/heddlework-icon.svg" "$icon"
+install -m 644 "$icon_source" "$icon"
+for size in 16 32 48 64 128 256 512; do
+  raster="$repo_root/packaging/linux/icons/$size.png"
+  [ -f "$raster" ] || continue
+  install -d "$icons_root/${size}x${size}/apps"
+  install -m 644 "$raster" "$icons_root/${size}x${size}/apps/$desktop_id.png"
+done
 
 umask 077
 {
@@ -108,6 +118,9 @@ desktop_exec=$(printf '%s' "$launcher" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g;
 } > "$desktop_file"
 chmod 600 "$desktop_file"
 
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -t "$icons_root" >/dev/null 2>&1 || true
+fi
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
 fi
