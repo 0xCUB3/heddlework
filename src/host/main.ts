@@ -17,7 +17,7 @@ import { createReceiptPlugin } from '../receipts/plugin.ts'
 import { createCheckoutLanePlugin } from '../workspace/checkout-lanes.ts'
 import { receiptStorePath } from '../receipts/store.ts'
 import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './plugin.ts'
-import { hostConnectUrl, lanConnectUrl } from './server.ts'
+import { hostConnectUrl, lanConnectUrl, remoteConnectUrls } from './server.ts'
 import { qrAscii } from '../web/qr.ts'
 import { resolveStaticRoot } from './static-root.ts'
 import { hostTokenPath } from './token.ts'
@@ -71,7 +71,7 @@ process.once('SIGTERM', shutdown)
 console.log(`Heddlework host serving ${workspacePath}`)
 console.log(`  url     ${host.url}`)
 console.log(`  connect ${hostConnectUrl(host)}`)
-if (host.hostname === '0.0.0.0' || host.hostname === '::') console.log(`  lan     ${lanConnectUrl(host)}`)
+for (const remote of remoteConnectUrls(host)) console.log(`  ${remote.kind.padEnd(7)} ${remote.url}`)
 if (!demoMode) console.log(`  token   ${hostTokenPath()}`)
 console.log(qrAscii(lanConnectUrl(host)))
 void controller.start()

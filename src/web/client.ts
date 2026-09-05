@@ -13,11 +13,15 @@ export interface WorkspaceClientView {
 
 const MIN_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 10_000
+// After this many failed attempts on one address the client tries the next one the host advertised.
+const FAILURES_BEFORE_ROTATE = 2
 
 export class WorkspaceClient {
   #socket: WebSocket | undefined
   #url = ''
   #token = ''
+  #candidates: string[] = []
+  #failures = 0
   #wantOpen = false
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #backoff = MIN_BACKOFF_MS
@@ -26,10 +30,12 @@ export class WorkspaceClient {
   #listeners = new Set<() => void>()
   #view: WorkspaceClientView = { status: 'closed', workspacePath: '', state: undefined, flows: undefined }
 
-  connect(url: string, token: string): void {
+  connect(url: string, token: string, alternates: readonly string[] = []): void {
     this.disconnect()
     this.#url = url
     this.#token = token
+    this.#candidates = mergeCandidates(url, alternates)
+    this.#failures = 0
     this.#wantOpen = true
     this.#backoff = MIN_BACKOFF_MS
     this.#open()
@@ -54,6 +60,15 @@ export class WorkspaceClient {
     return this.#view
   }
 
+  // The address currently in use; changes when the client rotates to a host-advertised fallback.
+  get url(): string {
+    return this.#url
+  }
+
+  get candidates(): readonly string[] {
+    return this.#candidates
+  }
+
   send(command: WorkbenchCommand): Promise<void> {
     const socket = this.#socket
     if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Not connected'))
@@ -71,6 +86,7 @@ export class WorkspaceClient {
     socket.addEventListener('open', () => {
       if (this.#socket !== socket) return
       this.#backoff = MIN_BACKOFF_MS
+      this.#failures = 0
       socket.send(JSON.stringify({ kind: 'hello', protocol: 1 }))
     })
     socket.addEventListener('message', (event) => {
@@ -78,6 +94,7 @@ export class WorkspaceClient {
       const message = parseServerMessage(typeof event.data === 'string' ? event.data : undefined)
       if (!message) return
       if (message.kind === 'welcome') {
+        this.#candidates = mergeCandidates(this.#url, message.hostUrls)
         this.#set({ status: 'open', workspacePath: message.workspacePath, state: message.snapshot, flows: message.flows })
         return
       }
@@ -104,12 +121,22 @@ export class WorkspaceClient {
       this.#socket = undefined
       this.#failPending(new Error('Socket closed'))
       this.#set({ status: 'closed' })
+      this.#failures += 1
+      this.#rotateIfStuck()
       this.#scheduleReconnect()
     })
     socket.addEventListener('error', () => {
       if (this.#socket !== socket) return
       this.#set({ lastError: 'Socket error' })
     })
+  }
+
+  #rotateIfStuck(): void {
+    if (this.#failures < FAILURES_BEFORE_ROTATE || this.#candidates.length < 2) return
+    const index = this.#candidates.indexOf(this.#url)
+    this.#url = this.#candidates[(index + 1) % this.#candidates.length] ?? this.#url
+    this.#failures = 0
+    this.#backoff = MIN_BACKOFF_MS
   }
 
   #scheduleReconnect(): void {
@@ -132,6 +159,18 @@ export class WorkspaceClient {
     this.#view = { ...this.#view, ...patch }
     for (const listener of this.#listeners) listener()
   }
+}
+
+// The address that worked stays first; host-advertised alternates follow in the host's preference order.
+export function mergeCandidates(current: string, advertised: readonly string[] | undefined): string[] {
+  const normalize = (value: string) => value.replace(/\/+$/, '')
+  const seen = new Set<string>([normalize(current)])
+  const merged = [normalize(current)]
+  for (const url of advertised ?? []) {
+    const clean = normalize(url)
+    if (!seen.has(clean)) { seen.add(clean); merged.push(clean) }
+  }
+  return merged
 }
 
 export function workspaceSocketUrl(hostUrl: string, token: string): string {

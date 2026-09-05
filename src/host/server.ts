@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs'
-import { networkInterfaces } from 'node:os'
 import { join, normalize, resolve } from 'node:path'
 import type { FlowRuntime } from '../flows/runtime.ts'
+import { advertiseCandidates, type AdvertiseCandidate } from './advertise.ts'
 import {
   applyWorkbenchCommand,
   diffSnapshots,
@@ -70,7 +70,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
         sockets.add(socket)
         const snapshot = serializeSnapshot(options.controller.getSnapshot())
         socket.data.lastSnapshot = snapshot
-        send(socket, { kind: 'welcome', protocol: PROTOCOL_VERSION, workspacePath: options.workspacePath, snapshot, flows: options.flows.getSnapshot() })
+        send(socket, { kind: 'welcome', protocol: PROTOCOL_VERSION, workspacePath: options.workspacePath, snapshot, flows: options.flows.getSnapshot(), hostUrls: remoteHostUrls(hostname, server.port ?? options.port) })
       },
       close(socket) {
         sockets.delete(socket)
@@ -150,18 +150,34 @@ export function hostConnectUrl(host: Pick<WorkspaceHost, 'url' | 'token'>): stri
 }
 
 export function lanIPv4(): string | undefined {
-  for (const addresses of Object.values(networkInterfaces())) {
-    for (const address of addresses ?? []) {
-      if (address.family === 'IPv4' && !address.internal) return address.address
-    }
-  }
-  return undefined
+  return advertiseCandidates().find((candidate) => candidate.kind === 'lan')?.address
 }
 
+// The link a phone should use: an explicit HEDDLEWORK_HOST_ADVERTISE, else Tailscale, else LAN, else the bound address.
 export function lanConnectUrl(host: Pick<WorkspaceHost, 'port' | 'hostname' | 'token' | 'url'>): string {
-  if (host.hostname !== '0.0.0.0' && host.hostname !== '::') return hostConnectUrl(host)
-  const ip = lanIPv4() ?? '127.0.0.1'
-  return `http://${ip}:${host.port}/?token=${encodeURIComponent(host.token)}`
+  return remoteConnectUrls(host)[0]?.url ?? hostConnectUrl(host)
+}
+
+// Base URLs (no token) a remote client can try if its current address stops working.
+export function remoteHostUrls(hostname: string, port: number): string[] {
+  if (hostname !== '0.0.0.0' && hostname !== '::') return []
+  return advertiseCandidates().map((candidate) => `http://${formatHost(candidate.address)}:${port}`)
+}
+
+export interface RemoteConnectUrl {
+  kind: AdvertiseCandidate['kind']
+  url: string
+}
+
+// Every address a device off this machine could reach, best first. Empty when the host is loopback-only.
+export function remoteConnectUrls(host: Pick<WorkspaceHost, 'port' | 'hostname' | 'token' | 'url'>): RemoteConnectUrl[] {
+  if (host.hostname !== '0.0.0.0' && host.hostname !== '::') return []
+  const token = encodeURIComponent(host.token)
+  return advertiseCandidates().map((candidate) => ({ kind: candidate.kind, url: `http://${formatHost(candidate.address)}:${host.port}/?token=${token}` }))
+}
+
+function formatHost(address: string): string {
+  return address.includes(':') && !address.startsWith('[') ? `[${address}]` : address
 }
 
 function authorized(request: Request, url: URL, token: string): boolean {

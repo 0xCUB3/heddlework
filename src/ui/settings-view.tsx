@@ -1,6 +1,6 @@
 import React from 'react'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
-import { hostConnectUrl, lanConnectUrl, type WorkspaceHost } from '../host/server.ts'
+import { hostConnectUrl, lanConnectUrl, remoteConnectUrls, type WorkspaceHost } from '../host/server.ts'
 import type { PluginHost } from '../plugins/host.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
@@ -10,6 +10,16 @@ import { Button } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 import { useResponsiveLayout } from './responsive.tsx'
+
+function remoteLabel(kind: ReturnType<typeof remoteConnectUrls>[number]['kind']): string {
+  switch (kind) {
+    case 'custom': return 'Phone link'
+    case 'tailscale': return 'Tailscale link'
+    case 'lan': return 'LAN link'
+    case 'other': return 'Network link'
+    default: return 'Local link'
+  }
+}
 
 export function SettingsView({
   state,
@@ -63,9 +73,9 @@ export function SettingsView({
             <SettingsSection title="Remote access" description="Web and mobile companions connect to this desktop process over the workspace host protocol.">
               <SettingsRow testId="settings-host-url" icon="circle" label="Host" value={host.url} tone="success" />
               <SettingsRow icon="panel" label="Bound to" value={host.hostname === '127.0.0.1' ? 'This computer only' : `${host.hostname} (network)`} />
-              {host.hostname === '0.0.0.0' || host.hostname === '::' ? (
-                <SettingsRow icon="circle" label="Phone link" value={lanConnectUrl(host)} />
-              ) : null}
+              {remoteConnectUrls(host).map((remote) => (
+                <SettingsRow key={remote.url} icon="circle" label={remoteLabel(remote.kind)} value={remote.url} />
+              ))}
               <SettingsActions>
                 <Button label="Copy connect link" compact onClick={() => void copyTextToClipboard(host.hostname === '0.0.0.0' || host.hostname === '::' ? lanConnectUrl(host) : hostConnectUrl(host)).then((copied) => controller.notify(copied ? 'info' : 'warning', copied ? 'Copied host connect link with token' : 'No system clipboard command is available'))} />
               </SettingsActions>

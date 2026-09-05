@@ -32,7 +32,7 @@ The execution methods stay the same as `AgentTransport`: `start`, `stop`, `reque
 
 ## Wire messages
 
-`ClientMessage` is `hello`, `command` (with a numeric `id`), or `ping`. `ServerMessage` is `welcome` (protocol, workspace path, snapshot, flow runtime snapshot), `patch`, `flows`, `result` (matched to a command `id`), `error`, or `pong`. `parseClientMessage` and `parseServerMessage` accept raw strings or objects and return `undefined` on malformed input.
+`ClientMessage` is `hello`, `command` (with a numeric `id`), or `ping`. `ServerMessage` is `welcome` (protocol, workspace path, snapshot, flow runtime snapshot, and optional `hostUrls` listing every base URL a remote client can reach this host on so it can rotate when one path drops), `patch`, `flows`, `result` (matched to a command `id`), `error`, or `pong`. `parseClientMessage` and `parseServerMessage` accept raw strings or objects and return `undefined` on malformed input.
 
 ## Browser safety
 

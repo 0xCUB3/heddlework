@@ -8,7 +8,7 @@ export type ClientMessage =
   | { kind: 'ping' }
 
 export type ServerMessage =
-  | { kind: 'welcome'; protocol: number; workspacePath: string; snapshot: WorkbenchSnapshot; flows: FlowRuntimeSnapshot }
+  | { kind: 'welcome'; protocol: number; workspacePath: string; snapshot: WorkbenchSnapshot; flows: FlowRuntimeSnapshot; hostUrls?: string[] }
   | { kind: 'patch'; patch: SnapshotPatch }
   | { kind: 'flows'; snapshot: FlowRuntimeSnapshot }
   | { kind: 'result'; id: number; ok: true }

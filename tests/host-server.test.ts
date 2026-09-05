@@ -100,6 +100,7 @@ describe('workspace host server', () => {
     if (welcome.kind !== 'welcome') throw new Error('expected welcome')
     expect(welcome.protocol).toBe(1)
     expect(welcome.workspacePath).toBe(WORKSPACE)
+    expect(welcome.hostUrls).toEqual([])
     expect(welcome.snapshot.connection).toBe('connected')
     expect(host.connectionCount()).toBe(1)
 

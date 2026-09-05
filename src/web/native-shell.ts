@@ -1,7 +1,7 @@
 // Detects the native iOS shell, which injects window.heddleworkNative before the client loads.
 declare global {
   interface Window {
-    heddleworkNative?: { platform: 'ios' }
+    heddleworkNative?: { platform: 'ios' } | undefined
     webkit?: { messageHandlers?: Record<string, { postMessage(message: unknown): void }> }
   }
 }

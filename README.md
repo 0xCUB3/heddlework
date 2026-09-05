@@ -124,7 +124,7 @@ bun run host -- /path/to/repository
 HEDDLEWORK_DEMO=1 bun run dev:web -- /path/to/repository
 ```
 
-`bun run build:web` writes the browser client to `dist/web`. The host serves those files when `HEDDLEWORK_WEB_ROOT` or `dist/web` is present, and the desktop binary looks next to itself for a `web/` folder. Open the printed connect link to use the same controller from a browser. The host also prints a QR code of the connect URL. Bind with `HEDDLEWORK_HOST_BIND=0.0.0.0` to reach it from a phone on the same network.
+`bun run build:web` writes the browser client to `dist/web`. The host serves those files when `HEDDLEWORK_WEB_ROOT` or `dist/web` is present, and the desktop binary looks next to itself for a `web/` folder. Open the printed connect link to use the same controller from a browser. The host also prints a QR code of the connect URL. Bind with `HEDDLEWORK_HOST_BIND=0.0.0.0` to reach it from a phone. The host prints one link per reachable address, Tailscale first when the Mac is on a tailnet, then LAN, and the QR code carries the first one. `HEDDLEWORK_HOST_ADVERTISE` overrides that choice.
 
 The host prints a connect link carrying a bearer token. The token is stored with owner-only permissions under the Heddlework state directory (`host-token`) and the Settings surface has a Copy connect link action. The host binds to `127.0.0.1` unless `HEDDLEWORK_HOST_BIND` says otherwise. Every remote command goes through the same controller as the desktop UI, so Pi stays the single execution authority. The wire contract is documented in [Harness adapter protocol](docs/harness-adapter-protocol.md).
 
@@ -217,6 +217,7 @@ HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
 | `HEDDLEWORK_HOST=1` | Serve the workspace host protocol from the desktop process for web and mobile companions |
 | `HEDDLEWORK_HOST_PORT` | Host port (default `4817`) |
 | `HEDDLEWORK_HOST_BIND` | Host bind address (default `127.0.0.1`; use `0.0.0.0` to reach it from a phone on the same network) |
+| `HEDDLEWORK_HOST_ADVERTISE` | Address to put in the printed link and QR code when bound to `0.0.0.0`. Unset picks Tailscale, then LAN; `lan` prefers LAN; any IP or MagicDNS name is used as given |
 | `HEDDLEWORK_WEB_ROOT` | Directory of a built web client to serve from the host |
 | `HEDDLEWORK_UPDATE_CHECK=0` | Skip the startup release check |
 | `HEDDLEWORK_TRUST_WORKSPACE=1` | Load workspace-local plugins from `.heddlework/plugins` without the Settings trust toggle |

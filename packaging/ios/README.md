@@ -22,7 +22,7 @@ On the Mac:
 HEDDLEWORK_HOST_BIND=0.0.0.0 bun run host
 ```
 
-On the phone, paste the printed connect link, scan the QR code, or open a deep link of the form `heddlework://connect?url=<percent-encoded connect link>`. The shell stores the link and reopens straight into the workspace; Settings → Disconnect clears it.
+If the Mac is on Tailscale the printed link and QR code use the tailnet address, so the phone can connect from anywhere; otherwise they use the LAN address. On the phone, paste the printed connect link, scan the QR code, or open a deep link of the form `heddlework://connect?url=<percent-encoded connect link>`. The shell stores the link and reopens straight into the workspace; Settings → Disconnect clears it.
 
 ## Xcode Cloud
 
