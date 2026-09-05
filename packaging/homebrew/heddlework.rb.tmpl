@@ -1,0 +1,33 @@
+cask "heddlework" do
+  version "@VERSION@"
+  sha256 arm:   "@SHA_ARM64@",
+         intel: "@SHA_X64@"
+
+  on_arm do
+    url "https://github.com/0xCUB3/heddlework/releases/download/v#{version}/heddlework-macos-arm64.zip",
+        verified: "github.com/0xCUB3/heddlework/"
+  end
+  on_intel do
+    url "https://github.com/0xCUB3/heddlework/releases/download/v#{version}/heddlework-macos-x64.zip",
+        verified: "github.com/0xCUB3/heddlework/"
+  end
+
+  name "Heddlework"
+  desc "Workspace for coding-agent sessions, task graphs, and diffs"
+  homepage "https://github.com/0xCUB3/heddlework"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: :monterey
+
+  app "Heddlework.app"
+  binary "#{appdir}/Heddlework.app/Contents/MacOS/heddlework"
+
+  zap trash: [
+    "~/.heddlework",
+    "~/Library/Application Support/heddlework",
+  ]
+end

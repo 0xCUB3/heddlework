@@ -4,7 +4,9 @@ The release workflow compiles `heddlework.exe` with `bun build --compile` for `b
 
 When the repository has `WINDOWS_CERT_PFX` (base64 PFX) and `WINDOWS_CERT_PASSWORD` secrets, the workflow signs the executable with `signtool sign /fd sha256 /tr http://timestamp.digicert.com` before zipping. Without those secrets the asset is named `-unsigned` and SmartScreen will warn on first launch; choose More info, then Run anyway.
 
-To run:
+Package managers: `scoop bucket add heddlework https://github.com/0xCUB3/scoop-heddlework && scoop install heddlework`, or `winget install 0xCUB3.Heddlework` after the first winget-pkgs manifest is merged. The release workflow renders `heddlework.json.tmpl` into the Scoop bucket and updates winget with Komac on each stable release.
+
+To run the zip directly:
 
 1. Extract the zip anywhere.
 2. Set `HEDDLEWORK_PI` to the path of the Pi CLI if it is not on `PATH`.

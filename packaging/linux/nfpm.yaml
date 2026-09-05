@@ -1,0 +1,31 @@
+# nfpm config for the Linux .deb and .rpm packages. The release workflow runs this after `bun run build`.
+name: heddlework
+arch: amd64
+platform: linux
+version: ${HEDDLEWORK_VERSION}
+section: devel
+priority: optional
+maintainer: Alexander Skula <alex@0xcube.dev>
+description: |
+  Native, harness-neutral workspace for agent sessions, task graphs, diffs, and durable work.
+vendor: Heddlework
+homepage: https://github.com/0xCUB3/heddlework
+license: MIT
+contents:
+  # The binary and the web client live together because the host looks for `web/` next to the executable.
+  - src: ./dist/heddlework
+    dst: /usr/lib/heddlework/heddlework
+    file_info:
+      mode: 0755
+  - src: ./dist/web
+    dst: /usr/lib/heddlework/web
+  - src: ./packaging/linux/heddlework-launcher
+    dst: /usr/bin/heddlework
+    file_info:
+      mode: 0755
+  - src: ./stage/pkg/io.github.monotykamary.heddlework.desktop
+    dst: /usr/share/applications/io.github.monotykamary.heddlework.desktop
+  - src: ./media/heddlework-icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/io.github.monotykamary.heddlework.svg
+  - src: ./LICENSE
+    dst: /usr/share/doc/heddlework/copyright

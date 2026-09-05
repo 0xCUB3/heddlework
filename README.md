@@ -162,16 +162,31 @@ Pi does not currently expose RPC operations for `/scoped-models`, `/import`, `/s
 
 Extension interactions are hosted in the main conversation area rather than embedded in the composer. Heddlework queues concurrent requests, shows searchable described choices and timeout countdowns, renders extension statuses, discovers slash commands, and retains visible custom-message media. Known contracts add a full tabbed `ask_user_question` questionnaire and recursive `/fabric settings` navigation without moving execution or persistence authority out of Pi. See [Pi extension UI](docs/pi-extension-ui.md).
 
+## Install from a package manager
+
+Every published GitHub release also feeds the package channels below. Prereleases (tags with a `-` suffix) stay on GitHub Releases only.
+
+| Platform | Command |
+| --- | --- |
+| macOS (Homebrew) | `brew install --cask 0xCUB3/heddlework/heddlework` |
+| Windows (Scoop) | `scoop bucket add heddlework https://github.com/0xCUB3/scoop-heddlework` then `scoop install heddlework` |
+| Windows (winget) | `winget install 0xCUB3.Heddlework` once the first manifest lands in winget-pkgs |
+| Debian, Ubuntu | download `heddlework-linux-x64.deb` from the release and `sudo apt install ./heddlework-linux-x64.deb` |
+| Fedora, openSUSE | download `heddlework-linux-x64.rpm` and `sudo dnf install ./heddlework-linux-x64.rpm` |
+| iOS | TestFlight; every release uploads a build |
+
+The macOS app is signed with a Developer ID certificate and notarised. The Homebrew cask also links `heddlework` onto `PATH`. The Linux packages install the binary under `/usr/lib/heddlework`, a `heddlework` launcher in `/usr/bin`, and a desktop entry.
+
 ## Install later: product channels
 
-These channels describe what is still ahead; everything else in this README ships from source or from tagged GitHub Releases today.
+These channels describe what is still ahead.
 
 | Channel | Intended path |
 | --- | --- |
 | Codex and Claude adapters | Additional `HarnessAdapter` implementations behind the same protocol |
-| Signed desktop builds | The release workflow signs and notarises once certificate secrets are configured; until then assets are unsigned |
+| Signed Windows builds | The workflow signs `heddlework.exe` once `WINDOWS_CERT_PFX` is set; until then the zip is `-unsigned` |
 | In-place updates | The startup check announces new releases; downloading and replacing the app stays manual |
-| Mobile | Android wrapper; the iOS shell ships through TestFlight and the PWA installs to the home screen on both platforms |
+| Android | Wrapper app; the PWA installs to the home screen today |
 
 ### Web workspace client
 
@@ -183,7 +198,7 @@ The same client is installable. On iOS Safari use Share → Add to Home Screen. 
 
 ### iOS app
 
-`packaging/ios/` holds a native SwiftUI shell that bundles the built web client in a `WKWebView`, adds a QR scanner and a `heddlework://connect?url=…` deep link, and remembers the host. It is generated with xcodegen and built by Xcode Cloud for TestFlight; see `packaging/ios/README.md`.
+`packaging/ios/` holds a native SwiftUI shell that bundles the built web client in a `WKWebView`, adds a QR scanner and a `heddlework://connect?url=…` deep link, and remembers the host. It is generated with xcodegen and uploaded to TestFlight by the release workflow; see `packaging/ios/README.md`.
 
 The desktop application remains the primary environment for local repositories, terminals, worktrees, and native agent processes. Web and mobile stay additional surfaces over the same workspace model, not separate products.
 

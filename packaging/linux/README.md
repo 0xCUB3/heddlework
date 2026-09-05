@@ -1,6 +1,6 @@
-# Linux desktop integration
+# Linux packaging
 
-Heddlework does not ship a signed Linux package yet. This directory provides a desktop-entry template and a user-local installer for the current unsigned source preview.
+Each release ships `heddlework-linux-x64.deb` and `heddlework-linux-x64.rpm`, built by nfpm from `nfpm.yaml`. They install the binary and web client under `/usr/lib/heddlework`, the `heddlework-launcher` script as `/usr/bin/heddlework`, a desktop entry, and the icon. The tarball remains for distributions without either format; this directory also provides the desktop-entry template and a user-local installer for it.
 
 ## Install the source preview
 

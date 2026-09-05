@@ -1,0 +1,6 @@
+#!/bin/sh
+# Launcher installed to /usr/bin by the deb and rpm packages.
+# The real binary stays in /usr/lib/heddlework so it finds the web client beside it.
+set -eu
+cd "${HEDDLEWORK_WORKSPACE:-$PWD}"
+exec /usr/lib/heddlework/heddlework "$@"

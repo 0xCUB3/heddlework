@@ -1,0 +1,23 @@
+{
+  "version": "@VERSION@",
+  "description": "Workspace for coding-agent sessions, task graphs, and diffs",
+  "homepage": "https://github.com/0xCUB3/heddlework",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/0xCUB3/heddlework/releases/download/v@VERSION@/@WIN_ASSET@",
+      "hash": "@SHA_WIN@",
+      "extract_dir": "heddlework"
+    }
+  },
+  "bin": "heddlework.exe",
+  "shortcuts": [["heddlework.exe", "Heddlework"]],
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/0xCUB3/heddlework/releases/download/v$version/@WIN_ASSET@"
+      }
+    }
+  }
+}
