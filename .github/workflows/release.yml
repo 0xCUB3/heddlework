@@ -14,6 +14,11 @@ permissions:
 env:
   RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
 
+# Creating a release also pushes its tag; keep one run per tag.
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: build (${{ matrix.target }})
