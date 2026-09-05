@@ -8,27 +8,37 @@ import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
 import { colors, nativeTheme } from './theme.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
 export function ChatHeader({
   state,
   controller,
   diffOpen,
+  terminalOpen = false,
   leftSidebarProgress,
   onToggleDiff,
+  onToggleTerminal,
 }: {
   state: WorkbenchState
   controller: WorkbenchController
   diffOpen: boolean
+  terminalOpen?: boolean
   leftSidebarProgress: number
   onToggleDiff(): void
+  onToggleTerminal?(): void
 }) {
   const projectName = basename(state.workspacePath) || state.workspacePath
   const title = activeThreadTitle(state)
   const layout = useResponsiveLayout()
   const collapsedLeftInset = process.platform === 'darwin' ? 132 : 54
   return (
-    <div style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 5 : 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: layout.mobile ? 8 : 12, backgroundColor: colors.background, userSelect: 'none' }}>
+    <MotionDiv
+      initial={false}
+      animate={{ paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress) }}
+      transition={LAYOUT_MOTION_TRANSITION}
+      style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 5 : 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: layout.mobile ? 8 : 12, backgroundColor: colors.background, userSelect: 'none' }}
+    >
       <div testId="chat-breadcrumb" style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
         {!layout.mobile && (
           <>
@@ -52,9 +62,10 @@ export function ChatHeader({
             <Button testId="header-export" label="Export" compact disabled={state.messages.length === 0} onClick={() => void controller.exportSession()} />
           </>
         ))}
+        {onToggleTerminal && <IconButton icon="panelBottom" label="Toggle terminal panel" testId="toggle-terminal" active={terminalOpen} onClick={onToggleTerminal} />}
         <IconButton icon="panel" label="Toggle Diff panel" testId="toggle-diff" active={diffOpen} onClick={onToggleDiff} />
       </div>
-    </div>
+    </MotionDiv>
   )
 }
 

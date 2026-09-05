@@ -3,7 +3,7 @@ import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
-import { MotionDiv } from './motion.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 
 export function composerNotificationStackHeight(noticeCount: number): number {
@@ -165,8 +165,8 @@ export function NotificationLedgerView({ state, fullscreen = false, fullscreenPr
   const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
   const trafficLightInset = process.platform === 'darwin' ? 96 * titlebarProgress : 0
   return (
-    <div testId="notification-panel" style={{ width: panelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
-      <div testId="notification-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14 + trafficLightInset, paddingRight: 14 }}>
+    <div testId="notification-panel" style={{ width: fullscreen ? '100%' : panelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
+      <MotionDiv initial={false} animate={{ paddingLeft: 14 + trafficLightInset }} transition={LAYOUT_MOTION_TRANSITION} testId="notification-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14 + trafficLightInset, paddingRight: 14 }}>
         <Icon name="bell" size={15} color={colors.textMuted} />
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Notifications</text>
         <div style={{ flexGrow: 1 }} />
@@ -179,7 +179,7 @@ export function NotificationLedgerView({ state, fullscreen = false, fullscreenPr
             </div>
           ))}
         {onClose && <IconButton icon="x" label="Close notifications" testId="notification-panel-close" onClick={onClose} />}
-      </div>
+      </MotionDiv>
       <NativeVirtualList testId="notification-list" alignment="top" estimatedItemHeight={52} overdraw={300} itemCount={Math.max(1, notices.length)} windowStart={virtualWindow.windowStart} onVisibleRange={virtualWindow.onVisibleRange} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {notices.length === 0 ? (
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 180, gap: 9 }}>

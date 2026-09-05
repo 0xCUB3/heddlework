@@ -10,6 +10,7 @@ import { WorkbenchController } from '../src/workbench/controller.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
 import { createInitialState } from '../src/workbench/state.ts'
 import { ComposerNotificationStack, NotificationLedgerView, composerNotificationStackHeight } from '../src/ui/notifications.tsx'
+import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 const controllers: WorkbenchController[] = []
@@ -48,6 +49,8 @@ describeNative('notification surfaces', () => {
     expect(root.renderer.getPaintedText()).toContain('Clear all')
     expect(await automation.getByTestId('clear-notification-ledger').count()).toBe(1)
     expect(await automation.getByTestId('close-notifications').count()).toBe(0)
+    await Bun.sleep(SPRING_SETTLE_MS + 32)
+    root.renderer.flush()
     const panelBounds = await automation.getByTestId('notification-panel').bounds()
     const rowBounds = (await automation.getByTestId('notification-ledger-row').all())[0]!.bounds!
     expect(rowBounds.height).toBeLessThanOrEqual(44)

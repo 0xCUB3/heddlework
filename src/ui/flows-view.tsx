@@ -19,6 +19,7 @@ import { FlowRail, statusTone, type FlowRailShape } from './flow-rail.tsx'
 import { Icon, type IconName } from './icons.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { colors, nativeTheme } from './theme.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 
 type FlowTab = 'work' | 'triage' | 'scheduled'
 type WorkFilter = 'all' | 'active' | 'scheduled' | 'waiting' | 'done'
@@ -89,14 +90,14 @@ export const FlowsView = memo(function FlowsView({ state, controller, runtime, t
 
   return (
     <div testId="flows-view" style={{ width: 0, minWidth: 0, flexGrow: 1, height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: colors.background, overflow: 'hidden' }}>
-      <div testId="flows-header" style={{ height: 72, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: titleInset, paddingRight: layout.mobile ? 12 : 22, paddingBottom: 8, borderBottomWidth: 1, borderColor: colors.border }}>
+      <MotionDiv initial={false} animate={{ paddingLeft: titleInset }} transition={LAYOUT_MOTION_TRANSITION} testId="flows-header" style={{ height: 72, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: titleInset, paddingRight: layout.mobile ? 12 : 22, paddingBottom: 8, borderBottomWidth: 1, borderColor: colors.border }}>
         <div testId="flows-title-block" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2, marginTop: 15 }}>
           <text testId="flows-title" style={{ color: colors.text, fontSize: 16, fontWeight: 720 }}>Flows</text>
           <text testId="flows-summary" style={{ color: colors.textFaint, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{`${totals.active} active · ${totals.waiting} waiting · ${totals.done} complete`}</text>
         </div>
         <div style={{ flexGrow: 1 }} />
         <Button label={layout.mobile ? 'Chat' : 'Back to chat'} tone="quiet" compact icon="x" onClick={onClose} />
-      </div>
+      </MotionDiv>
       <div testId="flows-tabs" style={{ height: 42, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingLeft: layout.contentGutter, paddingRight: layout.contentGutter, borderBottomWidth: 1, borderColor: colors.border }}>
         <FlowTabButton id="work" active={tab === 'work'} label="Work" count={totals.all} icon="list" onClick={() => switchTab('work')} />
         <FlowTabButton id="triage" active={tab === 'triage'} label="Triage" count={totals.done} icon="wrench" onClick={() => switchTab('triage')} />

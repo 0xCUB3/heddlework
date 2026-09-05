@@ -2,7 +2,7 @@
 
 Heddlework's UI extension boundary is Cordis-inspired but deliberately smaller than a microfrontend system. A feature plugin runs in the existing Bun, React, and GPUIX process and registers one manifest that may contain several related UI contributions.
 
-The first supported seat is the right-side workbench surface. More seats should be added only when multiple real features need the same coarse region. We do not intend to expose every button, row, or layout leaf as a slot.
+The first supported seat is the right-side workbench surface. The terminal bottom dock is layout-owned by the workbench shell rather than a UI-extension seat, because it has a single owner. More seats should be added only when multiple real features need the same coarse region. We do not intend to expose every button, row, or layout leaf as a slot.
 
 ## Current contract
 

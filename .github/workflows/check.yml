@@ -26,3 +26,5 @@ jobs:
       - run: ./scripts/ci-display.sh
       - run: bun run check
       - run: bun run build
+        env:
+          HEDDLEWORK_WITHOUT_CEF: '1'

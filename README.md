@@ -113,8 +113,6 @@ The installer uses the standalone executable, a square scalable icon, and an abs
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks, builds, and packages `Heddlework.app` (macOS arm64 and x64), a Linux tarball, and a Windows zip, writes `checksums.txt`, and publishes a GitHub Release. macOS signing and notarisation run when `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` secrets exist; Windows signing runs with `WINDOWS_CERT_PFX` and `WINDOWS_CERT_PASSWORD`. Without secrets the assets carry an `-unsigned` suffix. macOS and Linux release jobs run the full `bun run check`; hosted macOS runners boot a 1024x768 virtual display, so `scripts/ci-display.sh` switches it to 1920x1080 first, otherwise GPUIX test windows are clamped to tablet width. Windows runs the typecheck and the suites that do not depend on POSIX paths. Cut a release with `bun run release:tag patch` then `git push origin main --follow-tags`.
 
-At startup the desktop asks GitHub for the latest release once and posts a notice with the download link when a newer version exists. Installing it is a manual download; in-place auto-update is not implemented.
-
 ### Remote host
 
 The desktop process can serve the same workspace to browser and phone companions. Start it with `HEDDLEWORK_HOST=1`, or run the headless host on a machine without a display:
@@ -135,6 +133,14 @@ A sequential flow is a task graph. Each step can name the step it waits on, so i
 ### Receipts
 
 After every turn that changes files, Heddlework records a mutation receipt: the files touched with added, modified, or deleted status, line counts, the patch (up to 200 KiB per file), and the tool names Pi called. Receipts are Heddlework-owned annotations stored in `receipts.json` under the state directory, capped at 200 per session; Pi's transcript is never altered. Open the Receipts surface in the right panel on desktop, or the Diff tab on web and mobile, to review or clear them.
+
+### Native terminal
+
+The bottom dock and right workbench surface share in-process PTY sessions, an incremental VT grid, and one fixed-cell native GPUI host. A versioned 16-byte cell buffer replaces thousands of React nodes and large style graphs; GPUI paints backgrounds and framebuffer block masks through one nearest-sampled 2×2-per-cell texture, caches shaping without ANSI colors, and paints remaining glyph-atlas masks directly. Fractional cell advances keep the first and right TUI columns attached without xterm.js. Bun's small PTY fragments are coalesced at synchronized-frame boundaries, complete CSI controls take an allocation-light parser path, ordinary presentation is paced at 125 Hz, and completed DEC frames plus causal input responses bypass that deadline without exposing partial frames. Native Tab capture forwards Tab and Shift+Tab to the PTY while keeping focus in the terminal. Runtime settings cover installed fonts, ligatures, Nerd Font fallback, muted emoji, and contrast-safe light/dark palettes. `bun run benchmark:terminal` measures the complete 160×50 VT → React → NAPI → GPUI frame. See [Terminal architecture and rendering](docs/terminal.md).
+
+### Native browser
+
+The right workbench panel now hosts an in-process CEF/Chromium child view rather than WKWebView or the user's system-browser profile. Tabs, lossless acknowledged navigation commands, fullscreen geometry, app-owned profiles, private sessions, and agent-access policy remain in Heddlework; GPUix owns the native child view, sandboxed Chromium helpers, input focus, and browser lifecycle. Native CEF fails closed outside a valid macOS app bundle. Build the linked GPUix runtime with `bun run build:browser` first; Heddlework then requires and hash-verifies its CEF manifest while building `dist/Heddlework.app`. Run `bun run smoke:browser` after packaging for a hidden local-page smoke covering native loads, profiles, command acknowledgements, sandboxed helpers, and clean shutdown. Set `HEDDLEWORK_WITHOUT_CEF=1` only for an explicit browser-free macOS build. The same browser service can later target a remote/mobile host without loading CEF into the WASM client. See [Browser architecture, security, and packaging](docs/browser.md).
 
 ### Queue behavior
 

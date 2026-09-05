@@ -35,10 +35,14 @@
     "check": "bun run typecheck && bun run typecheck:web && bun run test",
     "build:web": "bun scripts/build-web.ts",
     "dev:web": "bun scripts/dev-web.ts",
-    "build": "bun scripts/build.ts"
+    "build": "bun scripts/build.ts",
+    "smoke:browser": "bun scripts/smoke-browser.ts",
+    "benchmark:terminal": "bun scripts/benchmark-terminal.ts && bun scripts/benchmark-terminal-ui.tsx",
+    "benchmark:terminal:hires": "bun scripts/benchmark-terminal-hires.ts",
+    "benchmark:terminal:gpuix": "bun scripts/benchmark-terminal-gpuix.tsx"
   },
   "dependencies": {
-    "@gpuix/react": "0.6.0",
+    "@gpuix/react": "0.7.0",
     "@mathjax/src": "4.1.3",
     "react": "19.2.8",
     "react-dom": "19.2.8"

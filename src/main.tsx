@@ -1,5 +1,5 @@
 import React from 'react'
-import { render } from '@gpuix/react'
+import { render, resetRender } from '@gpuix/react'
 import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
@@ -29,6 +29,8 @@ import {
   localWorkspaceDiffPlugin,
   workbenchControllerToken,
 } from './workbench/plugins.ts'
+import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
+import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
 
 interface RuntimeHandle {
   kernel: WorkbenchKernel
@@ -42,7 +44,9 @@ declare global {
 
 const workspacePath = resolveWorkspacePath()
 const demoMode = process.env.HEDDLEWORK_DEMO === '1'
+const browserSmokeUrl = process.env.HEDDLEWORK_BROWSER_SMOKE_URL
 const previous = globalThis.__heddleworkRuntime
+const coldStart = previous === undefined
 if (previous) await previous.dispose()
 
 const themeManager = new ThemeManager()
@@ -67,6 +71,11 @@ kernel.mount(createWorkspaceHostPlugin({
 kernel.mount(createUpdatePlugin({ enabled: demoMode ? false : undefined }))
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
+kernel.mount(createTerminalPlugin({ cwd: workspacePath }))
+kernel.mount(createBrowserPlugin({
+  ...(demoMode ? { statePath: false as const } : {}),
+  cleanupOrphanedProfiles: coldStart,
+}))
 kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
 kernel.mount(localWorkspaceDiffPlugin)
 kernel.mount(createReceiptPlugin({ path: demoMode ? false : receiptStorePath() }))
@@ -83,12 +92,14 @@ const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
 const host = kernel.get(workspaceHostToken)
 const updates = kernel.get(updateServiceToken)
+const terminals = kernel.get(terminalSessionToken)
+const browsers = kernel.get(browserSessionToken)
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
-  if (isGpuixWindowCloseRace(error)) process.exit(0)
-
-  process.off('uncaughtException', handleUncaughtException)
-  throw error
+  shutdown(isGpuixWindowCloseRace(error) ? undefined : error)
+}
+const handleUnhandledRejection = (error: unknown): void => {
+  shutdown(error)
 }
 const runtime: RuntimeHandle = {
   kernel,
@@ -98,27 +109,170 @@ const runtime: RuntimeHandle = {
     process.off('SIGINT', shutdown)
     process.off('SIGTERM', shutdown)
     process.off('uncaughtException', handleUncaughtException)
+    process.off('unhandledRejection', handleUnhandledRejection)
     themeManager.dispose()
     await kernel.dispose()
   },
 }
 globalThis.__heddleworkRuntime = runtime
 
-const shutdown = () => {
-  void runtime.dispose().finally(() => process.exit(0))
+let shutdownStarted = false
+function shutdown(initialError?: unknown): void {
+  if (shutdownStarted) return
+  shutdownStarted = true
+  void (async () => {
+    const failures: unknown[] = []
+    if (initialError !== undefined) failures.push(initialError)
+    try {
+      await runtime.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+
+    let nativeStopped = false
+    try {
+      resetRender()
+      nativeStopped = true
+    } catch (error) {
+      nativeStopped = isGpuixWindowCloseRace(error)
+      if (!nativeStopped) failures.push(error)
+    }
+
+    if (nativeStopped) {
+      try {
+        browsers.flushRemovedProfileData()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length > 0) {
+      console.error('[heddlework] shutdown failed', new AggregateError(failures))
+    }
+    process.exit(failures.length > 0 ? 1 : 0)
+  })()
 }
 
+process.prependListener('uncaughtException', handleUncaughtException)
+process.prependListener('unhandledRejection', handleUnhandledRejection)
+process.once('SIGINT', shutdown)
+process.once('SIGTERM', shutdown)
+
 render(
-  <WorkbenchApp controller={controller} flows={flows} host={host} pluginHost={pluginHost} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
-  createWindowOptions(process.platform, debugOverlay()),
+  <WorkbenchApp controller={controller} flows={flows} host={host} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
+  {
+    ...createWindowOptions(
+      process.platform,
+      debugOverlay(),
+      browsers.nativeProfileRoot() ?? '',
+      browsers.canInitializeNativeBrowser(),
+    ),
+    ...(browserSmokeUrl ? { focus: false, show: false } : {}),
+    onTerminated: shutdown,
+  },
 )
 
 themeManager.start()
 void controller.start()
+if (browserSmokeUrl) startPackagedBrowserSmoke(browsers, browserSmokeUrl)
 
-process.prependListener('uncaughtException', handleUncaughtException)
-process.once('SIGINT', shutdown)
-process.once('SIGTERM', shutdown)
+function startPackagedBrowserSmoke(service: typeof browsers, url: string): void {
+  const initialTabId = service.createTab({ address: url })
+  service.setPlacement(initialTabId, { x: 0, y: 0, width: 640, height: 480 }, true)
+  let phase: 'initial' | 'commands' | 'profile' | 'private' | 'private-close' | 'complete' = 'initial'
+  let profileId: string | undefined
+  let privateTabId: string | undefined
+  let sawReloadLoading = false
+  let privateCloseSettled = false
+  let inspectionQueued = false
+
+  const finish = (error?: Error) => {
+    if (phase === 'complete') return
+    phase = 'complete'
+    clearTimeout(timeout)
+    unsubscribe()
+    if (error) {
+      console.error('[heddlework-browser-smoke] failed', error.message)
+      shutdown(error)
+    } else {
+      const snapshot = service.getSnapshot()
+      console.log('[heddlework-browser-smoke] passed', JSON.stringify({
+        engine: snapshot.engine.kind,
+        tabs: snapshot.tabs.length,
+        profiles: snapshot.profiles.length,
+      }))
+      shutdown()
+    }
+  }
+
+  const inspect = () => {
+    inspectionQueued = false
+    if (phase === 'complete') return
+    const snapshot = service.getSnapshot()
+    if (process.env.GPUIX_CEF_DEBUG) {
+      console.error('[heddlework-browser-smoke] state', phase, JSON.stringify(snapshot.tabs.map((tab) => ({ id: tab.id, url: tab.url, title: tab.title, status: tab.status, commands: tab.commands.map((command) => command.serial) }))))
+    }
+    const failed = snapshot.tabs.find((tab) => tab.error)
+    if (failed) {
+      finish(new Error(failed.error ?? 'Native browser failed'))
+      return
+    }
+    if (!snapshot.engine.available) return
+
+    if (phase === 'initial') {
+      const tab = snapshot.tabs.find((candidate) => candidate.id === initialTabId)
+      if (tab?.status !== 'ready' || tab.commands.length > 0 || !tab.title.includes('Heddlework Browser Smoke')) return
+      phase = 'commands'
+      service.command(initialTabId, 'clearData')
+      service.command(initialTabId, 'reload')
+      return
+    }
+
+    if (phase === 'commands') {
+      const tab = snapshot.tabs.find((candidate) => candidate.id === initialTabId)
+      if (tab?.status === 'loading') sawReloadLoading = true
+      if (!sawReloadLoading || tab?.status !== 'ready' || tab.commands.length > 0) return
+      phase = 'profile'
+      profileId = service.createProfile({ name: 'Smoke Profile', agentAccess: 'denied' })
+      service.switchTabProfile(initialTabId, profileId)
+      return
+    }
+
+    if (phase === 'profile') {
+      const tab = snapshot.tabs.find((candidate) => candidate.id === initialTabId)
+      if (!profileId || tab?.profileId !== profileId || tab.status !== 'ready' || tab.commands.length > 0) return
+      phase = 'private'
+      privateTabId = service.createTab({ profileId: 'private', address: url })
+      service.setPlacement(privateTabId, { x: 0, y: 0, width: 640, height: 480 }, true)
+      return
+    }
+
+    if (phase === 'private') {
+      const tab = snapshot.tabs.find((candidate) => candidate.id === privateTabId)
+      if (tab?.status !== 'ready' || tab.commands.length > 0 || !privateTabId) return
+      phase = 'private-close'
+      service.closeTab(privateTabId)
+      setTimeout(() => {
+        privateCloseSettled = true
+        scheduleInspection()
+      }, 1_000)
+      return
+    }
+
+    if (phase === 'private-close') {
+      if (!privateCloseSettled || snapshot.tabs.some((candidate) => candidate.id === privateTabId)) return
+      finish()
+    }
+  }
+
+  const scheduleInspection = () => {
+    if (inspectionQueued || phase === 'complete') return
+    inspectionQueued = true
+    queueMicrotask(inspect)
+  }
+  const unsubscribe = service.subscribe(scheduleInspection)
+  const timeout = setTimeout(() => finish(new Error(`Timed out during ${phase}`)), 30_000)
+  scheduleInspection()
+}
 
 function resolveWorkspacePath(): string {
   if (process.env.HEDDLEWORK_CWD) return resolve(process.env.HEDDLEWORK_CWD)

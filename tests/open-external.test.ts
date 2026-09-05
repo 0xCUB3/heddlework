@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'bun:test'
-import { directoryPickerCommand, directoryPickerCommands } from '../src/ui/open-external.ts'
+import { directoryPickerCommand, directoryPickerCommands, systemTargetCommand } from '../src/ui/open-external.ts'
+
+describe('external targets', () => {
+  it('passes Windows URLs as one argument without invoking a command shell', () => {
+    const target = 'https://example.com/?next=a&then=b|c'
+    expect(systemTargetCommand(target, 'win32')).toEqual({ command: 'explorer.exe', args: [target] })
+    expect(systemTargetCommand(target, 'darwin')).toEqual({ command: '/usr/bin/open', args: [target] })
+  })
+})
 
 describe('workspace directory picker', () => {
   it('uses each platform native folder chooser instead of a path text form', () => {

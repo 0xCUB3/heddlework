@@ -517,13 +517,13 @@ describeNative('reverse-infinite transcript', () => {
 
     const rowMotion = root.renderer.findByTestId('transcript-row-transition')?.customProps?.motion as { initial?: { opacity?: number; top?: number } | false; animate?: { opacity?: number; top?: number } } | undefined
     const preview = root.renderer.findByTestId('execution-preview-transition')
-    const previewMotion = preview?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number } } | undefined
+    const previewMotion = preview?.customProps?.motion as { initial?: { opacity?: number; top?: number }; animate?: { opacity?: number; top?: number; height?: number } } | undefined
     expect(rowMotion?.initial).toBe(false)
     expect(rowMotion?.animate).toEqual({ opacity: 1, top: 0 })
     expect(previewMotion?.initial).toEqual({ opacity: 0, top: 4 })
-    expect(previewMotion?.animate).toEqual({ opacity: 1, top: 0 })
+    expect(previewMotion?.animate).toEqual({ opacity: 1, top: 0, height: 22 })
     expect(preview?.style.justifyContent).toBe('flex-start')
-    expect(preview?.style.minHeight).toBe(22)
+    expect(preview?.style.height).toBe(22)
     root.unmount()
   })
 
@@ -569,11 +569,11 @@ describeNative('reverse-infinite transcript', () => {
     const headerId = root.renderer.findByTestId('execution-trace')?.id
     const rowId = root.renderer.findByTestId('transcript-row-transition')?.id
     expect(headerId).toBeDefined()
-    expect(root.renderer.findByTestId('execution-preview-transition')?.style.minHeight).toBe(22)
+    expect(root.renderer.findByTestId('execution-preview-transition')?.style.height).toBe(22)
     render([{ id: 'one', name: 'read', args: { path: 'a.ts' }, status: 'running', isError: false }])
     expect(root.renderer.findByTestId('execution-trace')?.id).toBe(headerId)
     expect(root.renderer.findByTestId('transcript-row-transition')?.id).toBe(rowId)
-    expect(root.renderer.findByTestId('execution-preview-transition')?.style.minHeight).toBe(22)
+    expect(root.renderer.findByTestId('execution-preview-transition')?.style.height).toBe(22)
     root.unmount()
   })
 
@@ -712,12 +712,12 @@ describeNative('reverse-infinite transcript', () => {
       { id: 'two', name: 'read', args: { path: 'b.ts' }, status: 'running', isError: false },
       { id: 'three', name: 'read', args: { path: 'c.ts' }, status: 'running', isError: false },
     ])
-    const tall = root.renderer.findByTestId('execution-preview-transition')?.style.minHeight
+    const tall = root.renderer.findByTestId('execution-preview-transition')?.style.height
     render([
       { id: 'three', name: 'read', args: { path: 'c.ts' }, status: 'running', isError: false },
     ])
     const preview = root.renderer.findByTestId('execution-preview-transition')
-    expect(preview?.style.minHeight).toBe(tall)
+    expect(preview?.style.height).toBe(tall)
     expect(preview?.style.justifyContent).toBe('flex-start')
     expect(root.renderer.findByTestId('transcript-lease')?.style.height).toBeGreaterThan(0)
     root.unmount()
@@ -768,7 +768,7 @@ describeNative('reverse-infinite transcript', () => {
         { id: 'two', name: 'read', args: { path: 'b.ts' }, status: 'running' as const, isError: false },
       ],
     })
-    const tall = root.renderer.findByTestId('execution-preview-transition')?.style.minHeight
+    const tall = root.renderer.findByTestId('execution-preview-transition')?.style.height
     expect(tall).toBeGreaterThan(0)
     render({
       ...base,
@@ -784,7 +784,7 @@ describeNative('reverse-infinite transcript', () => {
     await Bun.sleep(600)
     root.renderer.flush()
     const preview = root.renderer.findByTestId('execution-preview-transition')
-    expect(preview == null || Number(preview.style.height ?? preview.style.minHeight ?? 0) < 1).toBe(true)
+    expect(preview == null || Number(preview.style.height ?? 0) < 1).toBe(true)
     expect(root.renderer.findByTestId('transcript-lease')).toBeUndefined()
     root.unmount()
   })
@@ -1217,7 +1217,7 @@ describeNative('reverse-infinite transcript', () => {
       expect(await automation.getByTestId('collapsed-trace-tools').count()).toBe(1)
       expect(await automation.getByTestId('assistant-message').count()).toBe(1)
       const preview = root.renderer.findByTestId('execution-preview-transition')
-      expect(preview?.style.minHeight).toBeGreaterThanOrEqual(22)
+      expect(preview?.style.height).toBeGreaterThanOrEqual(22)
       expect(preview?.style.justifyContent).toBe('flex-start')
     } finally {
       await automation.close()

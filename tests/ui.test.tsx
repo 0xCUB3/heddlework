@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
+import { itWithPatchedGpuix } from './helpers/gpuix-capabilities.ts'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { createComposerImage } from '../src/ui/clipboard-media.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
@@ -68,7 +69,7 @@ function isFullySettled(controller: WorkbenchController): boolean {
 }
 
 describeNative('WorkbenchApp', () => {
-  it('renders and operates the T3-style native workbench shell', async () => {
+  itWithPatchedGpuix('renders and operates the T3-style native workbench shell', async () => {
     const workspace = createWorkspaceFixture()
     const project = basename(workspace)
     const controller = new WorkbenchController(new DemoTransport(), workspace, testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))

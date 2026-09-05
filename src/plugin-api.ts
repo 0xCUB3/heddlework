@@ -38,6 +38,20 @@ export type {
   WorkbenchCommandType,
   WorkbenchSnapshot,
 } from './protocol/index.ts'
+export { terminalSessionToken, createTerminalPlugin } from './terminal/plugin.ts'
+export { TerminalSessionService } from './terminal/service.ts'
+export { DEFAULT_TERMINAL_APPEARANCE, terminalAppearancePreferencePath } from './terminal/appearance.ts'
+export { BunPtyBackend, MemoryTerminalBackend, bunTerminalAvailable } from './terminal/backend.ts'
+export type { TerminalBackend, TerminalOutputMetadata, TerminalProcess } from './terminal/backend.ts'
+export type {
+  TerminalAppearance,
+  TerminalGridSnapshot,
+  TerminalPlacement,
+  TerminalServiceSnapshot,
+  TerminalSessionId,
+  TerminalSessionInfo,
+  TerminalSpawnRequest,
+} from './terminal/types.ts'
 export { createFlowRuntimePlugin, flowRuntimeToken } from './flows/plugin.ts'
 export type { FlowRuntime, FlowRuntimeHost, FlowRuntimeOptions } from './flows/runtime.ts'
 export type { FlowLaunch, FlowMode, FlowRuntimeSnapshot, FlowSchedule, FlowScheduleInput, FlowScheduleTiming, FlowTemplate } from './flows/types.ts'

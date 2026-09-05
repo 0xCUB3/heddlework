@@ -5,7 +5,7 @@ import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
 import { colors, nativeTheme } from './theme.ts'
-import { useSpringProgress } from './motion.ts'
+import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS } from './motion.ts'
 
 export const DiffPanel = React.memo(function DiffPanel({
   diff,
@@ -31,9 +31,14 @@ export const DiffPanel = React.memo(function DiffPanel({
   onToggleFullscreen(): void
 }) {
   const [filesOpen, setFilesOpen] = useState(false)
+  const [fileListMounted, setFileListMounted] = useState(false)
   const [wordWrap, setWordWrap] = useState(false)
   const [selectedPath, setSelectedPath] = useState<string | undefined>()
-  const fileListProgress = useSpringProgress(filesOpen)
+  useEffect(() => {
+    if (filesOpen) return
+    const timer = setTimeout(() => setFileListMounted(false), SPRING_SETTLE_MS - 32)
+    return () => clearTimeout(timer)
+  }, [filesOpen])
   useEffect(() => {
     if (selectedPath && !diff.files.some((file) => file.path === selectedPath)) setSelectedPath(undefined)
   }, [diff.files, selectedPath])
@@ -70,15 +75,18 @@ export const DiffPanel = React.memo(function DiffPanel({
           </>
         )}
         <IconButton icon="wrap" label={wordWrap ? 'Disable line wrapping' : 'Enable line wrapping'} testId="diff-wrap-toggle" active={wordWrap} onClick={() => setWordWrap((value) => !value)} />
-        <IconButton icon="list" label="Toggle changed files" testId="diff-file-list" active={filesOpen} onClick={() => setFilesOpen((value) => !value)} />
+        <IconButton icon="list" label="Toggle changed files" testId="diff-file-list" active={filesOpen} onClick={() => {
+          if (!filesOpen) setFileListMounted(true)
+          setFilesOpen(!filesOpen)
+        }} />
       </div>
       <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, minHeight: 0 }}>
-        {(filesOpen || fileListProgress > 0) && (
-          <div testId="diff-file-list-host" style={{ position: 'relative', width: 212 * fileListProgress, flexShrink: 0, minHeight: 0, overflow: 'hidden' }}>
+        {(filesOpen || fileListMounted) && (
+          <MotionDiv initial={{ width: 0 }} animate={{ width: filesOpen ? 212 : 0 }} transition={LAYOUT_MOTION_TRANSITION} testId="diff-file-list-host" style={{ position: 'relative', width: filesOpen ? 212 : 0, flexShrink: 0, minHeight: 0, overflow: 'hidden' }}>
             <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: 212, display: 'flex' }}>
               <DiffFileList files={diff.files} selectedPath={selectedPath} onSelect={setSelectedPath} />
             </div>
-          </div>
+          </MotionDiv>
         )}
         <div testId="diff-content" style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minWidth: 0, minHeight: 0, fontFamily: nativeTheme.fontMono }}>
           {diff.status === 'loading' ? (
