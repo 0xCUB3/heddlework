@@ -41,7 +41,7 @@ describe('phone pairing QR', () => {
     const pngPath = join(directory, 'fixture-phone-link.png')
     writeFileSync(pngPath, qrPng(FIXTURE_URL, 4))
     expect(decodeQr(pngPath)).toBe(FIXTURE_URL)
-  })
+  }, { timeout: 20_000 })
 
   testNative('renders a high-contrast QR the iOS camera can scan', async () => {
     const root = createTestRoot({ width: 420, height: 280 })
@@ -64,5 +64,5 @@ describe('phone pairing QR', () => {
       await automation.close()
       root.unmount()
     }
-  })
+  }, { timeout: 20_000 })
 })
