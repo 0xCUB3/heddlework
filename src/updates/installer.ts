@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, posix, resolve, win32 } from 'node:path'
@@ -20,6 +20,36 @@ export interface DetectInstallOptions {
   execPath?: string | undefined
   environment?: NodeJS.ProcessEnv | undefined
   exists?: ((path: string) => boolean) | undefined
+  // Resolves symlinks; used to match the Homebrew Caskroom link against the running bundle.
+  realpath?: ((path: string) => string | undefined) | undefined
+  readdir?: ((path: string) => string[]) | undefined
+}
+
+function safeRealpath(path: string): string | undefined {
+  try {
+    return realpathSync(path)
+  } catch {
+    return undefined
+  }
+}
+
+// Homebrew installs the .app in /Applications and leaves a symlink in the Caskroom. The bundle is brew-owned only when one of those links resolves to it.
+function homebrewOwns(root: string, exists: (path: string) => boolean, realpath: (path: string) => string | undefined, readdir: (path: string) => string[]): boolean {
+  const real = realpath(root) ?? root
+  for (const caskroom of ['/opt/homebrew/Caskroom/heddlework', '/usr/local/Caskroom/heddlework']) {
+    if (!exists(caskroom)) continue
+    let versions: string[] = []
+    try {
+      versions = readdir(caskroom)
+    } catch {
+      continue
+    }
+    for (const version of versions) {
+      const link = join(caskroom, version, basename(root))
+      if (exists(link) && (realpath(link) ?? link) === real) return true
+    }
+  }
+  return false
 }
 
 // Works out how this binary was installed so the updater knows whether it may replace files and how to relaunch.
@@ -29,6 +59,8 @@ export function detectInstall(options: DetectInstallOptions = {}): InstallLocati
   const execPath = options.execPath ? paths.resolve(options.execPath) : resolve(process.execPath)
   const environment = options.environment ?? process.env
   const exists = options.exists ?? existsSync
+  const realpath = options.realpath ?? safeRealpath
+  const readdir = options.readdir ?? readdirSync
   const executable = paths.basename(execPath).toLowerCase()
   if (executable === 'bun' || executable === 'bun.exe' || executable === 'node' || executable === 'node.exe') {
     return { kind: 'source', root: paths.dirname(execPath) }
@@ -37,8 +69,7 @@ export function detectInstall(options: DetectInstallOptions = {}): InstallLocati
     const match = /^(.*\.app)\/Contents\/MacOS\/[^/]+$/.exec(execPath)
     if (!match) return { kind: 'source', root: dirname(execPath) }
     const root = match[1]!
-    const caskrooms = ['/opt/homebrew/Caskroom/heddlework', '/usr/local/Caskroom/heddlework']
-    if (caskrooms.some((path) => exists(path))) return { kind: 'homebrew', root, managedCommand: 'brew upgrade --cask heddlework' }
+    if (homebrewOwns(root, exists, realpath, readdir)) return { kind: 'homebrew', root, managedCommand: 'brew upgrade --cask heddlework' }
     return { kind: 'macos-app', root }
   }
   if (platform === 'win32') {
