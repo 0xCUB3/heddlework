@@ -1,6 +1,6 @@
 {
   "name": "heddlework",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.2-rc.1",
   "description": "A native, harness-neutral workspace for agent sessions, task graphs, diffs, and durable work.",
   "private": true,
   "type": "module",
