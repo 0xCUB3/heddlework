@@ -1,11 +1,18 @@
 name: release
 
+# Publishing a GitHub release (or pushing a v* tag) builds every desktop target, attaches the assets,
+# and sends the iOS shell to TestFlight when Apple secrets are present.
 on:
+  release:
+    types: [published]
   push:
     tags: ['v*']
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
 
 jobs:
   build:
@@ -48,7 +55,7 @@ jobs:
       - run: bun run build
         env:
           COMPILE_TARGET: ${{ matrix.target }}
-          HEDDLEWORK_VERSION: ${{ github.ref_name }}
+          HEDDLEWORK_VERSION: ${{ env.RELEASE_TAG }}
 
       - name: Package macOS app
         if: runner.os == 'macOS'
@@ -58,7 +65,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
           if [ -n "${MACOS_CERT_P12:-}" ]; then
@@ -124,6 +131,47 @@ jobs:
             dist/*.tar.gz
           if-no-files-found: error
 
+  ios:
+    name: ios (TestFlight)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use a release Xcode (App Store Connect rejects beta builds)
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app && xcodebuild -version
+      - name: Check for Apple secrets
+        id: creds
+        env:
+          HAS_CERT: ${{ secrets.APPLE_DIST_CERT_P12 != '' }}
+          HAS_KEY: ${{ secrets.ASC_KEY_P8 != '' }}
+          HAS_PROFILE: ${{ secrets.IOS_PROFILE_BASE64 != '' }}
+        run: |
+          if [ "$HAS_CERT" = true ] && [ "$HAS_KEY" = true ] && [ "$HAS_PROFILE" = true ]; then echo ready=true >> "$GITHUB_OUTPUT"; else echo "::notice::Skipping TestFlight upload; APPLE_DIST_CERT_P12, ASC_KEY_P8, or IOS_PROFILE_BASE64 is not set"; echo ready=false >> "$GITHUB_OUTPUT"; fi
+      - uses: oven-sh/setup-bun@v2
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          bun-version: 1.4.0
+      - name: Build web client and generate the Xcode project
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run build:web
+          test -f dist/web/index.html
+          brew install xcodegen
+          cd packaging/ios && xcodegen generate
+      - name: Archive and upload to TestFlight
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          APPLE_DIST_CERT_P12: ${{ secrets.APPLE_DIST_CERT_P12 }}
+          APPLE_DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+          VERSION: ${{ env.RELEASE_TAG }}
+        run: ./packaging/ios/ci-testflight.sh
+
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -140,11 +188,16 @@ jobs:
           cd assets
           sha256sum * > checksums.txt
           cat checksums.txt
-      - name: Publish release
+      - name: Attach assets to the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
-          prerelease=""
-          case "${{ github.ref_name }}" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "${{ github.ref_name }}" assets/* --title "Heddlework ${{ github.ref_name }}" --generate-notes $prerelease
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+          else
+            prerelease=""
+            case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+            gh release create "$TAG" assets/* --title "Heddlework $TAG" --generate-notes $prerelease
+          fi

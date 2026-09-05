@@ -24,6 +24,8 @@ HEDDLEWORK_HOST_BIND=0.0.0.0 bun run host
 
 If the Mac is on Tailscale the printed link and QR code use the tailnet address, so the phone can connect from anywhere; otherwise they use the LAN address. On the phone, paste the printed connect link, scan the QR code, or open a deep link of the form `heddlework://connect?url=<percent-encoded connect link>`. The shell stores the link and reopens straight into the workspace; Settings → Disconnect clears it.
 
-## Xcode Cloud
+## TestFlight from GitHub releases
 
-`ci_scripts/ci_post_clone.sh` installs Bun and xcodegen, builds the web client, and generates the project before Xcode Cloud archives it. The workflow's primary repository is this repo and the project path is `packaging/ios/Heddlework.xcodeproj`.
+Publishing a GitHub release runs the `ios` job in `.github/workflows/release.yml`, which builds the web client, generates the project, and calls `ci-testflight.sh` to archive with manual signing and upload to App Store Connect. The build then appears in TestFlight once Apple finishes processing. The job needs these repository secrets and skips with a notice when any is missing: `APPLE_DIST_CERT_P12` and `APPLE_DIST_CERT_PASSWORD` (an Apple Distribution certificate as base64 `.p12`), `IOS_PROFILE_BASE64` (an iOS App Store provisioning profile for `com.0xCUBE.Heddlework` that lists that certificate), and `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (an App Store Connect API key with the App Manager role). The marketing version comes from the release tag and the build number from the workflow run number.
+
+`ci_scripts/ci_post_clone.sh` remains for Xcode Cloud, which is optional.
