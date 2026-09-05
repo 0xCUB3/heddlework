@@ -1,1 +1,5 @@
 patches/*.patch -whitespace
+# Windows checkouts must not CRLF these; sha256sum reads the sums file byte for byte and bash runs the scripts.
+vendor/gpuix/SHA256SUMS text eol=lf
+scripts/*.sh text eol=lf
+packaging/**/*.sh text eol=lf
