@@ -5,7 +5,7 @@ import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
 import { isGpuixWindowCloseRace } from './ui/native-window-lifecycle.ts'
-import { ThemeManager } from './ui/theme-manager.ts'
+import { ThemeManager, themePreferencePath } from './ui/theme-manager.ts'
 import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
 import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from './ui/tool-presenters.ts'
@@ -18,7 +18,7 @@ import { createReceiptPlugin } from './receipts/plugin.ts'
 import { createUpdatePlugin, updateServiceToken } from './updates/plugin.ts'
 import { createCheckoutLanePlugin } from './workspace/checkout-lanes.ts'
 import { receiptStorePath } from './receipts/store.ts'
-import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './host/plugin.ts'
+import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, remoteAccessToken } from './host/plugin.ts'
 import { startExternalPlugins } from './plugins/host.ts'
 import { resolveStaticRoot } from './host/static-root.ts'
 import { hostTokenPath } from './host/token.ts'
@@ -59,12 +59,14 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
 }))
 kernel.mount(createCheckoutLanePlugin())
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
-const hostOptions = hostOptionsFromEnvironment()
+const hostOptions = hostOptionsFromEnvironment(process.env, demoMode ? false : themePreferencePath())
 kernel.mount(createWorkspaceHostPlugin({
   enabled: hostOptions.enabled,
   workspacePath,
   port: hostOptions.port,
   hostname: hostOptions.hostname,
+  lockedBy: hostOptions.lockedBy,
+  preferencePath: demoMode ? false : themePreferencePath(),
   tokenPath: demoMode ? false : hostTokenPath(),
   staticRoot: resolveStaticRoot(),
 }))
@@ -90,7 +92,7 @@ const pluginHost = await startExternalPlugins(kernel, workspacePath, { trustPath
 const controller = kernel.get(workbenchControllerToken)
 const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
-const host = kernel.get(workspaceHostToken)
+const remoteAccess = kernel.get(remoteAccessToken)
 const updates = kernel.get(updateServiceToken)
 const terminals = kernel.get(terminalSessionToken)
 const browsers = kernel.get(browserSessionToken)
@@ -158,7 +160,7 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 render(
-  <WorkbenchApp controller={controller} flows={flows} host={host} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
+  <WorkbenchApp controller={controller} flows={flows} remoteAccess={remoteAccess} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
   {
     ...createWindowOptions(
       process.platform,

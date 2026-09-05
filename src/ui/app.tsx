@@ -27,7 +27,7 @@ import type { TerminalSessionService } from '../terminal/service.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
-import type { WorkspaceHost } from '../host/server.ts'
+import type { RemoteAccessService } from '../host/remote-access.ts'
 import type { PluginHost } from '../plugins/host.ts'
 import type { UpdateService } from '../updates/service.ts'
 
@@ -50,7 +50,7 @@ export function WorkbenchApp({
   terminals,
   browsers,
   themeManager = defaultThemeManager,
-  host,
+  remoteAccess,
   pluginHost,
   updates,
   onQuit,
@@ -59,7 +59,7 @@ export function WorkbenchApp({
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
   flows?: FlowRuntime | undefined
-  host?: WorkspaceHost | undefined
+  remoteAccess?: RemoteAccessService | undefined
   pluginHost?: PluginHost | undefined
   updates?: UpdateService | undefined
   terminals?: TerminalSessionService
@@ -353,7 +353,7 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView state={state} controller={controller} host={host} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
+            <SettingsView state={state} controller={controller} remoteAccess={remoteAccess} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>

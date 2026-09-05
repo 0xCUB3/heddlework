@@ -10,7 +10,8 @@ import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
-import { hostConnectUrl, lanConnectUrl, remoteConnectUrls, type WorkspaceHost } from '../host/server.ts'
+import { hostConnectUrl, remoteConnectUrls } from '../host/server.ts'
+import type { RemoteAccessMode, RemoteAccessService } from '../host/remote-access.ts'
 import type { PluginHost } from '../plugins/host.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import type { UpdateService, UpdateState } from '../updates/service.ts'
@@ -27,7 +28,7 @@ export function SettingsView({
   onThemeModeChange,
   terminals,
   browsers,
-  host,
+  remoteAccess,
   pluginHost,
   updates,
   onClose,
@@ -35,7 +36,7 @@ export function SettingsView({
   state: WorkbenchState
   controller: WorkbenchController
   theme: ThemeSnapshot
-  host?: WorkspaceHost | undefined
+  remoteAccess?: RemoteAccessService | undefined
   pluginHost?: PluginHost | undefined
   updates?: UpdateService | undefined
   titlebarInset?: number | undefined
@@ -53,7 +54,8 @@ export function SettingsView({
         <div style={{ flexGrow: 1 }} />
         <Button label="Done" compact onClick={onClose} />
       </MotionDiv>
-      <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, overflow: 'scroll', display: 'flex', flexDirection: 'row', justifyContent: 'center', paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
+      {/* A column scroller so only the vertical axis scrolls and the content height, not the row cross-size, sets the extent; the child centres itself with alignItems. */}
+      <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, minWidth: 0, overflow: 'scroll', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
         <div testId="settings-global" style={{ width: '100%', maxWidth: 720, minHeight: mobile ? 0 : 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
           <SettingsSection title="Runtime" description="Global Pi connection settings for this application.">
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
@@ -72,20 +74,8 @@ export function SettingsView({
             <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
           </SettingsSection>
 
+          {remoteAccess ? <RemoteAccessSection service={remoteAccess} controller={controller} /> : null}
           {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
-          {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
-          {host ? (
-            <SettingsSection title="Remote access" description="Web and mobile companions connect to this desktop process over the workspace host protocol.">
-              <SettingsRow testId="settings-host-url" icon="circle" label="Host" value={host.url} tone="success" />
-              <SettingsRow icon="panel" label="Bound to" value={host.hostname === '127.0.0.1' ? 'This computer only' : `${host.hostname} (network)`} />
-              {remoteConnectUrls(host).map((remote) => (
-                <SettingsRow key={remote.url} icon="circle" label={remoteLabel(remote.kind)} value={remote.url} />
-              ))}
-              <SettingsActions>
-                <Button label="Copy connect link" compact onClick={() => void copyTextToClipboard(host.hostname === '0.0.0.0' || host.hostname === '::' ? lanConnectUrl(host) : hostConnectUrl(host)).then((copied) => controller.notify(copied ? 'info' : 'warning', copied ? 'Copied host connect link with token' : 'No system clipboard command is available'))} />
-              </SettingsActions>
-            </SettingsSection>
-          ) : null}
           {pluginHost ? <PluginsSection pluginHost={pluginHost} /> : null}
           {terminals ? <TerminalSettings service={terminals} /> : null}
           {browsers ? <BrowserSettings service={browsers} /> : null}
@@ -142,10 +132,10 @@ function UpdatesSection({ service, controller }: { service: UpdateService; contr
       <SettingsControlRow label="Channel">
         <ChannelPicker channel={state.channel} onChange={setChannel} disabled={service.busy} />
       </SettingsControlRow>
-      <SettingsActions>
+      {state.releaseUrl || action ? <SettingsActions>
         {state.releaseUrl ? <Button label="Release notes" compact onClick={() => openExternal(state.releaseUrl!)} /> : null}
         {action ? <Button testId="settings-update-action" label={action} compact {...(action === 'Restart to update' ? { icon: 'refresh' as const } : {})} onClick={runAction} /> : null}
-      </SettingsActions>
+      </SettingsActions> : null}
     </SettingsSection>
   )
 }
@@ -194,6 +184,70 @@ function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
 }
 
 
+function RemoteAccessSection({ service, controller }: { service: RemoteAccessService; controller: WorkbenchController }) {
+  const state = React.useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const host = state.host
+  const setMode = (mode: RemoteAccessMode) => {
+    void service.setMode(mode).catch((error: unknown) => controller.notify('warning', error instanceof Error ? error.message : String(error)))
+  }
+  const remotes = host ? remoteConnectUrls(host).filter((remote) => remote.kind !== 'loopback') : []
+  const bestLink = host ? (remotes[0]?.url ?? hostConnectUrl(host)) : undefined
+  const modeDescription = state.lockedBy
+    ? `Pinned by ${state.lockedBy} in this app's environment.`
+    : state.mode === 'network' ? 'Phones and other computers can open the workspace over Tailscale or your LAN.'
+    : state.mode === 'local' ? 'Only browsers on this computer can connect.'
+    : 'The web client and the iOS app cannot connect until this is on.'
+  return (
+    <SettingsSection title="Remote access" description="Runs the workspace host that the web client and the iOS app connect to. Links carry a token, so share them only with your own devices.">
+      <SettingsControlRow label="Mode" description={modeDescription}>
+        <SegmentedPicker
+          testIdPrefix="remote-access"
+          value={state.mode}
+          disabled={state.busy || Boolean(state.lockedBy)}
+          options={[{ value: 'off', label: 'Off' }, { value: 'local', label: 'This Mac' }, { value: 'network', label: 'Tailscale & LAN' }]}
+          onChange={setMode}
+        />
+      </SettingsControlRow>
+      {state.error ? <SettingsRow icon="circle" label="Problem" value={state.error} /> : null}
+      {host ? <SettingsRow testId="settings-host-url" icon="circle" label="Local link" value={hostConnectUrl(host)} tone="success" /> : null}
+      {remotes.map((remote) => (
+        <SettingsRow key={remote.url} icon="circle" label={remoteLabel(remote.kind)} value={remote.url} tone={remote.kind === 'tailscale' ? 'success' : 'normal'} />
+      ))}
+      {state.mode === 'network' && !remotes.some((remote) => remote.kind === 'tailscale') ? (
+        <SettingsRow icon="panel" label="Tailscale" value="Not detected. Install and sign in to Tailscale on this Mac and your phone for a link that works anywhere." />
+      ) : null}
+      {host && bestLink ? (
+        <SettingsActions>
+          <Button label="Open in browser" compact icon="globe" onClick={() => openExternal(hostConnectUrl(host))} />
+          <Button label={remotes.length > 0 ? 'Copy phone link' : 'Copy link'} compact onClick={() => void copyTextToClipboard(bestLink).then(() => controller.notify('info', 'Link copied'))} />
+        </SettingsActions>
+      ) : null}
+    </SettingsSection>
+  )
+}
+
+function SegmentedPicker<T extends string>({ value, options, disabled, testIdPrefix, onChange }: { value: T; options: Array<{ value: T; label: string }>; disabled?: boolean; testIdPrefix: string; onChange(value: T): void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'row', gap: 3, padding: 3, borderRadius: 9, backgroundColor: colors.raised, opacity: disabled ? 0.6 : 1 }}>
+      {options.map((option) => {
+        const active = value === option.value
+        return (
+          <div
+            key={option.value}
+            testId={`${testIdPrefix}-${option.value}`}
+            tabIndex={0}
+            style={{ minHeight: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: active ? colors.card : colors.transparent, borderWidth: 1, borderColor: active ? colors.borderStrong : colors.transparent }}
+            onClick={() => { if (!disabled) onChange(option.value) }}
+            onKeyDown={(event) => { if (!disabled && (event.key === 'enter' || event.key === 'space')) onChange(option.value) }}
+          >
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{option.label}</text>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function remoteLabel(kind: ReturnType<typeof remoteConnectUrls>[number]['kind']): string {
   switch (kind) {
     case 'custom': return 'Phone link'
@@ -237,11 +291,11 @@ function SettingsControlRow({ label, description, children }: { label: string; d
   const { mobile } = useResponsiveLayout()
   return (
     <div style={{ minHeight: 54, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: 12, paddingTop: mobile ? 10 : 0, paddingBottom: mobile ? 10 : 0, paddingLeft: 13, paddingRight: 10, borderWidth: 1, borderColor: colors.border }}>
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {/* The label column keeps a share of the row so a wide control such as the font input cannot squeeze it to one character per line. */}
+      <div style={{ minWidth: 0, flexGrow: 1, flexShrink: 1, ...(mobile ? {} : { flexBasis: 0 }), display: 'flex', flexDirection: 'column', gap: 2 }}>
         <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>{label}</text>
         {description ? <text style={{ color: colors.textFaint, fontSize: 9, lineHeight: 13 }}>{description}</text> : null}
       </div>
-      {!mobile && <div style={{ flexGrow: 1 }} />}
       {children}
     </div>
   )
@@ -296,7 +350,7 @@ function TerminalFontControl({ value, testId, onApply }: { value: string; testId
   useEffect(() => setDraft(value), [value])
   const next = draft.trim()
   return (
-    <div style={{ width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+    <div style={{ width: 360, maxWidth: '100%', flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
       <div style={{ width: 0, minWidth: 0, height: 32, flexGrow: 1, display: 'flex', alignItems: 'center', paddingLeft: 9, paddingRight: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input }}>
         <input testId={testId} value={draft} theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }} style={{ width: 0, minWidth: 0, height: 28, flexGrow: 1, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 10, fontFamily: draft || nativeTheme.fontMono }} onChange={(event) => setDraft(String(event.value ?? ''))} onKeyDown={(event) => { if (event.key === 'enter' && next) onApply(next) }} />
       </div>

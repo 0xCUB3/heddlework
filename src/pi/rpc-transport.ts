@@ -272,7 +272,8 @@ export class PiRpcTransport implements HarnessAdapter {
   }
 }
 
-export function piProcessEnvironment(command: string, env: NodeJS.ProcessEnv, cwd = process.cwd()): NodeJS.ProcessEnv {
+export function piProcessEnvironment(command: string, env: NodeJS.ProcessEnv, cwd = process.cwd(), home = homedir(), exists: (path: string) => boolean = existsSync): NodeJS.ProcessEnv {
+  env = withToolchainPath(command, env, home, exists)
   if (!/[\\/]\.localterm[\\/]shims[\\/]pi(?:\.exe)?$/i.test(command) || env.PATH === undefined) return env
 
   // Bun lifecycle scripts prepend node_modules/.bin for the package directory and
@@ -291,6 +292,38 @@ export function piProcessEnvironment(command: string, env: NodeJS.ProcessEnv, cw
     .filter((entry) => !entry || !packageBins.has(comparablePath(resolve(entry))))
     .join(delimiter)
   return path === env.PATH ? env : { ...env, PATH: path }
+}
+
+// Apps opened from Finder, Spotlight, or a .desktop file inherit launchd's or the session's minimal PATH. Pi is a
+// `#!/usr/bin/env node` script, so even when its path is known the spawn fails with `env: node: No such file` unless
+// the directory holding node is visible. Put Pi's own directory first, since its node usually sits beside it, then
+// the usual toolchain locations the user's shell would have added.
+function withToolchainPath(command: string, env: NodeJS.ProcessEnv, home: string, exists: (path: string) => boolean): NodeJS.ProcessEnv {
+  if (process.platform === 'win32') return env
+  const current = (env.PATH ?? '').split(delimiter).filter(Boolean)
+  const seen = new Set(current)
+  const additions: string[] = []
+  const commandDirectory = command.includes('/') ? dirname(resolve(command)) : undefined
+  const candidates = [
+    commandDirectory,
+    join(home, '.bun', 'bin'),
+    join(home, '.local', 'bin'),
+    join(home, '.volta', 'bin'),
+    join(home, '.cargo', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/home/linuxbrew/.linuxbrew/bin',
+    '/snap/bin',
+  ]
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate) || !exists(candidate)) continue
+    seen.add(candidate)
+    additions.push(candidate)
+  }
+  if (additions.length === 0) return env
+  // Pi's directory leads so a sibling node wins; the rest trail the inherited PATH so the user's shell order is kept.
+  const leading = commandDirectory && additions[0] === commandDirectory ? [additions.shift()!] : []
+  return { ...env, PATH: [...leading, ...current, ...additions].join(delimiter) }
 }
 
 function comparablePath(path: string): string {

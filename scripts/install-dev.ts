@@ -13,7 +13,7 @@ const launch = !args.includes('--no-launch')
 const directoryFlag = args.indexOf('--dir')
 const installDirectory = resolve(directoryFlag >= 0 && args[directoryFlag + 1] ? args[directoryFlag + 1]! : process.env.HEDDLEWORK_DEV_DIR ?? resolve(homedir(), 'Applications'))
 const bundle = resolve(installDirectory, 'Heddlework Dev.app')
-const built = resolve(root, 'dist', 'Heddlework.app')
+const built = resolve(root, 'dist', 'Heddlework Dev.app')
 const launcher = resolve(root, 'dist', 'heddlework')
 
 function run(command: string[], env: Record<string, string> = {}): boolean {

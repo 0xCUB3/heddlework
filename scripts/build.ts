@@ -29,7 +29,8 @@ if (process.platform === 'darwin' && !withoutChromium) {
   cefPackagingDirectory = staged.cef
   nativePackagingDirectory = staged.native
 }
-const appBundle = resolve(dist, 'Heddlework.app')
+// The patched GPUix addon finds its Chromium helper as `<bundle stem> Helper`, so the bundle and helpers share the name.
+const appBundle = resolve(dist, `${bundleName}.app`)
 const output = bundleChromium
   ? resolve(appBundle, 'Contents', 'MacOS', 'Heddlework')
   : resolve(dist, process.platform === 'win32' ? 'heddlework.exe' : 'heddlework')
@@ -158,7 +159,7 @@ function copyChromiumHelpers(cefSource: string, frameworks: string): void {
   ]
   for (const variant of variants) {
     const sourceName = `GPUix Chromium Helper${variant.nameSuffix}`
-    const helperName = `Heddlework Helper${variant.nameSuffix}`
+    const helperName = `${bundleName} Helper${variant.nameSuffix}`
     const source = resolve(cefSource, `${sourceName}.app`)
     if (!existsSync(source)) throw new Error(`Missing required Chromium helper bundle: ${source}`)
 
@@ -191,7 +192,7 @@ function verifyBundle(bundle: string): void {
     resolve(bundle, 'Contents', 'MacOS', 'Heddlework'),
     resolve(bundle, 'Contents', 'Frameworks', 'Chromium Embedded Framework.framework', 'Chromium Embedded Framework'),
     ...['', ' (Alerts)', ' (GPU)', ' (Plugin)', ' (Renderer)'].map((suffix) =>
-      resolve(bundle, 'Contents', 'Frameworks', `Heddlework Helper${suffix}.app`, 'Contents', 'MacOS', `Heddlework Helper${suffix}`),
+      resolve(bundle, 'Contents', 'Frameworks', `${bundleName} Helper${suffix}.app`, 'Contents', 'MacOS', `${bundleName} Helper${suffix}`),
     ),
   ]
   for (const executable of executables) assertMachOMinimum(executable, '13.0')
@@ -325,7 +326,7 @@ function helperInfoPlist(executable: string, identifierSuffix: string): string {
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleDisplayName</key><string>${executable}</string>
   <key>CFBundleExecutable</key><string>${executable}</string>
-  <key>CFBundleIdentifier</key><string>io.github.monotykamary.heddlework.helper${identifierSuffix}</string>
+  <key>CFBundleIdentifier</key><string>${bundleIdentifier}.helper${identifierSuffix}</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>${executable}</string>
   <key>CFBundlePackageType</key><string>APPL</string>

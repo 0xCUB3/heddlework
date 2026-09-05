@@ -119,7 +119,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks, builds, and 
 
 ### Remote host
 
-The desktop process can serve the same workspace to browser and phone companions. Start it with `HEDDLEWORK_HOST=1`, or run the headless host on a machine without a display:
+The desktop process can serve the same workspace to browser and phone companions. Open Settings and pick a Remote access mode. **This Mac** binds loopback for a browser on the same machine, and **Tailscale & LAN** binds every interface and lists a link per address, with the Tailscale one first when Tailscale is running. The choice persists across launches. `HEDDLEWORK_HOST=1` still forces it on for a single run, and the headless host serves a machine without a display:
 
 ```bash
 bun run host -- /path/to/repository
@@ -242,7 +242,7 @@ HEDDLEWORK_PI=/absolute/path/to/pi bun run start -- /path/to/repository
 | `HEDDLEWORK_NO_SESSION=1` | Disable Pi session persistence |
 | `HEDDLEWORK_DEMO=1` | Use the deterministic no-credentials demo transport |
 | `HEDDLEWORK_DEBUG_OVERLAY=full` | Show GPUIX frame timings (`minimal` is also supported) |
-| `HEDDLEWORK_HOST=1` | Serve the workspace host protocol from the desktop process for web and mobile companions |
+| `HEDDLEWORK_HOST=1` | Force the workspace host on for this run, overriding the Remote access mode saved from Settings |
 | `HEDDLEWORK_HOST_PORT` | Host port (default `4817`) |
 | `HEDDLEWORK_HOST_BIND` | Host bind address (default `127.0.0.1`; use `0.0.0.0` to reach it from a phone on the same network) |
 | `HEDDLEWORK_HOST_ADVERTISE` | Address to put in the printed link and QR code when bound to `0.0.0.0`. Unset picks Tailscale, then LAN; `lan` prefers LAN; any IP or MagicDNS name is used as given |

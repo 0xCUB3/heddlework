@@ -28,8 +28,26 @@ describe('PiRpcTransport', () => {
     ]
     const inherited = { PATH: [...packageBins, ...userBins].join(delimiter) }
 
-    expect(piProcessEnvironment(shim, inherited, cwd).PATH).toBe(userBins.join(delimiter))
-    expect(piProcessEnvironment('/explicit/pi', inherited, cwd)).toBe(inherited)
+    const none = () => false
+    expect(piProcessEnvironment(shim, inherited, cwd, '/fixture-home', none).PATH).toBe(userBins.join(delimiter))
+    expect(piProcessEnvironment('/explicit/pi', inherited, cwd, '/fixture-home', none)).toBe(inherited)
+  })
+
+  it('adds the toolchain directories a Finder-launched app never inherits', () => {
+    if (process.platform === 'win32') return
+    const home = '/fixture-home'
+    const present = new Set(['/opt/homebrew/bin', join(home, '.bun', 'bin'), '/usr/local/bin'])
+    const exists = (path: string) => present.has(path)
+    // launchd hands GUI apps this PATH; pi's shebang needs node, which lives in /opt/homebrew/bin here.
+    const launchd = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
+    expect(piProcessEnvironment('/opt/homebrew/bin/pi', launchd, '/workspace', home, exists).PATH)
+      .toBe(['/opt/homebrew/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin', join(home, '.bun', 'bin'), '/usr/local/bin'].join(delimiter))
+    // A bare command name gets the candidates appended without a leading entry.
+    expect(piProcessEnvironment('pi', launchd, '/workspace', home, exists).PATH)
+      .toBe(['/usr/bin', '/bin', '/usr/sbin', '/sbin', join(home, '.bun', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'].join(delimiter))
+    // Nothing changes when the shell PATH already carries them.
+    const full = { PATH: ['/opt/homebrew/bin', join(home, '.bun', 'bin'), '/usr/local/bin', '/usr/bin'].join(delimiter) }
+    expect(piProcessEnvironment('/opt/homebrew/bin/pi', full, '/workspace', home, exists)).toBe(full)
   })
 
   it('correlates responses while forwarding interleaved events', async () => {
