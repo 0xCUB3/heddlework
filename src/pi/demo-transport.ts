@@ -58,9 +58,9 @@ export class DemoTransport implements HarnessAdapter {
       case 'get_state':
         return this.#state() as T
       case 'get_messages':
-        return { messages: this.#messages } as T
+        return { messages: [...this.#messages] } as T
       case 'get_fork_messages':
-        return { messages: this.#forkMessages } as T
+        return { messages: [...this.#forkMessages] } as T
       case 'get_tree':
         return { tree: this.#tree(), leafId: this.#leafId } as T
       case 'get_available_models':
@@ -228,7 +228,7 @@ export class DemoTransport implements HarnessAdapter {
   #appendMessage(message: PiMessage, id = `demo-entry-${Date.now()}-${this.#entries.length}`): void {
     this.#entries.push({ type: 'message', id, parentId: this.#leafId, message })
     this.#leafId = id
-    this.#messages.push(message)
+    this.#messages = [...this.#messages, message]
   }
 
   #activeEntries(): PiSessionEntry[] {

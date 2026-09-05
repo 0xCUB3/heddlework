@@ -1,3 +1,4 @@
+import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import { serviceToken, type WorkbenchPlugin } from '../core/kernel.ts'
 import { flowRuntimeToken } from '../flows/plugin.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
@@ -6,6 +7,7 @@ import { loadOrCreateHostToken } from './token.ts'
 import { readRemoteAccessMode, RemoteAccessService, type RemoteAccessMode } from './remote-access.ts'
 
 export interface WorkspaceHostPluginOptions {
+  browserIntegrations?: BrowserIntegrationService | undefined
   enabled: boolean
   // Where the chosen mode persists; false keeps it in memory (demo mode and tests).
   preferencePath?: string | false | undefined
@@ -37,6 +39,7 @@ export function createWorkspaceHostPlugin(options: WorkspaceHostPluginOptions): 
         preferencePath: options.preferencePath ?? false,
         lockedBy: options.lockedBy,
         start: (mode) => createWorkspaceHost({
+          browserIntegrations: options.browserIntegrations,
           controller,
           flows,
           workspacePath: options.workspacePath,

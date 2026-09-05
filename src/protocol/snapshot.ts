@@ -18,6 +18,8 @@ export type SnapshotKey = keyof WorkbenchSnapshot
 export interface SnapshotPatch {
   version: 1
   changed: Partial<WorkbenchSnapshot>
+  // JSON drops undefined values, so clearing optional state needs explicit tombstones.
+  removed?: SnapshotKey[]
 }
 
 export function serializeSnapshot(state: WorkbenchState): WorkbenchSnapshot {
@@ -29,24 +31,28 @@ export function serializeSnapshot(state: WorkbenchState): WorkbenchSnapshot {
 
 export function diffSnapshots(previous: WorkbenchSnapshot | undefined, next: WorkbenchSnapshot): SnapshotPatch {
   const changed: Partial<WorkbenchSnapshot> = {}
+  const removed: SnapshotKey[] = []
   for (const key of Object.keys(next) as SnapshotKey[]) {
     if (previous && Object.is(previous[key], next[key])) continue
     ;(changed as Record<string, unknown>)[key] = next[key]
+    if (previous && next[key] === undefined && previous[key] !== undefined) removed.push(key)
   }
   if (previous) {
     for (const key of Object.keys(previous) as SnapshotKey[]) {
-      if (!(key in next)) (changed as Record<string, unknown>)[key] = undefined
+      if (!(key in next)) removed.push(key)
     }
   }
-  return { version: 1, changed }
+  return { version: 1, changed, ...(removed.length ? { removed } : {}) }
 }
 
 export function applySnapshotPatch(current: WorkbenchSnapshot, patch: SnapshotPatch): WorkbenchSnapshot {
-  return { ...current, ...patch.changed }
+  const next = { ...current, ...patch.changed }
+  for (const key of patch.removed ?? []) delete (next as Partial<WorkbenchSnapshot>)[key]
+  return next
 }
 
 export function isPatchEmpty(patch: SnapshotPatch): boolean {
-  return Object.keys(patch.changed).length === 0
+  return Object.keys(patch.changed).length === 0 && !patch.removed?.length
 }
 
 function serializeImage(image: ComposerImage): SnapshotComposerImage {

@@ -12,7 +12,7 @@ export function Diff({ state }: { state: WorkbenchSnapshot }) {
     <div className="web-diff">
       <div className="web-composer-row">
         <p className="web-meta">{diff.branch || 'working tree'} · +{diff.additions} / -{diff.deletions}</p>
-        <button type="button" onClick={() => void workspaceClient().send({ type: 'refreshWorkspaceDiff' })}>Refresh</button>
+        <button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'refreshWorkspaceDiff' })}>Refresh</button>
         {file ? <button type="button" onClick={() => setWrap((value) => !value)}>{wrap ? 'Unwrap' : 'Wrap'}</button> : null}
       </div>
       {diff.status === 'error' ? <p className="web-error">{diff.error}</p> : null}

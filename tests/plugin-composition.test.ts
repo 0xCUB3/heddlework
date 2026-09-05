@@ -30,7 +30,7 @@ describe('workbench plugin composition', () => {
 
     controller.setEditorText('Exercise the plugin event bridge')
     await controller.submit(controller.getSnapshot().editorText)
-    await waitFor(() => !controller.getSnapshot().session.isStreaming)
+    await waitFor(() => !controller.getSnapshot().session.isStreaming && controller.getSnapshot().messages.at(-1)?.role === 'assistant')
     expect(controller.getSnapshot().messages.at(-1)?.role).toBe('assistant')
 
     await kernel.dispose()

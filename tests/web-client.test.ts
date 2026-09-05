@@ -71,4 +71,18 @@ describe('web workspace client', () => {
     await first.kernel.dispose()
     await second.kernel.dispose()
   }, 20_000)
+
+  it('opens a workspace whose welcome exceeds 1 MiB', async () => {
+    const { kernel, controller, host } = await bootstrap()
+    const payload = 'y'.repeat(1_200_000)
+    await controller.setEditorText(payload)
+    const client = new WorkspaceClient()
+    client.connect(host.url, host.token)
+    await waitFor(client, () => client.getSnapshot().state?.editorText === payload, 15_000)
+    expect(client.getSnapshot().status).toBe('open')
+    expect(client.getSnapshot().lastError).toBeUndefined()
+    client.disconnect()
+    await host.close()
+    await kernel.dispose()
+  }, 20_000)
 })

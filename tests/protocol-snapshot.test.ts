@@ -22,6 +22,15 @@ describe('workbench snapshot protocol', () => {
     expect(Object.keys(diffSnapshots(undefined, base).changed).length).toBe(Object.keys(base).length)
   })
 
+  it('clears optional state after a JSON wire roundtrip', () => {
+    const base = { ...serializeSnapshot(createInitialState('/tmp/snap')), dialog: { id: 'dialog-1', method: 'confirm' as const, title: 'Continue?', createdAt: 1 } }
+    const patch = diffSnapshots(base, { ...base, dialog: undefined })
+    const wire = JSON.parse(JSON.stringify(patch))
+    expect(wire.removed).toContain('dialog')
+    expect(applySnapshotPatch(base, wire).dialog).toBeUndefined()
+    expect(isPatchEmpty({ version: 1, changed: {}, removed: ['dialog'] })).toBe(false)
+  })
+
   it('replaces oversized image bytes with a placeholder and keeps small ones', () => {
     const state = createInitialState('/tmp/snap')
     const small = { id: 'a', fileName: 'a.png', size: 10, type: 'image' as const, data: 'AAAA', mimeType: 'image/png' }

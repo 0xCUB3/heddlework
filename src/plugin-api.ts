@@ -1,3 +1,6 @@
+export { BrowserIntegrationService, createBrowserIntegrationService, createBrowserTaskAdapters, loadCustomBrowserAdapters } from './browser/integrations.ts'
+export type { BrowserTaskAdapter, CustomBrowserAdapterConfig } from './browser/integrations.ts'
+export type { BrowserIntegrationCommand, BrowserIntegrationSnapshot, BrowserIntegrationChoice, BrowserIntegrationTask } from './browser/integration-types.ts'
 export { serviceToken, slotToken } from './core/kernel.ts'
 export type {
   Cleanup,

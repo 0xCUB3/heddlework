@@ -1,4 +1,5 @@
 import React, { createContext, useContext } from 'react'
+import uiContract from '../workbench/ui-contract.json'
 
 export type ViewportClass = 'mobile' | 'tablet' | 'desktop'
 
@@ -15,9 +16,9 @@ export interface ResponsiveLayout {
   popoverWidth: number
 }
 
-export const MOBILE_BREAKPOINT = 600
-export const TABLET_BREAKPOINT = 1_024
-export const DESKTOP_SIDEBAR_WIDTH = 256
+export const MOBILE_BREAKPOINT = uiContract.layout.mobileBreakpoint
+export const TABLET_BREAKPOINT = uiContract.layout.tabletBreakpoint
+export const DESKTOP_SIDEBAR_WIDTH = uiContract.layout.sidebarWidth
 
 export function resolveResponsiveLayout(width: number): ResponsiveLayout {
   const viewportWidth = Number.isFinite(width) && width > 0 ? width : 1_200

@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react'
+import uiContract from '../workbench/ui-contract.json'
 import type { TerminalSessionService } from '../terminal/service.ts'
+import type { BrowserIntegrationService } from '../browser/integrations.ts'
+import { BrowserIntegrationSettings } from './browser-integration-settings.tsx'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
@@ -10,7 +13,8 @@ import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
-import { hostConnectUrl, remoteConnectUrls } from '../host/server.ts'
+import { hostConnectUrl, phonePairingLink, remoteConnectUrls } from '../host/server.ts'
+import { PhonePairingQr } from './phone-pairing.tsx'
 import type { RemoteAccessMode, RemoteAccessService } from '../host/remote-access.ts'
 import type { PluginHost } from '../plugins/host.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
@@ -28,6 +32,7 @@ export function SettingsView({
   onThemeModeChange,
   terminals,
   browsers,
+  browserIntegrations,
   remoteAccess,
   pluginHost,
   updates,
@@ -42,6 +47,7 @@ export function SettingsView({
   titlebarInset?: number | undefined
   onThemeModeChange(mode: ThemeMode): void
   terminals?: TerminalSessionService | undefined
+  browserIntegrations?: BrowserIntegrationService | undefined
   browsers?: BrowserSessionService | undefined
   onClose(): void
 }) {
@@ -49,14 +55,14 @@ export function SettingsView({
   const resolvedTitlebarInset = titlebarInset ?? (compact ? (process.platform === 'darwin' ? 132 : 54) : 18)
   return (
     <div testId="settings-view" style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
-      <MotionDiv initial={false} animate={{ paddingLeft: resolvedTitlebarInset }} transition={LAYOUT_MOTION_TRANSITION} style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: resolvedTitlebarInset, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
+      <MotionDiv initial={false} animate={{ paddingLeft: resolvedTitlebarInset }} transition={LAYOUT_MOTION_TRANSITION} style={{ height: uiContract.layout.headerHeight, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: resolvedTitlebarInset, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>
         <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>Settings</text>
         <div style={{ flexGrow: 1 }} />
-        <Button label="Done" compact onClick={onClose} />
+        <Button testId="settings-done" label="Done" compact onClick={onClose} />
       </MotionDiv>
       {/* A column scroller so only the vertical axis scrolls and the content height, not the row cross-size, sets the extent; the child centres itself with alignItems. */}
       <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, minWidth: 0, overflow: 'scroll', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
-        <div testId="settings-global" style={{ width: '100%', maxWidth: 720, minHeight: mobile ? 0 : 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
+        <div testId="settings-global" style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minHeight: mobile ? 0 : 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
           <SettingsSection title="Runtime" description="Global Pi connection settings for this application.">
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
@@ -78,6 +84,7 @@ export function SettingsView({
           {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
           {pluginHost ? <PluginsSection pluginHost={pluginHost} /> : null}
           {terminals ? <TerminalSettings service={terminals} /> : null}
+          {browserIntegrations ? <BrowserIntegrationSettings service={browserIntegrations} onUseResult={(text) => controller.setEditorText(text)} /> : null}
           {browsers ? <BrowserSettings service={browsers} /> : null}
 
           <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
@@ -191,7 +198,8 @@ function RemoteAccessSection({ service, controller }: { service: RemoteAccessSer
     void service.setMode(mode).catch((error: unknown) => controller.notify('warning', error instanceof Error ? error.message : String(error)))
   }
   const remotes = host ? remoteConnectUrls(host).filter((remote) => remote.kind !== 'loopback') : []
-  const bestLink = host ? (remotes[0]?.url ?? hostConnectUrl(host)) : undefined
+  const pairingLink = host ? phonePairingLink(host) : undefined
+  const bestLink = pairingLink ?? (host ? hostConnectUrl(host) : undefined)
   const modeDescription = state.lockedBy
     ? `Pinned by ${state.lockedBy} in this app's environment.`
     : state.mode === 'network' ? 'Phones and other computers can open the workspace over Tailscale or your LAN.'
@@ -216,10 +224,17 @@ function RemoteAccessSection({ service, controller }: { service: RemoteAccessSer
       {state.mode === 'network' && !remotes.some((remote) => remote.kind === 'tailscale') ? (
         <SettingsRow icon="panel" label="Tailscale" value="Not detected. Install and sign in to Tailscale on this Mac and your phone for a link that works anywhere." />
       ) : null}
+      {pairingLink ? <PhonePairingQr url={pairingLink} /> : null}
+      {!pairingLink && state.mode === 'local' ? (
+        <SettingsRow testId="settings-phone-qr-local" icon="panel" label="Phone QR" value="Switch to Tailscale & LAN so a phone can scan a link. This Mac-only mode is loopback, which a phone cannot reach." />
+      ) : null}
+      {!pairingLink && state.mode === 'network' ? (
+        <SettingsRow testId="settings-phone-qr-unavailable" icon="panel" label="Phone QR" value="No reachable Tailscale or LAN address yet. The QR code appears when the host has a network address." />
+      ) : null}
       {host && bestLink ? (
         <SettingsActions>
           <Button label="Open in browser" compact icon="globe" onClick={() => openExternal(hostConnectUrl(host))} />
-          <Button label={remotes.length > 0 ? 'Copy phone link' : 'Copy link'} compact onClick={() => void copyTextToClipboard(bestLink).then(() => controller.notify('info', 'Link copied'))} />
+          <Button label={pairingLink ? 'Copy phone link' : 'Copy link'} compact onClick={() => void copyTextToClipboard(bestLink).then(() => controller.notify('info', 'Link copied'))} />
         </SettingsActions>
       ) : null}
     </SettingsSection>

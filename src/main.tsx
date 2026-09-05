@@ -30,6 +30,7 @@ import {
   workbenchControllerToken,
 } from './workbench/plugins.ts'
 import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
+import { createBrowserIntegrationService } from './browser/integrations.ts'
 import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
 
 interface RuntimeHandle {
@@ -60,7 +61,9 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
 kernel.mount(createCheckoutLanePlugin())
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
 const hostOptions = hostOptionsFromEnvironment(process.env, demoMode ? false : themePreferencePath())
+const browserIntegrations = createBrowserIntegrationService()
 kernel.mount(createWorkspaceHostPlugin({
+  browserIntegrations,
   enabled: hostOptions.enabled,
   workspacePath,
   port: hostOptions.port,
@@ -112,6 +115,7 @@ const runtime: RuntimeHandle = {
     process.off('SIGTERM', shutdown)
     process.off('uncaughtException', handleUncaughtException)
     process.off('unhandledRejection', handleUnhandledRejection)
+    browserIntegrations.dispose()
     themeManager.dispose()
     await kernel.dispose()
   },
@@ -160,7 +164,7 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 render(
-  <WorkbenchApp controller={controller} flows={flows} remoteAccess={remoteAccess} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
+  <WorkbenchApp browserIntegrations={browserIntegrations} controller={controller} flows={flows} remoteAccess={remoteAccess} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
   {
     ...createWindowOptions(
       process.platform,

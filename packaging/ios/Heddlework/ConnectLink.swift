@@ -41,14 +41,7 @@ struct ConnectLink: Equatable {
         return (hostURL, token)
     }
 
-    // The bundled client URL with the host and token passed as query parameters, which the client persists.
-    var shellURL: URL {
-        var components = URLComponents(url: BundleSchemeHandler.origin, resolvingAgainstBaseURL: false)!
-        components.path = "/index.html"
-        components.queryItems = [
-            URLQueryItem(name: "host", value: hostURL.absoluteString),
-            URLQueryItem(name: "token", value: token),
-        ]
-        return components.url!
+    var webSocketURL: URL? {
+        workspaceSocketURL(hostURL: hostURL.absoluteString, token: token)
     }
 }

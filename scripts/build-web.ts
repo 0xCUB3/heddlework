@@ -1,5 +1,5 @@
 import { copyFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { webBuildHash } from './web-build-hash.ts'
 import { resolve } from 'node:path'
 import { webPrecachePaths } from '../src/web/sw-manifest.ts'
 
@@ -30,7 +30,7 @@ for (const file of ['index.html', 'styles.css', 'manifest.webmanifest', 'icon.sv
 }
 
 const assets = readdirSync(outdir)
-const hash = createHash('sha256').update(assets.sort().join('\n')).digest('hex').slice(0, 12)
+const hash = webBuildHash(outdir, assets)
 const precache = webPrecachePaths(assets)
 const sw = await Bun.build({
   entrypoints: [resolve(root, 'src/web/sw.ts')],

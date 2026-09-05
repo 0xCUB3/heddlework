@@ -1,3 +1,4 @@
+import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import { existsSync, statSync } from 'node:fs'
 import { join, normalize, resolve } from 'node:path'
 import type { FlowRuntime } from '../flows/runtime.ts'
@@ -5,11 +6,14 @@ import { advertiseCandidates, type AdvertiseCandidate } from './advertise.ts'
 import {
   applyWorkbenchCommand,
   diffSnapshots,
+  encodeFrames,
   isPatchEmpty,
   isWorkbenchCommand,
+  MAX_ASSEMBLED_BYTES,
   parseClientMessage,
   PROTOCOL_VERSION,
   serializeSnapshot,
+  utf8ByteLength,
   type ServerMessage,
   type WorkbenchSnapshot,
 } from '../protocol/index.ts'
@@ -17,6 +21,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { timingSafeEqualToken } from './token.ts'
 
 export interface WorkspaceHostOptions {
+  browserIntegrations?: BrowserIntegrationService | undefined
   controller: WorkbenchController
   flows: FlowRuntime
   workspacePath: string
@@ -70,7 +75,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
         sockets.add(socket)
         const snapshot = serializeSnapshot(options.controller.getSnapshot())
         socket.data.lastSnapshot = snapshot
-        send(socket, { kind: 'welcome', protocol: PROTOCOL_VERSION, workspacePath: options.workspacePath, snapshot, flows: options.flows.getSnapshot(), hostUrls: remoteHostUrls(hostname, server.port ?? options.port) })
+        send(socket, { kind: 'welcome', protocol: PROTOCOL_VERSION, workspacePath: options.workspacePath, snapshot, flows: options.flows.getSnapshot(), ...(options.browserIntegrations ? { browserIntegrations: options.browserIntegrations.getSnapshot() } : {}), hostUrls: remoteHostUrls(hostname, server.port ?? options.port) })
       },
       close(socket) {
         sockets.delete(socket)
@@ -94,7 +99,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
           return
         }
         try {
-          await applyWorkbenchCommand(options.controller, message.command, { flows: options.flows })
+          await applyWorkbenchCommand(options.controller, message.command, { flows: options.flows, browserIntegrations: options.browserIntegrations })
           send(socket, { kind: 'result', id: message.id, ok: true })
         } catch (error) {
           send(socket, { kind: 'result', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) })
@@ -117,6 +122,10 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
       })
     }
   }
+  const unsubscribeBrowser = options.browserIntegrations?.subscribe(() => {
+    const browserIntegrations = options.browserIntegrations!.getSnapshot()
+    for (const socket of sockets) send(socket, { kind: 'browserIntegrations', browserIntegrations })
+  })
   const unsubscribeController = options.controller.subscribe(publish)
   const unsubscribeFlows = options.flows.subscribe(() => {
     const snapshot = options.flows.getSnapshot()
@@ -136,6 +145,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
     async close() {
       if (closed) return
       closed = true
+      unsubscribeBrowser?.()
       unsubscribeController()
       unsubscribeFlows()
       for (const socket of sockets) socket.close(1001, 'Host shutting down')
@@ -176,6 +186,11 @@ export function remoteConnectUrls(host: Pick<WorkspaceHost, 'port' | 'hostname' 
   return advertiseCandidates().map((candidate) => ({ kind: candidate.kind, url: `http://${formatHost(candidate.address)}:${host.port}/?token=${token}` }))
 }
 
+// Network-reachable connect URL a phone can scan. Never a loopback address.
+export function phonePairingLink(host: Pick<WorkspaceHost, 'port' | 'hostname' | 'token' | 'url'>): string | undefined {
+  return remoteConnectUrls(host).find((remote) => remote.kind !== 'loopback')?.url
+}
+
 function formatHost(address: string): string {
   return address.includes(':') && !address.startsWith('[') ? `[${address}]` : address
 }
@@ -188,7 +203,17 @@ function authorized(request: Request, url: URL, token: string): boolean {
 
 function send(socket: Bun.ServerWebSocket<SocketData>, message: ServerMessage): void {
   try {
-    socket.send(JSON.stringify(message))
+    const json = JSON.stringify(message)
+    const bytes = utf8ByteLength(json)
+    if (bytes > MAX_ASSEMBLED_BYTES) {
+      if (message.kind === 'error') return
+      socket.send(JSON.stringify({
+        kind: 'error',
+        message: `Workspace snapshot is too large to send (${bytes} bytes). Open a smaller session.`,
+      } satisfies ServerMessage))
+      return
+    }
+    for (const frame of encodeFrames(json)) socket.send(frame)
   } catch {
     // A socket closing mid-send is dropped by the close handler.
   }

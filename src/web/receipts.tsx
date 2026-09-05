@@ -10,7 +10,7 @@ export function Receipts({ state }: { state: WorkbenchSnapshot }) {
     <section className="web-receipts">
       <div className="web-composer-row">
         <h3>Receipts</h3>
-        <button type="button" onClick={() => void workspaceClient().send({ type: 'clearReceipts', sessionPath: receipts[0]!.sessionPath })}>Clear</button>
+        <button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'clearReceipts', sessionPath: receipts[0]!.sessionPath })}>Clear</button>
       </div>
       {receipts.map((receipt) => (
         <article key={receipt.id} className="web-card">

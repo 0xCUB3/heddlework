@@ -1,3 +1,4 @@
+import type { BrowserIntegrationSnapshot } from '../browser/integration-types.ts'
 import type { FlowRuntimeSnapshot } from '../flows/types.ts'
 import type { WorkbenchCommand } from './commands.ts'
 import type { SnapshotPatch, WorkbenchSnapshot } from './snapshot.ts'
@@ -8,7 +9,8 @@ export type ClientMessage =
   | { kind: 'ping' }
 
 export type ServerMessage =
-  | { kind: 'welcome'; protocol: number; workspacePath: string; snapshot: WorkbenchSnapshot; flows: FlowRuntimeSnapshot; hostUrls?: string[] }
+  | { kind: 'welcome'; protocol: number; workspacePath: string; snapshot: WorkbenchSnapshot; flows: FlowRuntimeSnapshot; hostUrls?: string[]; browserIntegrations?: BrowserIntegrationSnapshot }
+  | { kind: 'browserIntegrations'; browserIntegrations: BrowserIntegrationSnapshot }
   | { kind: 'patch'; patch: SnapshotPatch }
   | { kind: 'flows'; snapshot: FlowRuntimeSnapshot }
   | { kind: 'result'; id: number; ok: true }
@@ -52,7 +54,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | undefined {
   }
   if (!value || typeof value !== 'object') return undefined
   const kind = (value as { kind?: unknown }).kind
-  return kind === 'welcome' || kind === 'patch' || kind === 'flows' || kind === 'result' || kind === 'error' || kind === 'pong'
+  return kind === 'welcome' || kind === 'patch' || kind === 'flows' || kind === 'browserIntegrations' || kind === 'result' || kind === 'error' || kind === 'pong'
     ? value as ServerMessage
     : undefined
 }

@@ -28,7 +28,7 @@ The execution methods stay the same as `AgentTransport`: `start`, `stop`, `reque
 
 ## Snapshots and patches
 
-`serializeSnapshot(state)` produces a `WorkbenchSnapshot`, which is `WorkbenchState` with composer image bytes above `SNAPSHOT_IMAGE_LIMIT_BYTES` (256 KiB) replaced by `{ omitted: true, bytes }`. `diffSnapshots(previous, next)` returns a `SnapshotPatch` holding only the top-level keys whose reference changed, and `applySnapshotPatch` merges it back. Remote surfaces receive one full snapshot on connect and patches after that.
+`serializeSnapshot(state)` produces a `WorkbenchSnapshot`, which is `WorkbenchState` with composer image bytes above `SNAPSHOT_IMAGE_LIMIT_BYTES` (256 KiB) replaced by `{ omitted: true, bytes }`. `diffSnapshots(previous, next)` returns a `SnapshotPatch` holding only the top-level keys whose reference changed, and `applySnapshotPatch` merges it back. Remote surfaces receive one full snapshot on connect and patches after that. A patch may include `removed`, an array of top-level keys to delete after merging `changed`. This clears optional fields such as dialogs because JSON drops `undefined` values. Clients must apply both parts; use `applySnapshotPatch` in TypeScript.
 
 ## Wire messages
 

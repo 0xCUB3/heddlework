@@ -1,4 +1,5 @@
 import React from 'react'
+import uiContract from '../workbench/ui-contract.json'
 import { basename } from 'node:path'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
@@ -37,7 +38,7 @@ export function ChatHeader({
       initial={false}
       animate={{ paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress) }}
       transition={LAYOUT_MOTION_TRANSITION}
-      style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 5 : 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: layout.mobile ? 8 : 12, backgroundColor: colors.background, userSelect: 'none' }}
+      style={{ height: uiContract.layout.headerHeight, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 5 : 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: layout.mobile ? 8 : 12, backgroundColor: colors.background, userSelect: 'none' }}
     >
       <div testId="chat-breadcrumb" style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
         {!layout.mobile && (

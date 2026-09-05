@@ -1,9 +1,11 @@
-import { parseServerMessage, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
+import type { BrowserIntegrationSnapshot } from '../browser/integration-types.ts'
+import { applySnapshotPatch, FrameAssembler, parseServerMessage, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
 import type { FlowRuntimeSnapshot } from '../flows/types.ts'
 
 export type WorkspaceClientStatus = 'connecting' | 'open' | 'closed'
 
 export interface WorkspaceClientView {
+  browserIntegrations?: BrowserIntegrationSnapshot | undefined
   status: WorkspaceClientStatus
   workspacePath: string
   state: WorkbenchSnapshot | undefined
@@ -28,6 +30,7 @@ export class WorkspaceClient {
   #commandId = 0
   #pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>()
   #listeners = new Set<() => void>()
+  #frames = new FrameAssembler()
   #view: WorkspaceClientView = { status: 'closed', workspacePath: '', state: undefined, flows: undefined }
 
   connect(url: string, token: string, alternates: readonly string[] = []): void {
@@ -48,7 +51,7 @@ export class WorkspaceClient {
     this.#socket?.close()
     this.#socket = undefined
     this.#failPending(new Error('Disconnected'))
-    this.#set({ status: 'closed' })
+    this.#set({ status: 'closed', browserIntegrations: undefined })
   }
 
   subscribe(listener: () => void): () => void {
@@ -79,8 +82,19 @@ export class WorkspaceClient {
     })
   }
 
+  sendAndReport(command: WorkbenchCommand): Promise<void> {
+    return this.send(command).catch((error: unknown) => {
+      this.reportError(error)
+    })
+  }
+
+  reportError(error: unknown): void {
+    this.#set({ lastError: error instanceof Error ? error.message : String(error) })
+  }
+
   #open(): void {
     this.#set({ status: 'connecting' })
+    this.#frames.reset()
     const socket = new WebSocket(workspaceSocketUrl(this.#url, this.#token))
     this.#socket = socket
     socket.addEventListener('open', () => {
@@ -91,15 +105,28 @@ export class WorkspaceClient {
     })
     socket.addEventListener('message', (event) => {
       if (this.#socket !== socket) return
-      const message = parseServerMessage(typeof event.data === 'string' ? event.data : undefined)
+      if (typeof event.data !== 'string') return
+      let assembled: string | undefined
+      try {
+        assembled = this.#frames.push(event.data)
+      } catch (error) {
+        this.#set({ lastError: error instanceof Error ? error.message : String(error) })
+        return
+      }
+      if (assembled === undefined) return
+      const message = parseServerMessage(assembled)
       if (!message) return
       if (message.kind === 'welcome') {
         this.#candidates = mergeCandidates(this.#url, message.hostUrls)
-        this.#set({ status: 'open', workspacePath: message.workspacePath, state: message.snapshot, flows: message.flows })
+        this.#set({ status: 'open', workspacePath: message.workspacePath, state: normalizeSettledSnapshot(message.snapshot), flows: message.flows, browserIntegrations: message.browserIntegrations })
         return
       }
       if (message.kind === 'patch' && this.#view.state) {
-        this.#set({ state: { ...this.#view.state, ...message.patch.changed } })
+        this.#set({ state: normalizeSettledSnapshot(applySnapshotPatch(this.#view.state, message.patch)) })
+        return
+      }
+      if (message.kind === 'browserIntegrations') {
+        this.#set({ browserIntegrations: message.browserIntegrations })
         return
       }
       if (message.kind === 'flows') {
@@ -120,7 +147,7 @@ export class WorkspaceClient {
       if (this.#socket !== socket) return
       this.#socket = undefined
       this.#failPending(new Error('Socket closed'))
-      this.#set({ status: 'closed' })
+      this.#set({ status: 'closed', browserIntegrations: undefined })
       this.#failures += 1
       this.#rotateIfStuck()
       this.#scheduleReconnect()
@@ -171,6 +198,13 @@ export function mergeCandidates(current: string, advertised: readonly string[] |
     if (!seen.has(clean)) { seen.add(clean); merged.push(clean) }
   }
   return merged
+}
+
+function normalizeSettledSnapshot(snapshot: WorkbenchSnapshot): WorkbenchSnapshot {
+  if (!snapshot.session || !Array.isArray(snapshot.liveTools)) return snapshot
+  if (snapshot.session.isStreaming) return snapshot
+  if (!snapshot.liveAssistant && snapshot.liveTools.length === 0) return snapshot
+  return { ...snapshot, liveAssistant: undefined, liveTools: [] }
 }
 
 export function workspaceSocketUrl(hostUrl: string, token: string): string {

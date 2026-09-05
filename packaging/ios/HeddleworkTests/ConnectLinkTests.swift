@@ -25,12 +25,14 @@ final class ConnectLinkTests: XCTestCase {
         XCTAssertNil(ConnectLink(url: URL(string: "http://192.168.1.20:47311/")!))
     }
 
-    func testShellURLCarriesHostAndToken() throws {
+    func testWebSocketURLCarriesHostAndToken() throws {
+        let scanned = try XCTUnwrap(ConnectLink(url: URL(string: "http://100.101.102.103:4817/?token=abcdefghijklmnopqrstuvwxyz0123456789-_")!))
+        XCTAssertEqual(scanned.hostURL.host, "100.101.102.103")
+        XCTAssertEqual(scanned.token, "abcdefghijklmnopqrstuvwxyz0123456789-_")
         let link = try XCTUnwrap(ConnectLink(url: URL(string: "http://10.0.0.5:47311/?token=t0k")!))
-        let components = try XCTUnwrap(URLComponents(url: link.shellURL, resolvingAgainstBaseURL: false))
-        XCTAssertEqual(components.scheme, "heddlework-app")
-        XCTAssertEqual(components.path, "/index.html")
-        XCTAssertEqual(components.queryItems?.first { $0.name == "host" }?.value, "http://10.0.0.5:47311")
+        let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(link.webSocketURL), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.scheme, "ws")
+        XCTAssertEqual(components.path, "/ws")
         XCTAssertEqual(components.queryItems?.first { $0.name == "token" }?.value, "t0k")
     }
 }

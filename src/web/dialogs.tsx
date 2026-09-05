@@ -16,7 +16,7 @@ export function Dialogs({ state }: { state: WorkbenchSnapshot }) {
   if (!dialog) return null
 
   const respond = (payload: { value?: string; confirmed?: boolean; cancelled?: boolean }) => {
-    void workspaceClient().send({ type: 'respondToDialog', ...payload })
+    void workspaceClient().sendAndReport({ type: 'respondToDialog', ...payload })
   }
 
   if (dialog.method === 'confirm') {
@@ -81,7 +81,7 @@ function AskUserForm({ toolCallId, questions }: { toolCallId: string; questions:
   return (
     <form className="web-dialog" onSubmit={(event) => {
       event.preventDefault()
-      void workspaceClient().send({ type: 'submitAskUserQuestionnaire', toolCallId, answers })
+      void workspaceClient().sendAndReport({ type: 'submitAskUserQuestionnaire', toolCallId, answers })
     }}>
       {questions.map((question, index) => (
         <fieldset key={question.header}>
@@ -113,7 +113,7 @@ function AskUserForm({ toolCallId, questions }: { toolCallId: string; questions:
       ))}
       <div className="web-composer-row">
         <button type="submit">Submit</button>
-        <button type="button" onClick={() => void workspaceClient().send({ type: 'cancelAskUserQuestionnaire', toolCallId })}>Cancel</button>
+        <button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'cancelAskUserQuestionnaire', toolCallId })}>Cancel</button>
       </div>
     </form>
   )

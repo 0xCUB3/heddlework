@@ -16,7 +16,11 @@ export function Transcript({ state }: { state: WorkbenchSnapshot }) {
 }
 
 function sendLoadEarlier(): void {
-  void import('./store.ts').then(({ workspaceClient }) => workspaceClient().send({ type: 'loadEarlierMessages' }))
+  void import('./store.ts').then(({ workspaceClient }) => workspaceClient().sendAndReport({ type: 'loadEarlierMessages' }))
+}
+
+function stepLabel(count: number): string {
+  return `${count} ${count === 1 ? 'step' : 'steps'}`
 }
 
 function TranscriptRow({ row, expanded, onToggle }: { row: TranscriptProjectionRow; expanded: boolean; onToggle: () => void }) {
@@ -30,7 +34,7 @@ function TranscriptRow({ row, expanded, onToggle }: { row: TranscriptProjectionR
   if (row.kind === 'trace-header') {
     return (
       <button type="button" className="web-trace-header" onClick={onToggle} aria-expanded={expanded}>
-        {expanded ? 'Hide work' : 'Show work'} · {row.trace.items.length} steps
+        {expanded ? 'Hide work' : 'Show work'} · {stepLabel(row.trace.items.length)}
         {row.trace.changedPaths.length > 0 ? ` · ${row.trace.changedPaths.join(', ')}` : ''}
       </button>
     )

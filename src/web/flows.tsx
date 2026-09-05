@@ -24,7 +24,7 @@ export function Flows({ state, runs: records = [] }: { state: WorkbenchSnapshot;
                   {record && record.attempt > 1 ? <span className="web-meta"> · attempt {record.attempt}</span> : null}
                   {record?.lanePath ? (
                     <span className="web-meta"> · lane {record.laneMerged ? 'merged' : record.laneRemoved ? 'removed' : record.laneBranch}
-                      {!record.laneMerged && !record.laneRemoved && task.status === 'succeeded' ? <button type="button" onClick={() => void workspaceClient().send({ type: 'mergeLane', laneId: record.laneId! })}>Merge lane</button> : null}
+                      {!record.laneMerged && !record.laneRemoved && task.status === 'succeeded' ? <button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'mergeLane', laneId: record.laneId! })}>Merge lane</button> : null}
                     </span>
                   ) : null}
                 </li>

@@ -8,7 +8,6 @@ struct HeddleworkApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(connection)
-                .preferredColorScheme(.dark)
                 .onOpenURL { url in
                     if let link = ConnectLink(url: url) { connection.connect(link) }
                 }
@@ -21,9 +20,8 @@ struct RootView: View {
 
     var body: some View {
         if let link = connection.link {
-            WorkspaceWebView(link: link, onDisconnect: connection.disconnect)
-                .ignoresSafeArea(edges: .bottom)
-                .background(Color(red: 0.04, green: 0.04, blue: 0.04).ignoresSafeArea())
+            WorkspaceView(link: link, onDisconnect: connection.disconnect)
+                .background(AppColors.window.ignoresSafeArea())
         } else {
             ConnectView()
         }
@@ -39,6 +37,18 @@ final class ConnectionStore: ObservableObject {
     private let key = "heddlework.connectLink"
 
     init() {
+        let env = ProcessInfo.processInfo.environment
+        if env["HEEDLEWORK_RESET_CONNECTION"] == "1" {
+            defaults.removeObject(forKey: key)
+        }
+        if let raw = env["HEEDLEWORK_CONNECT_URL"], let url = URL(string: raw), let parsed = ConnectLink(url: url) {
+            link = parsed
+            return
+        }
+        if env["HEEDLEWORK_RESET_CONNECTION"] == "1" {
+            link = nil
+            return
+        }
         if let raw = defaults.string(forKey: key), let url = URL(string: raw) {
             link = ConnectLink(url: url)
         }

@@ -1,3 +1,4 @@
+import { createBrowserIntegrationService } from '../browser/integrations.ts'
 import { resolve } from 'node:path'
 import { WorkbenchKernel } from '../core/kernel.ts'
 import { createFlowRuntimePlugin } from '../flows/plugin.ts'
@@ -36,7 +37,9 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
 }))
 kernel.mount(createCheckoutLanePlugin())
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
+const browserIntegrations = createBrowserIntegrationService()
 kernel.mount(createWorkspaceHostPlugin({
+  browserIntegrations,
   enabled: true,
   workspacePath,
   port: hostOptions.port,
@@ -63,6 +66,7 @@ let disposed = false
 const shutdown = (): void => {
   if (disposed) return
   disposed = true
+  browserIntegrations.dispose()
   void kernel.dispose().finally(() => process.exit(0))
 }
 process.once('SIGINT', shutdown)

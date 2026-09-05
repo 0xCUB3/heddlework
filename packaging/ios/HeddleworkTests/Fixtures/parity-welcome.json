@@ -1,0 +1,284 @@
+{
+  "kind": "welcome",
+  "protocol": 1,
+  "workspacePath": "/tmp/heddlework-ui-parity",
+  "snapshot": {
+    "workspacePath": "/tmp/heddlework-ui-parity",
+    "connection": "connected",
+    "connectionMessage": "Connected",
+    "session": {
+      "model": {
+        "provider": "demo",
+        "id": "heddlework",
+        "name": "Heddlework Demo",
+        "reasoning": true,
+        "contextWindow": 200000,
+        "input": [
+          "text",
+          "image"
+        ]
+      },
+      "thinkingLevel": "medium",
+      "isStreaming": false,
+      "sessionId": "18b2029c-72ed-4811-bda7-3f7ef09f5aa8"
+    },
+    "models": [
+      {
+        "provider": "demo",
+        "id": "heddlework",
+        "name": "Heddlework Demo",
+        "reasoning": true,
+        "contextWindow": 200000,
+        "input": [
+          "text",
+          "image"
+        ]
+      },
+      {
+        "provider": "demo",
+        "id": "fast",
+        "name": "Demo Fast",
+        "reasoning": false,
+        "contextWindow": 128000
+      }
+    ],
+    "thinkingLevels": [
+      "off",
+      "low",
+      "medium",
+      "high"
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": "Queued test item",
+        "timestamp": 1788618985185
+      },
+      {
+        "role": "assistant",
+        "timestamp": 1788618985186,
+        "content": [
+          {
+            "type": "text",
+            "text": "I’ll inspect the workspace and report back."
+          },
+          {
+            "type": "toolCall",
+            "id": "demo-1788618985185",
+            "name": "bash",
+            "arguments": {
+              "command": "git status --short"
+            }
+          }
+        ]
+      },
+      {
+        "role": "toolResult",
+        "toolCallId": "demo-1788618985185",
+        "toolName": "bash",
+        "content": [
+          {
+            "type": "text",
+            "text": "M src/workbench/controller.ts\n?? src/ui/"
+          }
+        ],
+        "isError": false,
+        "timestamp": 1788618985187
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "The workbench transport, event reducer, and native GPUIX transcript are connected. Replace demo mode with the real `pi --mode rpc` process to work on this repository."
+          }
+        ],
+        "timestamp": 1788618985188
+      }
+    ],
+    "messagesHasOlder": false,
+    "messagesLoadingEarlier": false,
+    "forkMessages": [
+      {
+        "entryId": "demo-entry-1788618985185",
+        "text": "Queued test item"
+      }
+    ],
+    "sessions": [],
+    "sessionsLoading": false,
+    "sessionsHasMore": false,
+    "liveTools": [],
+    "activity": "Ready",
+    "queue": {
+      "items": [
+        {
+          "id": "queue-1788619008630-3",
+          "text": "ITEM ONE",
+          "images": [],
+          "createdAt": 1788619008630
+        }
+      ],
+      "steering": [],
+      "followUp": [],
+      "paused": false
+    },
+    "notices": [],
+    "threadLifecycle": {},
+    "workspaceDiff": {
+      "status": "error",
+      "branch": "",
+      "files": [],
+      "additions": 0,
+      "deletions": 0,
+      "error": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "stats": {
+      "sessionId": "18b2029c-72ed-4811-bda7-3f7ef09f5aa8",
+      "totalMessages": 4,
+      "toolCalls": 1,
+      "cost": 0,
+      "contextUsage": {
+        "tokens": 1680,
+        "contextWindow": 200000,
+        "percent": 0.84
+      }
+    },
+    "receipts": [],
+    "statusItems": {},
+    "widgets": {},
+    "dialogQueue": [],
+    "commands": [
+      {
+        "name": "settings",
+        "description": "Open settings menu",
+        "source": "builtin"
+      },
+      {
+        "name": "model",
+        "description": "Select model",
+        "argumentHint": "<provider/model>",
+        "source": "builtin"
+      },
+      {
+        "name": "tree",
+        "description": "Navigate session tree",
+        "source": "builtin"
+      },
+      {
+        "name": "thinking",
+        "description": "Set thinking level",
+        "argumentHint": "<level>",
+        "source": "builtin"
+      },
+      {
+        "name": "scoped-models",
+        "description": "Enable or disable models for cycling",
+        "source": "builtin"
+      },
+      {
+        "name": "export",
+        "description": "Export session as HTML",
+        "argumentHint": "[file.html]",
+        "source": "builtin"
+      },
+      {
+        "name": "import",
+        "description": "Import and resume a JSONL session",
+        "argumentHint": "<file.jsonl>",
+        "source": "builtin"
+      },
+      {
+        "name": "share",
+        "description": "Share session as a private GitHub gist",
+        "source": "builtin"
+      },
+      {
+        "name": "copy",
+        "description": "Copy last assistant message to clipboard",
+        "source": "builtin"
+      },
+      {
+        "name": "name",
+        "description": "Set session display name",
+        "argumentHint": "<name>",
+        "source": "builtin"
+      },
+      {
+        "name": "session",
+        "description": "Show session information and stats",
+        "source": "builtin"
+      },
+      {
+        "name": "changelog",
+        "description": "Show Pi changelog entries",
+        "source": "builtin"
+      },
+      {
+        "name": "hotkeys",
+        "description": "Show Pi keyboard shortcuts",
+        "source": "builtin"
+      },
+      {
+        "name": "fork",
+        "description": "Fork from a previous user message",
+        "source": "builtin"
+      },
+      {
+        "name": "clone",
+        "description": "Duplicate the current session",
+        "source": "builtin"
+      },
+      {
+        "name": "trust",
+        "description": "Save a project trust decision",
+        "source": "builtin"
+      },
+      {
+        "name": "login",
+        "description": "Configure provider authentication",
+        "argumentHint": "<provider>",
+        "source": "builtin"
+      },
+      {
+        "name": "logout",
+        "description": "Remove provider authentication",
+        "source": "builtin"
+      },
+      {
+        "name": "new",
+        "description": "Start a new session",
+        "source": "builtin"
+      },
+      {
+        "name": "compact",
+        "description": "Compact session context",
+        "argumentHint": "[instructions]",
+        "source": "builtin"
+      },
+      {
+        "name": "resume",
+        "description": "Resume a different session",
+        "source": "builtin"
+      },
+      {
+        "name": "reload",
+        "description": "Reload Pi resources and context",
+        "source": "builtin"
+      },
+      {
+        "name": "quit",
+        "description": "Quit Heddlework",
+        "source": "builtin"
+      }
+    ],
+    "editorText": "ITEM ONE",
+    "editorImages": [],
+    "windowTitle": "Heddlework"
+  },
+  "flows": {
+    "schedules": [],
+    "pending": [],
+    "runs": []
+  },
+  "hostUrls": []
+}

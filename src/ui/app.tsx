@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import uiContract from '../workbench/ui-contract.json'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
@@ -24,6 +25,7 @@ import { TerminalProjectionSuspensionProvider, TerminalServiceProvider } from '.
 import { TerminalDock } from './terminal-dock.tsx'
 import { TERMINAL_DOCK_DEFAULT_HEIGHT, TERMINAL_DOCK_MIN_HEIGHT } from './terminal-metrics.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
+import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
@@ -49,6 +51,7 @@ export function WorkbenchApp({
   flows,
   terminals,
   browsers,
+  browserIntegrations,
   themeManager = defaultThemeManager,
   remoteAccess,
   pluginHost,
@@ -63,6 +66,7 @@ export function WorkbenchApp({
   pluginHost?: PluginHost | undefined
   updates?: UpdateService | undefined
   terminals?: TerminalSessionService
+  browserIntegrations?: BrowserIntegrationService
   browsers?: BrowserSessionService
   themeManager?: ThemeManager
   onQuit?(): void
@@ -282,7 +286,7 @@ export function WorkbenchApp({
   const settingsTitlebarInset = 18 + (collapsedChromeInset - 18) * (1 - contentSidebarProgress)
   const conversationFlexGrow = panelFullscreenTarget ? 0 : 1
   const conversationBodyFlexGrow = bottomFullscreenVisible ? 0.001 : 1
-  const chatHeaderHeight = bottomFullscreenVisible ? 0 : 52
+  const chatHeaderHeight = bottomFullscreenVisible ? 0 : uiContract.layout.headerHeight
   const rightPanelHostWidth = rightPanelOpen && !panelFullscreenTarget && !bottomFullscreenVisible ? panelWidth : 0
   const rightPanelHostFlexGrow = rightPanelOpen && panelFullscreenTarget && !bottomFullscreenVisible ? 1 : 0
   const bottomFullscreenProgress = bottomFullscreenVisible ? 1 : 0
@@ -353,7 +357,7 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView state={state} controller={controller} remoteAccess={remoteAccess} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
+            <SettingsView browserIntegrations={browserIntegrations} state={state} controller={controller} remoteAccess={remoteAccess} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>

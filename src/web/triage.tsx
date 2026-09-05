@@ -19,11 +19,11 @@ export function Triage({ state }: { state: WorkbenchSnapshot }) {
             </p>
             {task.result ? <p className="web-meta">{task.result}</p> : null}
             <div className="web-composer-row">
-              <button type="button" onClick={() => void client.send({ type: 'settleThread', path })}>Settle</button>
-              <button type="button" onClick={() => void client.send({ type: 'snoozeThread', path, snoozedUntil: snoozeUntil('hour') })}>1 hour</button>
-              <button type="button" onClick={() => void client.send({ type: 'snoozeThread', path, snoozedUntil: snoozeUntil('tonight') })}>Tonight</button>
-              <button type="button" onClick={() => void client.send({ type: 'snoozeThread', path, snoozedUntil: snoozeUntil('tomorrow') })}>Tomorrow</button>
-              <button type="button" onClick={() => void client.send({ type: 'markThreadRead', path, updatedAt: Date.now() })}>Mark read</button>
+              <button type="button" onClick={() => void client.sendAndReport({ type: 'settleThread', path })}>Settle</button>
+              <button type="button" onClick={() => void client.sendAndReport({ type: 'snoozeThread', path, snoozedUntil: snoozeUntil('hour') })}>1 hour</button>
+              <button type="button" onClick={() => void client.sendAndReport({ type: 'snoozeThread', path, snoozedUntil: snoozeUntil('tonight') })}>Tonight</button>
+              <button type="button" onClick={() => void client.sendAndReport({ type: 'snoozeThread', path, snoozedUntil: snoozeUntil('tomorrow') })}>Tomorrow</button>
+              <button type="button" onClick={() => void client.sendAndReport({ type: 'markThreadRead', path, updatedAt: Date.now() })}>Mark read</button>
             </div>
           </section>
         )

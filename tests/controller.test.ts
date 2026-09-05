@@ -17,7 +17,7 @@ function waitForSettled(controller: WorkbenchController): Promise<void> {
 
 function isFullySettled(controller: WorkbenchController): boolean {
   const state = controller.getSnapshot()
-  return !state.session.isStreaming && state.liveAssistant === undefined && state.liveTools.length === 0
+  return !state.session.isStreaming && state.liveAssistant === undefined && state.liveTools.length === 0 && state.messages.at(-1)?.role === 'assistant'
 }
 
 describe('WorkbenchController', () => {

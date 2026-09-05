@@ -1,3 +1,5 @@
+import { BROWSER_INTEGRATION_COMMAND_TYPES, isBrowserIntegrationCommand, type BrowserIntegrationCommand } from '../browser/integration-types.ts'
+import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import type { ComposerImage, ThinkingLevel } from '../pi/types.ts'
 import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
@@ -7,6 +9,7 @@ import type { ThreadPriority } from '../workbench/state.ts'
 
 // Every command a remote surface may issue. Each member maps onto one public WorkbenchController method.
 export type WorkbenchCommand =
+  | BrowserIntegrationCommand
   | { type: 'submit'; text: string; queue?: boolean }
   | { type: 'queueInput'; text: string; lane?: QueueLane; paused?: boolean }
   | { type: 'updateQueuedInput'; id: string; text: string }
@@ -48,6 +51,7 @@ export type WorkbenchCommand =
 export type WorkbenchCommandType = WorkbenchCommand['type']
 
 export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
+  ...BROWSER_INTEGRATION_COMMAND_TYPES,
   'submit', 'queueInput', 'updateQueuedInput', 'removeQueuedInput', 'moveQueuedInput', 'moveQueuedInputToLane',
   'toggleQueuedInputPause', 'steerQueuedInput', 'resumeQueue', 'pause', 'abort', 'newSession', 'switchSession',
   'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
@@ -59,15 +63,21 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
 export function isWorkbenchCommand(value: unknown): value is WorkbenchCommand {
   if (!value || typeof value !== 'object') return false
   const type = (value as { type?: unknown }).type
+  if (typeof type === 'string' && (BROWSER_INTEGRATION_COMMAND_TYPES as readonly string[]).includes(type)) return isBrowserIntegrationCommand(value)
   return typeof type === 'string' && (WORKBENCH_COMMAND_TYPES as readonly string[]).includes(type)
 }
 
 export interface WorkbenchCommandTargets {
+  browserIntegrations?: BrowserIntegrationService | undefined
   flows?: Pick<FlowRuntime, 'mergeLane' | 'removeLane'> | undefined
 }
 
 export async function applyWorkbenchCommand(controller: WorkbenchController, command: WorkbenchCommand, targets: WorkbenchCommandTargets = {}): Promise<void> {
   switch (command.type) {
+    case 'selectBrowserIntegration': case 'requestBrowserTask': case 'approveBrowserTask': case 'cancelBrowserTask': case 'clearBrowserTask':
+      if (!targets.browserIntegrations) throw new Error('Browser integrations unavailable on this host')
+      targets.browserIntegrations.dispatch(command)
+      return
     case 'mergeLane': {
       if (!targets.flows) throw new Error('Flow runtime is not available')
       const result = await targets.flows.mergeLane(command.laneId)

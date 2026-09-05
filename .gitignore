@@ -4,3 +4,7 @@ dist/
 *.log
 .DS_Store
 screenshots/
+docs/validation/**/*.png
+docs/validation/**/measurements.json
+scripts/validation/ui-parity-native/*.png
+scripts/validation/ui-parity-native/*.json

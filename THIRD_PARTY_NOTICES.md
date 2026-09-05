@@ -2,7 +2,7 @@
 
 ## T3 Code
 
-Heddlework's desktop layout and interaction design are adapted from [T3 Code](https://github.com/pingdotgg/t3code).
+Heddlework's desktop and web layouts, styling, and interaction design are adapted from [T3 Code](https://github.com/pingdotgg/t3code).
 
 MIT License
 

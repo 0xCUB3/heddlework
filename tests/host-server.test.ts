@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
 import { createFlowRuntimePlugin, flowRuntimeToken } from '../src/flows/plugin.ts'
-import { createWorkspaceHost, hostConnectUrl, type WorkspaceHost } from '../src/host/server.ts'
+import { applyWorkbenchCommand, FrameAssembler, MAX_WS_FRAME_BYTES, utf8ByteLength, type ClientMessage, type ServerMessage } from '../src/protocol/index.ts'
+import { createWorkspaceHost, hostConnectUrl, phonePairingLink, type WorkspaceHost } from '../src/host/server.ts'
 import { generateHostToken } from '../src/host/token.ts'
-import type { ClientMessage, ServerMessage } from '../src/protocol/index.ts'
 import type { WorkbenchController } from '../src/workbench/controller.ts'
 import {
   createAgentTransportPlugin,
@@ -31,12 +31,18 @@ async function bootstrap(): Promise<{ kernel: WorkbenchKernel; controller: Workb
 class TestClient {
   readonly socket: WebSocket
   readonly messages: ServerMessage[] = []
+  readonly rawSizes: number[] = []
+  readonly #frames = new FrameAssembler()
   readonly #waiters: Array<{ predicate: (message: ServerMessage) => boolean; resolve: (message: ServerMessage) => void }> = []
 
   constructor(url: string) {
     this.socket = new WebSocket(url)
     this.socket.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data)) as ServerMessage
+      const raw = String(event.data)
+      this.rawSizes.push(utf8ByteLength(raw))
+      const assembled = this.#frames.push(raw)
+      if (assembled === undefined) return
+      const message = JSON.parse(assembled) as ServerMessage
       this.messages.push(message)
       for (const waiter of [...this.#waiters]) {
         if (waiter.predicate(message)) {
@@ -121,6 +127,7 @@ describe('workspace host server', () => {
     await client.next((message) => message.kind === 'result' && message.id === 3)
     await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.isStreaming === true)
     await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.isStreaming === false, 8_000)
+    await client.next((message) => message.kind === 'patch' && message.patch.changed.messages?.length === 4 && message.patch.changed.messages.at(-1)?.role === 'assistant', 8_000)
     expect(controller.getSnapshot().messages.at(-1)?.role).toBe('assistant')
     const messagesPatch = [...client.messages].reverse().find((message) => message.kind === 'patch' && message.patch.changed.messages !== undefined)
     expect(messagesPatch).toBeDefined()
@@ -135,4 +142,20 @@ describe('workspace host server', () => {
     expect(host.connectionCount()).toBe(0)
     await kernel.dispose()
   }, 15_000)
+
+  it('chunks a welcome larger than the iOS default WebSocket cap and reassembles it', async () => {
+    const { kernel, controller, host } = await bootstrap()
+    const payload = 'x'.repeat(1_200_000)
+    await applyWorkbenchCommand(controller, { type: 'setEditorText', text: payload })
+    const client = new TestClient(wsUrl(host))
+    await client.open()
+    const welcome = await client.next((message) => message.kind === 'welcome' || message.kind === 'error', 15_000)
+    if (welcome.kind !== 'welcome') throw new Error(`expected welcome, got ${JSON.stringify(welcome)}`)
+    expect(welcome.snapshot.editorText).toBe(payload)
+    expect(client.rawSizes.length).toBeGreaterThan(1)
+    expect(Math.max(...client.rawSizes)).toBeLessThanOrEqual(MAX_WS_FRAME_BYTES)
+    expect(phonePairingLink(host)).toBeUndefined()
+    await host.close()
+    await kernel.dispose()
+  }, 20_000)
 })

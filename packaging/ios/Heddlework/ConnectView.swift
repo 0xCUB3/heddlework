@@ -16,20 +16,25 @@ struct ConnectView: View {
                         .foregroundStyle(.secondary)
                 }
                 Section("Connect link") {
-                    TextField("http://192.168.1.20:47311/?token=…", text: $text)
+                    TextField("Connect link", text: $text, prompt: Text("http://192.168.1.20:47311/?token=…"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                        .accessibilityIdentifier("connect-link")
+                        .accessibilityLabel("connect-link")
                         .onSubmit(submit)
                     if let error {
                         Text(error).foregroundStyle(.red).font(.footnote)
                     }
                     Button("Connect", action: submit)
                         .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("connect-submit")
                     Button("Scan QR code") { scanning = true }
+                        .accessibilityIdentifier("connect-scan-qr")
                 }
             }
             .navigationTitle("Heddlework")
+            .accessibilityIdentifier("connect-form")
             .sheet(isPresented: $scanning) {
                 QRScannerView { value in
                     scanning = false

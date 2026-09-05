@@ -16,5 +16,5 @@
     "types": ["bun", "node"]
   },
   "include": ["src", "scripts", "tests"],
-  "exclude": ["src/web"]
+  "exclude": ["src/web", "tests/web-ssr-layout.test.ts"]
 }

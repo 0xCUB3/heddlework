@@ -1,3 +1,5 @@
+import uiContract from '../workbench/ui-contract.json'
+
 export type ResolvedTheme = 'light' | 'dark'
 
 export interface ColorPalette {
@@ -46,25 +48,8 @@ export interface ColorPalette {
   transparent: string
 }
 
-export const darkColors: ColorPalette = {
-  window: '#0A0A0A', background: '#0A0A0A', sidebar: '#090A0B', sidebarControl: '#151617', sidebarHover: '#151617', sidebarActive: '#1B1C1D',
-  settledText: '#595A5D', settledMeta: '#4D4E51', settledIcon: '#4B4C4F', settledDivider: '#191A1B', panel: '#0B0C0C', card: '#111212', raised: '#151616',
-  popover: '#1A1B1B', hover: '#202121', input: '#1B1C1C', border: '#1D1E1E', borderStrong: '#2A2B2B', text: '#E7E7E7', textMuted: '#A0A0A3',
-  textFaint: '#66676A', placeholder: '#77787B', primary: '#4F67D8', primaryHover: '#5B74E8', info: '#60A5FA', success: '#4ADEA4', warning: '#F1C75B',
-  error: '#F87171', message: '#171818', composer: '#121212', composerFrame: '#1E1E1E', composerHighlight: '#191919', composerControlText: '#88888B',
-  composerControlIcon: '#737477', contextBar: '#171717', contextText: '#767679', contextIcon: '#5F6063', composerOutline: '#282828', code: '#111212',
-  diffAdd: '#123526', diffDel: '#3B1E24', diffHunkBg: '#162238', transparent: '#00000000',
-}
-
-export const lightColors: ColorPalette = {
-  window: '#F7F7F8', background: '#F7F7F8', sidebar: '#EFEFF1', sidebarControl: '#E2E2E5', sidebarHover: '#E3E3E6', sidebarActive: '#DADAE0',
-  settledText: '#898A90', settledMeta: '#96979C', settledIcon: '#929399', settledDivider: '#DEDEE2', panel: '#F4F4F5', card: '#FFFFFF', raised: '#ECECEF',
-  popover: '#FFFFFF', hover: '#E3E3E7', input: '#FFFFFF', border: '#E2E2E5', borderStrong: '#D0D0D5', text: '#1D1D20', textMuted: '#5D5E64',
-  textFaint: '#85868D', placeholder: '#77787E', primary: '#435CC4', primaryHover: '#344DB8', info: '#2563B8', success: '#16845B', warning: '#9A6700',
-  error: '#C43D45', message: '#ECECEF', composer: '#FFFFFF', composerFrame: '#DCDCE1', composerHighlight: '#F0F0F2', composerControlText: '#5F6067',
-  composerControlIcon: '#74757C', contextBar: '#F0F0F2', contextText: '#696A71', contextIcon: '#7C7D83', composerOutline: '#D4D4D9', code: '#F1F1F3',
-  diffAdd: '#DDF3E8', diffDel: '#F9E1E3', diffHunkBg: '#E1EAF8', transparent: '#00000000',
-}
+export const darkColors: ColorPalette = uiContract.colors.dark
+export const lightColors: ColorPalette = uiContract.colors.light
 
 export const colors: ColorPalette = { ...darkColors }
 
@@ -85,8 +70,8 @@ function createNativeTheme(appearance: ResolvedTheme, palette: ColorPalette) {
     diffAdd: palette.diffAdd,
     diffDel: palette.diffDel,
     diffHunkBg: palette.diffHunkBg,
-    fontSans: 'Helvetica Neue',
-    fontMono: 'Menlo',
+    fontSans: uiContract.typography.fontSans,
+    fontMono: uiContract.typography.fontMono,
     syntax: dark ? {
       comment: '#73737B', keyword: '#FF7AB2', string: '#A8CC8C', number: '#C7A0F8', boolean: '#79B8FF', typeName: '#E8B17A',
       constructor: '#E8B17A', function: '#C7A0F8', property: '#79B8FF', variable: '#E8E8EB', operator: '#FF7AB2', punctuation: '#A0A0A8',

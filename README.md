@@ -142,6 +142,10 @@ After every turn that changes files, Heddlework records a mutation receipt: the 
 
 The bottom dock and right workbench surface share in-process PTY sessions, an incremental VT grid, and one fixed-cell native GPUI host. A versioned 16-byte cell buffer replaces thousands of React nodes and large style graphs; GPUI paints backgrounds and framebuffer block masks through one nearest-sampled 2×2-per-cell texture, caches shaping without ANSI colors, and paints remaining glyph-atlas masks directly. Fractional cell advances keep the first and right TUI columns attached without xterm.js. Bun's small PTY fragments are coalesced at synchronized-frame boundaries, complete CSI controls take an allocation-light parser path, ordinary presentation is paced at 125 Hz, and completed DEC frames plus causal input responses bypass that deadline without exposing partial frames. Native Tab capture forwards Tab and Shift+Tab to the PTY while keeping focus in the terminal. Runtime settings cover installed fonts, ligatures, Nerd Font fallback, muted emoji, and contrast-safe light/dark palettes. `bun run benchmark:terminal` measures the complete 160×50 VT → React → NAPI → GPUI frame. See [Terminal architecture and rendering](docs/terminal.md).
 
+### Browser integrations
+
+Settings → Browser offers Aside and host-installed custom adapters alongside the built-in browser. Each external task needs explicit account selection and one-use approval. Web and SwiftUI clients run these tasks on the connected host. See [Browser integrations](docs/browser-integrations.md) for setup, the adapter contract, and access limits.
+
 ### Native browser
 
 The right workbench panel now hosts an in-process CEF/Chromium child view rather than WKWebView or the user's system-browser profile. Tabs, lossless acknowledged navigation commands, fullscreen geometry, app-owned profiles, private sessions, and agent-access policy remain in Heddlework; GPUix owns the native child view, sandboxed Chromium helpers, input focus, and browser lifecycle. Native CEF fails closed outside a valid macOS app bundle. Build the linked GPUix runtime with `bun run build:browser` first; Heddlework then requires and hash-verifies its CEF manifest while building `dist/Heddlework.app`. Run `bun run smoke:browser` after packaging for a hidden local-page smoke covering native loads, profiles, command acknowledgements, sandboxed helpers, and clean shutdown. Set `HEDDLEWORK_WITHOUT_CEF=1` only for an explicit browser-free macOS build. The same browser service can later target a remote/mobile host without loading CEF into the WASM client. See [Browser architecture, security, and packaging](docs/browser.md).
@@ -205,13 +209,13 @@ These channels describe what is still ahead.
 
 The browser client in `src/web/` is a second renderer over the same host protocol. After `bun run build:web` or `bun run dev:web`, open the host connect link to use sessions, the transcript, queue, flows, diffs, and settings without GPUIX. It is a preview, not a signed product channel.
 
-### Mobile companion PWA
+### Responsive web app
 
-The same client is installable. On iOS Safari use Share → Add to Home Screen. On Android Chrome use Install app or Add to Home Screen. Below 720 px the companion uses a Chat / Queue / Triage / Diff tab bar, a pinned composer, and confirm dialogs as a bottom sheet. Local notifications fire when the tab is hidden and a turn finishes or an approval appears.
+The web app follows the desktop workbench layout. Narrow screens use drawers for navigation and panels, without a separate companion tab bar. On iOS Safari use Share → Add to Home Screen; on Android Chrome use Install app. Local notifications fire when the tab is hidden and a turn finishes or an approval appears.
 
 ### iOS app
 
-`packaging/ios/` holds a native SwiftUI shell that bundles the built web client in a `WKWebView`, adds a QR scanner and a `heddlework://connect?url=…` deep link, and remembers the host. It is generated with xcodegen and uploaded to TestFlight by the release workflow; see `packaging/ios/README.md`.
+`packaging/ios/` renders the workspace in native SwiftUI and connects directly to the host over WebSockets. It keeps QR pairing, `heddlework://connect?url=…` links, and saved host connections. GPUix, web, and SwiftUI share the design contract in `src/workbench/ui-contract.json`; each uses its own renderer. Host-only operations show an explanation rather than a nonfunctional control. See `packaging/ios/README.md` for builds and Xcode Cloud.
 
 The desktop application remains the primary environment for local repositories, terminals, worktrees, and native agent processes. Web and mobile stay additional surfaces over the same workspace model, not separate products.
 

@@ -363,6 +363,14 @@ export function encodeQrMatrix(text: string): QrMatrix {
   return best ?? raw
 }
 
+export function tryEncodeQrMatrix(text: string): QrMatrix | undefined {
+  try {
+    return encodeQrMatrix(text)
+  } catch {
+    return undefined
+  }
+}
+
 export function qrSvg(text: string, module = 4): string {
   const matrix = encodeQrMatrix(text)
   const quiet = 4
@@ -373,9 +381,119 @@ export function qrSvg(text: string, module = 4): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#fff"/>${rects.join('')}</svg>`
 }
 
+export function tryQrSvg(text: string, module = 4): string | undefined {
+  try {
+    return qrSvg(text, module)
+  } catch {
+    return undefined
+  }
+}
+
 export function qrAscii(text: string): string {
   const matrix = encodeQrMatrix(text)
   const pad = (row: number[]): number[] => [0, 0, ...row, 0, 0]
   const lines = [Array.from({ length: matrix.length + 4 }, () => 0), ...matrix.map(pad), Array.from({ length: matrix.length + 4 }, () => 0)]
   return lines.map((row) => row.map((bit) => (bit ? '██' : '  ')).join('')).join('\n')
+}
+
+export function qrRasterSize(matrixLength: number, module = 4, quiet = 4): number {
+  return (matrixLength + quiet * 2) * module
+}
+
+// Uncompressed PNG so GPUix can paint a real image without a Node zlib import.
+export function qrPng(text: string, module = 4): Uint8Array {
+  const matrix = encodeQrMatrix(text)
+  const quiet = 4
+  const size = qrRasterSize(matrix.length, module, quiet)
+  const stride = 1 + size * 3
+  const raw = new Uint8Array(stride * size)
+  for (let y = 0; y < size; y++) {
+    const row = y * stride
+    raw[row] = 0
+    const my = Math.floor(y / module) - quiet
+    for (let x = 0; x < size; x++) {
+      const mx = Math.floor(x / module) - quiet
+      const on = my >= 0 && mx >= 0 && my < matrix.length && mx < matrix.length && matrix[my]![mx] === 1
+      const px = row + 1 + x * 3
+      const value = on ? 0x11 : 0xff
+      raw[px] = value
+      raw[px + 1] = value
+      raw[px + 2] = value
+    }
+  }
+  return encodePng(size, size, raw)
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let crc = n
+    for (let k = 0; k < 8; k++) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1
+    table[n] = crc >>> 0
+  }
+  return table
+})()
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8)
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function adler32(bytes: Uint8Array): number {
+  let a = 1
+  let b = 0
+  for (const byte of bytes) {
+    a += byte
+    if (a >= 65521) a -= 65521
+    b += a
+    if (b >= 65521) b -= 65521
+  }
+  return ((b << 16) | a) >>> 0
+}
+
+function u32(value: number): Uint8Array {
+  return Uint8Array.of((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff)
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.length, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.length
+  }
+  return out
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const typeBytes = new TextEncoder().encode(type)
+  const body = concatBytes([typeBytes, data])
+  return concatBytes([u32(data.length), body, u32(crc32(body))])
+}
+
+function zlibStore(data: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = [Uint8Array.of(0x78, 0x01)]
+  const max = 65535
+  for (let offset = 0; offset < data.length; ) {
+    const n = Math.min(max, data.length - offset)
+    const last = offset + n >= data.length ? 1 : 0
+    const header = Uint8Array.of(last, n & 0xff, (n >> 8) & 0xff, (~n) & 0xff, ((~n) >> 8) & 0xff)
+    parts.push(header, data.subarray(offset, offset + n))
+    offset += n
+  }
+  parts.push(u32(adler32(data)))
+  return concatBytes(parts)
+}
+
+function encodePng(width: number, height: number, raw: Uint8Array): Uint8Array {
+  const ihdr = concatBytes([u32(width), u32(height), Uint8Array.of(8, 2, 0, 0, 0)])
+  const signature = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10)
+  return concatBytes([
+    signature,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlibStore(raw)),
+    pngChunk('IEND', new Uint8Array()),
+  ])
 }

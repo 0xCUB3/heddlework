@@ -20,3 +20,13 @@ export {
   type WorkbenchSnapshot,
 } from './snapshot.ts'
 export { parseClientMessage, parseServerMessage, type ClientMessage, type ServerMessage } from './messages.ts'
+export {
+  encodeFrames,
+  FrameAssembler,
+  isWireFrame,
+  MAX_ASSEMBLED_BYTES,
+  MAX_WS_FRAME_BYTES,
+  splitUtf8,
+  utf8ByteLength,
+  type WireFrame,
+} from './frames.ts'
