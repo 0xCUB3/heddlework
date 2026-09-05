@@ -12,4 +12,4 @@ To run the zip directly:
 2. Set `HEDDLEWORK_PI` to the path of the Pi CLI if it is not on `PATH`.
 3. Launch `heddlework.exe`, optionally with a repository path as the first argument.
 
-Heddlework checks GitHub Releases once at startup and posts a notice with the download link when a newer version exists. Set `HEDDLEWORK_UPDATE_CHECK=0` to disable the check.
+Heddlework checks GitHub Releases at startup and every four minutes, downloads the new zip in the background, and offers Restart to update in Settings. Because a running exe cannot be overwritten, the app writes a small `apply-update.cmd` that waits for the process to exit, swaps `heddlework.exe` and `web/`, and relaunches. Scoop and winget installs show the upgrade command instead. Set `HEDDLEWORK_UPDATE_CHECK=0` to disable the updater.

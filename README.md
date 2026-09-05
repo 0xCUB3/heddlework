@@ -177,6 +177,10 @@ Every published GitHub release also feeds the package channels below. Prerelease
 
 The macOS app is signed with a Developer ID certificate and notarised. The Homebrew cask also links `heddlework` onto `PATH`. The Linux packages install the binary under `/usr/lib/heddlework`, a `heddlework` launcher in `/usr/bin`, and a desktop entry.
 
+### Automatic updates
+
+Packaged desktop builds check GitHub Releases ten seconds after launch and every four minutes after that, download the matching asset in the background, verify it against `checksums.txt` (and `codesign` on macOS), and show a Restart to update button in Settings. Settings also has a Stable / Prerelease channel switch; builds with a prerelease version default to the prerelease channel. Installs owned by Homebrew, Scoop, winget, apt, or dnf are not replaced in place; the app shows the matching upgrade command instead. Set `HEDDLEWORK_UPDATE_CHECK=0` to turn the updater off.
+
 ## Install later: product channels
 
 These channels describe what is still ahead.
@@ -185,7 +189,6 @@ These channels describe what is still ahead.
 | --- | --- |
 | Codex and Claude adapters | Additional `HarnessAdapter` implementations behind the same protocol |
 | Signed Windows builds | The workflow signs `heddlework.exe` once `WINDOWS_CERT_PFX` is set; until then the zip is `-unsigned` |
-| In-place updates | The startup check announces new releases; downloading and replacing the app stays manual |
 | Android | Wrapper app; the PWA installs to the home screen today |
 
 ### Web workspace client

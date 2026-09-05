@@ -20,6 +20,7 @@ import type { ToolPresenter } from './tool-presenters.ts'
 import { Icon } from './icons.tsx'
 import { colors } from './theme.ts'
 import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
+import type { UpdateService } from '../updates/service.ts'
 import { MotionDiv, SPRING_SETTLE_MS, useSpringProgress } from './motion.ts'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
 
@@ -42,6 +43,7 @@ export function WorkbenchApp({
   ui,
   flows,
   themeManager = defaultThemeManager,
+  updates,
   onQuit,
 }: {
   controller: WorkbenchController
@@ -51,6 +53,7 @@ export function WorkbenchApp({
   host?: WorkspaceHost | undefined
   pluginHost?: PluginHost | undefined
   themeManager?: ThemeManager
+  updates?: UpdateService | undefined
   onQuit?(): void
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
@@ -269,7 +272,7 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView state={state} controller={controller} host={host} pluginHost={pluginHost} theme={theme} onThemeModeChange={(mode) => themeManager.setMode(mode)} onClose={() => setSurface('chat')} />
+            <SettingsView state={state} controller={controller} host={host} pluginHost={pluginHost} theme={theme} updates={updates} onThemeModeChange={(mode) => themeManager.setMode(mode)} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <div style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: 1 - fullscreenProgress, minWidth: 0, height: '100%', overflow: 'hidden' }}>

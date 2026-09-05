@@ -7,6 +7,9 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
+import type { UpdateService, UpdateState } from '../updates/service.ts'
+import type { UpdateChannel } from '../updates/feed.ts'
+import { openExternal } from './open-external.ts'
 import { colors, nativeTheme } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -27,6 +30,7 @@ export function SettingsView({
   host,
   pluginHost,
   theme,
+  updates,
   onThemeModeChange,
   onClose,
 }: {
@@ -35,6 +39,7 @@ export function SettingsView({
   host?: WorkspaceHost | undefined
   pluginHost?: PluginHost | undefined
   theme: ThemeSnapshot
+  updates?: UpdateService | undefined
   onThemeModeChange(mode: ThemeMode): void
   onClose(): void
 }) {
@@ -66,6 +71,8 @@ export function SettingsView({
             <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
           </SettingsSection>
 
+          {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
+
           <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
             <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
           </SettingsSection>
@@ -85,6 +92,82 @@ export function SettingsView({
           <div testId="settings-bottom-spacer" style={{ height: 52, flexShrink: 0 }} />
         </div>
       </div>
+    </div>
+  )
+}
+
+export function updateStatusLabel(state: UpdateState): string {
+  switch (state.status) {
+    case 'disabled': return state.message ?? 'Automatic updates are off'
+    case 'idle': return 'Not checked yet'
+    case 'checking': return 'Checking for updates…'
+    case 'up-to-date': return `Up to date (${state.currentVersion})`
+    case 'available': return state.install.managedCommand ? `${state.availableVersion} is available. Run: ${state.install.managedCommand}` : `${state.availableVersion} is available`
+    case 'downloading': return `Downloading ${state.availableVersion}${typeof state.downloadPercent === 'number' ? ` (${Math.floor(state.downloadPercent)}%)` : ''}…`
+    case 'downloaded': return `${state.downloadedVersion} is downloaded. Restart to install it.`
+    case 'error': return state.errorContext === 'download' && state.availableVersion ? `Download failed for ${state.availableVersion}: ${state.message ?? 'unknown error'}` : state.errorContext === 'install' && state.downloadedVersion ? `Install failed for ${state.downloadedVersion}: ${state.message ?? 'unknown error'}` : state.message ?? 'Update check failed'
+  }
+}
+
+export function updateActionLabel(state: UpdateState): 'Check for updates' | 'Download' | 'Restart to update' | 'Retry' | null {
+  if (!state.enabled) return null
+  if (state.status === 'downloaded') return 'Restart to update'
+  if (state.status === 'error') return 'Retry'
+  if (state.status === 'available' && !state.install.managedCommand) return 'Download'
+  if (state.status === 'checking' || state.status === 'downloading') return null
+  return 'Check for updates'
+}
+
+function UpdatesSection({ service, controller }: { service: UpdateService; controller: WorkbenchController }) {
+  const state = React.useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const action = updateActionLabel(state)
+  const runAction = () => {
+    if (action === 'Restart to update') void service.install()
+    else if (action === 'Download') void service.download()
+    else if (action === 'Retry') void service.retry()
+    else if (action === 'Check for updates') void service.check('manual')
+  }
+  const setChannel = (channel: UpdateChannel) => {
+    void service.setChannel(channel).catch((error: unknown) => controller.notify('warning', error instanceof Error ? error.message : String(error)))
+  }
+  const tone = state.status === 'up-to-date' || state.status === 'downloaded' ? 'success' : 'normal'
+  return (
+    <SettingsSection title="Updates" description="Heddlework checks GitHub Releases every few minutes, downloads new builds in the background, and installs when you restart.">
+      <SettingsRow testId="settings-update-status" icon="refresh" label={`Version ${state.currentVersion}`} value={updateStatusLabel(state)} tone={tone} />
+      {state.arch.translated ? <SettingsRow icon="panel" label="Architecture" value="Running the Intel build under Rosetta; the next update installs the Apple Silicon build." /> : null}
+      <SettingsControlRow label="Channel">
+        <ChannelPicker channel={state.channel} onChange={setChannel} disabled={service.busy} />
+      </SettingsControlRow>
+      <SettingsActions>
+        {state.releaseUrl ? <Button label="Release notes" compact onClick={() => openExternal(state.releaseUrl!)} /> : null}
+        {action ? <Button testId="settings-update-action" label={action} compact {...(action === 'Restart to update' ? { icon: 'refresh' as const } : {})} onClick={runAction} /> : null}
+      </SettingsActions>
+    </SettingsSection>
+  )
+}
+
+function ChannelPicker({ channel, onChange, disabled }: { channel: UpdateChannel; onChange(channel: UpdateChannel): void; disabled: boolean }) {
+  const options: Array<{ value: UpdateChannel; label: string }> = [
+    { value: 'stable', label: 'Stable' },
+    { value: 'prerelease', label: 'Prerelease' },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'row', gap: 3, padding: 3, borderRadius: 9, backgroundColor: colors.raised, opacity: disabled ? 0.6 : 1 }}>
+      {options.map(({ value, label }) => {
+        const active = channel === value
+        return (
+          <div
+            key={value}
+            testId={`update-channel-${value}`}
+            tabIndex={0}
+            style={{ minHeight: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 9, paddingRight: 9, borderRadius: 7, backgroundColor: active ? colors.card : colors.transparent, borderWidth: 1, borderColor: active ? colors.borderStrong : colors.transparent, cursor: 'pointer', userSelect: 'none', hover: { backgroundColor: active ? colors.card : colors.hover } }}
+            onClick={() => { if (!disabled) onChange(value) }}
+            onKeyDown={(event) => { if (!disabled && (event.key === 'enter' || event.key === 'space')) onChange(value) }}
+          >
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{label}</text>
+          </div>
+        )
+      })}
     </div>
   )
 }
