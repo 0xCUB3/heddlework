@@ -67,9 +67,9 @@ jobs:
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           VERSION: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
@@ -87,8 +87,9 @@ jobs:
           suffix=""
           if [ -z "${SIGN_IDENTITY:-}" ]; then suffix="-unsigned"; fi
           ditto -c -k --keepParent dist/Heddlework.app "dist/${{ matrix.asset }}${suffix}.zip"
-          if [ -n "${SIGN_IDENTITY:-}" ] && [ -n "${APPLE_ID:-}" ]; then
-            xcrun notarytool submit "dist/${{ matrix.asset }}.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          if [ -n "${SIGN_IDENTITY:-}" ] && [ -n "${ASC_KEY_P8:-}" ]; then
+            echo "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+            xcrun notarytool submit "dist/${{ matrix.asset }}.zip" --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait
             xcrun stapler staple dist/Heddlework.app
             rm -f "dist/${{ matrix.asset }}.zip"
             ditto -c -k --keepParent dist/Heddlework.app "dist/${{ matrix.asset }}.zip"
