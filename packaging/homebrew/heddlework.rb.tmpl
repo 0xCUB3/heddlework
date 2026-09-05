@@ -3,13 +3,16 @@ cask "heddlework" do
   sha256 arm:   "@SHA_ARM64@",
          intel: "@SHA_X64@"
 
+  # The arm64 bundle carries Chromium and names its executable Heddlework; the Intel bundle is browser-free and keeps heddlework.
   on_arm do
     url "https://github.com/0xCUB3/heddlework/releases/download/v#{version}/heddlework-macos-arm64.zip",
         verified: "github.com/0xCUB3/heddlework/"
+    binary "#{appdir}/Heddlework.app/Contents/MacOS/Heddlework", target: "heddlework"
   end
   on_intel do
     url "https://github.com/0xCUB3/heddlework/releases/download/v#{version}/heddlework-macos-x64.zip",
         verified: "github.com/0xCUB3/heddlework/"
+    binary "#{appdir}/Heddlework.app/Contents/MacOS/heddlework"
   end
 
   name "Heddlework"
@@ -24,7 +27,6 @@ cask "heddlework" do
   depends_on macos: :monterey
 
   app "Heddlework.app"
-  binary "#{appdir}/Heddlework.app/Contents/MacOS/heddlework"
 
   zap trash: [
     "~/.heddlework",
