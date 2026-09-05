@@ -171,7 +171,7 @@ These channels describe what is still ahead; everything else in this README ship
 | Codex and Claude adapters | Additional `HarnessAdapter` implementations behind the same protocol |
 | Signed desktop builds | The release workflow signs and notarises once certificate secrets are configured; until then assets are unsigned |
 | In-place updates | The startup check announces new releases; downloading and replacing the app stays manual |
-| Mobile | Native wrappers around the companion PWA; the PWA itself installs to the home screen now |
+| Mobile | Android wrapper; the iOS shell ships through TestFlight and the PWA installs to the home screen on both platforms |
 
 ### Web workspace client
 
@@ -179,7 +179,11 @@ The browser client in `src/web/` is a second renderer over the same host protoco
 
 ### Mobile companion PWA
 
-The same client is installable. On iOS Safari use Share → Add to Home Screen. On Android Chrome use Install app or Add to Home Screen. Below 720 px the companion uses a Chat / Queue / Triage / Diff tab bar, a pinned composer, and confirm dialogs as a bottom sheet. Local notifications fire when the tab is hidden and a turn finishes or an approval appears. Native wrappers are still later work.
+The same client is installable. On iOS Safari use Share → Add to Home Screen. On Android Chrome use Install app or Add to Home Screen. Below 720 px the companion uses a Chat / Queue / Triage / Diff tab bar, a pinned composer, and confirm dialogs as a bottom sheet. Local notifications fire when the tab is hidden and a turn finishes or an approval appears.
+
+### iOS app
+
+`packaging/ios/` holds a native SwiftUI shell that bundles the built web client in a `WKWebView`, adds a QR scanner and a `heddlework://connect?url=…` deep link, and remembers the host. It is generated with xcodegen and built by Xcode Cloud for TestFlight; see `packaging/ios/README.md`.
 
 The desktop application remains the primary environment for local repositories, terminals, worktrees, and native agent processes. Web and mobile stay additional surfaces over the same workspace model, not separate products.
 

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { WorkbenchSnapshot } from '../protocol/index.ts'
+import { isNativeShell, notifyNativeShell } from './native-shell.ts'
 import { requestWorkspaceNotifications } from './notifications.ts'
 import { workspaceClient } from './store.ts'
 
@@ -40,8 +41,16 @@ export function Settings({ state, workspacePath, onDisconnect }: { state: Workbe
       </label>
       <p className="web-meta">Workspace {workspacePath}</p>
       <p className="web-meta">Connection {state.connection} · {state.connectionMessage}</p>
-      <p className="web-meta">Install this companion from the browser share sheet or Add to Home Screen. LAN hosts need HEDDLEWORK_HOST_BIND=0.0.0.0.</p>
-      <button type="button" onClick={onDisconnect}>Disconnect</button>
+      {isNativeShell() ? null : <p className="web-meta">Install this companion from the browser share sheet or Add to Home Screen. LAN hosts need HEDDLEWORK_HOST_BIND=0.0.0.0.</p>}
+      <button
+        type="button"
+        onClick={() => {
+          onDisconnect()
+          notifyNativeShell('disconnect')
+        }}
+      >
+        Disconnect
+      </button>
     </div>
   )
 }
