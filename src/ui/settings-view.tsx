@@ -74,10 +74,6 @@ export function SettingsView({
 
           {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
           {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
-
-          <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
-            <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
-          </SettingsSection>
           {host ? (
             <SettingsSection title="Remote access" description="Web and mobile companions connect to this desktop process over the workspace host protocol.">
               <SettingsRow testId="settings-host-url" icon="circle" label="Host" value={host.url} tone="success" />

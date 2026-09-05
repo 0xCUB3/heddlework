@@ -473,9 +473,7 @@ async function waitForTerminalReady(service: TerminalSessionService, sessionId: 
 }
 
 function instrumentRenderer(renderer: ReturnType<typeof createRenderer>, telemetry: TerminalPipelineTelemetry): void {
-  const direct = renderer.setTerminalFrame
-  if (!direct) throw new Error('The patched GPUIX direct native terminal renderer is required')
-  const setTerminalFrame = direct.bind(renderer)
+  const setTerminalFrame = renderer.setTerminalFrame.bind(renderer)
   renderer.setTerminalFrame = (elementId, metadata, cells) => {
     const startedAt = performance.now()
     try {
@@ -582,7 +580,7 @@ function createReport(
       arch: process.arch,
       bun: Bun.version,
       requiresTick: renderer.requiresTick(),
-      nativeTerminal: renderer.supportsNativeTerminal?.() === true,
+      nativeTerminal: renderer.supportsNativeTerminal(),
       directTerminalFrame: typeof renderer.setTerminalFrame === 'function',
     },
     config: {
@@ -725,7 +723,7 @@ async function run(): Promise<void> {
       show: true,
     })
     renderer.setDebugFrameOverlay(config.overlay)
-    if (renderer.supportsNativeTerminal?.() !== true || typeof renderer.setTerminalFrame !== 'function') {
+    if (!renderer.supportsNativeTerminal() || typeof renderer.setTerminalFrame !== 'function') {
       throw new Error('The patched GPUIX direct native terminal renderer is required')
     }
     instrumentRenderer(renderer, telemetry)

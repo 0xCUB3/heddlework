@@ -94,9 +94,13 @@ bun run dev -- /path/to/repository
 Build the current unsigned executable:
 
 ```bash
+bun run gpuix:fetch
+bun install --frozen-lockfile
 bun run build
 ./dist/heddlework /path/to/repository
 ```
+
+`gpuix:fetch` downloads the patched GPUix packages this fork depends on (see [Patched GPUix](#patched-gpuix)). On macOS `bun run build` produces `dist/Heddlework.app` with Chromium bundled; `dist/heddlework` is a symlink to its executable.
 
 ### Linux desktop integration
 
@@ -302,11 +306,22 @@ Pi remains authoritative for Pi messages and sessions. Streaming state is tempor
 ## Development
 
 ```bash
+bun run gpuix:fetch
 bun install --frozen-lockfile
 bun run typecheck
 bun run test
 bun run build
 ```
+
+### Patched GPUix
+
+The native terminal, the Chromium panel, shimmer text, and a few motion and event fixes need changes to GPUix that are not in the published `@gpuix/*` packages yet. `patches/gpuix-0.7.0-heddlework.patch` carries them. `package.json` pins `@gpuix/react` and `@gpuix/native` to tarballs under `vendor/gpuix/`, which are gitignored and come from one of two places.
+
+`bun run gpuix:fetch` downloads the prebuilt tarballs from the fork's `gpuix-0.7.0-heddlework.1` release and checks them against `vendor/gpuix/SHA256SUMS`. This is what CI does.
+
+`bun run gpuix:build` clones GPUix at the `@gpuix/native@0.7.0` tag beside this checkout, applies the patch to it and its zed submodule, builds the native addon with the CEF feature, and packs both packages. It needs Rust, cmake, ninja, and the Xcode Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`). Bump `GPUIX_BUILD_VERSION`, the tarball names in `package.json`, and the release tag together when the patch changes.
+
+The prebuilt native package carries a darwin-arm64 addon only. Other platforms fall through to the published 0.7.0 platform packages, so they get the React terminal renderer and no browser panel.
 
 The native test suite exercises the real GPUIX reconciler and covers shell interactions, session paging, transcript following, clipboard media, extension dialogs, notifications, native diff virtualization, deep-scroll performance, and spring panel geometry.
 

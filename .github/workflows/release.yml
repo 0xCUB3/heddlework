@@ -45,6 +45,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+      - run: scripts/fetch-gpuix.sh
+        shell: bash
       - run: bun install --frozen-lockfile
       - name: Widen the virtual display for GPUIX test windows
         if: runner.os == 'macOS'
@@ -57,12 +59,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: bun run typecheck && bun test $(ls tests/*.test.ts | grep -vE 'rpc-transport|session-switch|session-history-controller|theme-manager|extension-ui')
-      # The published @gpuix packages ship without CEF; the native browser bundle needs a patched GPUix build (see docs/browser.md).
+      # The vendored patched GPUix carries a CEF-enabled darwin-arm64 addon only; other targets build browser-free.
       - run: bun run build
         env:
           COMPILE_TARGET: ${{ matrix.target }}
           HEDDLEWORK_VERSION: ${{ env.RELEASE_TAG }}
-          HEDDLEWORK_WITHOUT_CEF: '1'
+          HEDDLEWORK_WITHOUT_CEF: ${{ matrix.target == 'bun-darwin-arm64' && '0' || '1' }}
 
       - name: Package macOS app
         if: runner.os == 'macOS'

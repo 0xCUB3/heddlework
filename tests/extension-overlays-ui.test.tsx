@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 import { handleGpuixEvent } from '@gpuix/react'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
-import { itWithPatchedGpuix } from './helpers/gpuix-capabilities.ts'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
@@ -148,7 +147,7 @@ describeNative('conversation extension overlays', () => {
     }
   })
 
-  itWithPatchedGpuix('keeps conversation actions above persistent extension statuses', async () => {
+  it('keeps conversation actions above persistent extension statuses', async () => {
     const transport = new OverlayTransport()
     const controller = new WorkbenchController(transport, '/tmp/status-spacing', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     const root = createTestRoot({ width: 1_280, height: 800 })
@@ -163,7 +162,13 @@ describeNative('conversation extension overlays', () => {
       await Bun.sleep(30)
       root.renderer.flush()
 
-      const enteringSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
+      // The status reaches state, lays out, then starts moving; give the motion one extra frame if needed.
+      let enteringSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
+      if (enteringSpacerHeight <= baseSpacerHeight) {
+        await Bun.sleep(16)
+        root.renderer.flush()
+        enteringSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
+      }
       expect(enteringSpacerHeight).toBeGreaterThan(baseSpacerHeight)
       expect(enteringSpacerHeight).toBeLessThan(baseSpacerHeight + 35)
       await Bun.sleep(SPRING_SETTLE_MS + 80)

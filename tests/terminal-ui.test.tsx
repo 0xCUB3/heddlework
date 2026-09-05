@@ -10,7 +10,6 @@ import { TerminalView } from '../src/ui/terminal-view.tsx'
 import { SPRING_SETTLE_MS } from '../src/ui/motion.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
-import { itWithPatchedGpuix } from './helpers/gpuix-capabilities.ts'
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 const services: TerminalSessionService[] = []
@@ -30,7 +29,7 @@ function createHarness() {
 }
 
 describeNative('terminal panels', () => {
-  itWithPatchedGpuix('stages interactive output before the next React or GPUI flush', async () => {
+  it('stages interactive output before the next React or GPUI flush', async () => {
     const terminals = new TerminalSessionService({
       cwd: '/tmp/heddlework-terminal-ui',
       backend: new MemoryTerminalBackend(),
@@ -74,7 +73,7 @@ describeNative('terminal panels', () => {
     }
   })
 
-  itWithPatchedGpuix('opens the layout-owned bottom dock and the right terminal surface', async () => {
+  it('opens the layout-owned bottom dock and the right terminal surface', async () => {
     const { controller, terminals } = createHarness()
     const root = createTestRoot({ width: 1_280, height: 720 })
     root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} terminals={terminals} />)
@@ -177,7 +176,7 @@ describeNative('terminal panels', () => {
     }
   }, 15_000)
 
-  itWithPatchedGpuix('applies terminal font and renderer preferences from Settings at runtime', async () => {
+  it('applies terminal font and renderer preferences from Settings at runtime', async () => {
     const { controller, terminals } = createHarness()
     const root = createTestRoot({ width: 1_280, height: 820 })
     root.render(<WorkbenchApp controller={controller} presenters={new Map()} ui={createTestUiRegistry(controller)} terminals={terminals} />)

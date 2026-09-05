@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Wraps the compiled executable and web assets in a Heddlework.app bundle and signs it when SIGN_IDENTITY is set.
+# When scripts/build.ts already produced a Chromium-bundled app at the output path, this only re-signs it inside
+# out, keeping the helper names and framework layout docs/browser.md describes.
 set -euo pipefail
 
 binary="${1:?path to compiled heddlework binary}"
@@ -8,11 +10,27 @@ version="${3:-0.0.0}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 
+if [ -d "$app/Contents/Frameworks/Chromium Embedded Framework.framework" ]; then
+  if [ -n "${SIGN_IDENTITY:-}" ]; then
+    frameworks="$app/Contents/Frameworks"
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$frameworks/Chromium Embedded Framework.framework"
+    for helper in "$frameworks"/*.app; do
+      codesign --force --options runtime --timestamp --entitlements "$here/helper-entitlements.plist" --sign "$SIGN_IDENTITY" "$helper"
+    done
+    codesign --force --options runtime --timestamp --entitlements "$here/entitlements.plist" --sign "$SIGN_IDENTITY" "$app"
+    codesign --verify --deep --strict "$app"
+    echo "Re-signed Chromium-bundled $app with $SIGN_IDENTITY"
+  else
+    echo "Keeping ad-hoc signed Chromium-bundled $app (set SIGN_IDENTITY to sign)"
+  fi
+  exit 0
+fi
+
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/heddlework"
 chmod 755 "$app/Contents/MacOS/heddlework"
-if [ -d "$root/dist/web" ]; then cp -R "$root/dist/web" "$app/Contents/MacOS/web"; fi
+if [ -d "$root/dist/web" ]; then mkdir -p "$app/Contents/Resources" && cp -R "$root/dist/web" "$app/Contents/Resources/web"; fi
 sed "s/__VERSION__/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 
 # Rasterise the SVG icon into an icns when the macOS tools are present; the bundle still works without it.

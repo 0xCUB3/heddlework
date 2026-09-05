@@ -34,10 +34,10 @@ try {
   rmSync(dist, { recursive: true, force: true })
   mkdirSync(dirname(output), { recursive: true })
 
-  // The web client ships beside the executable as web/, which is where src/host/static-root.ts looks for it.
+  // The web client ships in Contents/Resources/web inside the app bundle or beside the executable otherwise; src/host/static-root.ts checks both.
   const web = Bun.spawnSync([process.execPath, resolve(root, 'scripts/build-web.ts')], { cwd: root, stdout: 'inherit', stderr: 'inherit' })
   if (web.exitCode !== 0) throw new Error('Failed to build the web workspace client')
-  const webOutput = resolve(dirname(output), 'web')
+  const webOutput = bundleChromium ? resolve(appBundle, 'Contents', 'Resources', 'web') : resolve(dirname(output), 'web')
   if (resolve(dist, 'web') !== webOutput) {
     cpSync(resolve(dist, 'web'), webOutput, { recursive: true })
     rmSync(resolve(dist, 'web'), { recursive: true, force: true })
