@@ -13,11 +13,16 @@ root="$(cd "$here/../.." && pwd)"
 if [ -d "$app/Contents/Frameworks/Chromium Embedded Framework.framework" ]; then
   if [ -n "${SIGN_IDENTITY:-}" ]; then
     frameworks="$app/Contents/Frameworks"
-    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$frameworks/Chromium Embedded Framework.framework"
+    cef="$frameworks/Chromium Embedded Framework.framework"
+    sign() { codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$@"; }
+    # Notarization checks every Mach-O, so the framework's dylibs get hardened-runtime signatures before their containers.
+    find "$cef/Libraries" -type f -name '*.dylib' -print0 | while IFS= read -r -d '' library; do sign "$library"; done
+    sign "$cef/Chromium Embedded Framework"
+    sign "$cef"
     for helper in "$frameworks"/*.app; do
-      codesign --force --options runtime --timestamp --entitlements "$here/helper-entitlements.plist" --sign "$SIGN_IDENTITY" "$helper"
+      sign --entitlements "$here/helper-entitlements.plist" "$helper"
     done
-    codesign --force --options runtime --timestamp --entitlements "$here/entitlements.plist" --sign "$SIGN_IDENTITY" "$app"
+    sign --entitlements "$here/entitlements.plist" "$app"
     codesign --verify --deep --strict "$app"
     echo "Re-signed Chromium-bundled $app with $SIGN_IDENTITY"
   else

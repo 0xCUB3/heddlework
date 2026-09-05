@@ -189,6 +189,7 @@ jobs:
         if: steps.creds.outputs.ready == 'true'
         run: |
           set -euo pipefail
+          scripts/fetch-gpuix.sh
           bun install --frozen-lockfile
           bun run build:web
           test -f dist/web/index.html

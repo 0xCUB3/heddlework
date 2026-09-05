@@ -20,4 +20,9 @@ for name in "gpuix-native-$build_version.tgz" "gpuix-react-$build_version.tgz"; 
   fi
 done
 
-(cd "$root" && shasum -a 256 -c vendor/gpuix/SHA256SUMS)
+# Windows runners lack shasum; sha256sum from Git for Windows accepts the same file format.
+if command -v shasum >/dev/null; then
+  (cd "$root" && shasum -a 256 -c vendor/gpuix/SHA256SUMS)
+else
+  (cd "$root" && sha256sum -c vendor/gpuix/SHA256SUMS)
+fi
