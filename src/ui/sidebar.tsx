@@ -146,7 +146,6 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         disabled={false}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
-        branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || undefined : undefined}
         snoozeOpen={snoozeMenu === session.path}
         onClick={() => { onSelectSession(); void controller.switchSession(session) }}
         onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}

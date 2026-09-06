@@ -406,8 +406,8 @@ private struct NativeSessionCard: View {
                     }
                     Text(session.title).font(.workbench(size: 12, weight: SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? .semibold : .medium)).foregroundStyle(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? AppColors.text : AppColors.muted).lineLimit(1)
                     HStack(spacing: 5) {
-                        Image(systemName: SessionCatalog.branchLabel(session: session, snapshot: snapshot) == nil ? "folder" : "arrow.triangle.branch").font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
-                        Text(SessionCatalog.footerLabel(session: session, snapshot: snapshot)).font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint).lineLimit(1)
+                        Image(systemName: "folder").font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
+                        Text(SessionCatalog.footerLabel(session: session)).font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint).lineLimit(1)
                     }
                 }
                 .padding(9)

@@ -26,7 +26,6 @@ export function SessionRow({
   disabled,
   lifecycle,
   snoozedUntil,
-  branch,
   snoozeOpen,
   onClick,
   onSettle,
@@ -42,7 +41,6 @@ export function SessionRow({
   disabled: boolean
   lifecycle: 'active' | 'snoozed' | 'settled'
   snoozedUntil?: number
-  branch?: string | undefined
   snoozeOpen: boolean
   onClick(): void
   onSettle(): void
@@ -105,8 +103,8 @@ export function SessionRow({
       <div testId={active ? 'sidebar-session-active' : 'sidebar-session-row'} tabIndex={disabled ? -1 : 0} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
         <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <Icon name={branch ? 'gitBranch' : 'folder'} size={11} color={colors.textFaint} />
-          <text testId="sidebar-session-footer" style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{branch ?? shortPath(session.cwd)}</text>
+          <Icon name="folder" size={11} color={colors.textFaint} />
+          <text testId="sidebar-session-footer" style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{shortPath(session.cwd)}</text>
         </div>
       </div>
     </div>

@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import { shortPath } from '../src/ui/sidebar-session-row.tsx'
 import { trafficLightInset } from '../src/ui/window-chrome.ts'
 
 describe('sidebar session footer', () => {
+  it('has no branch or workspace input on shared and iOS rows', () => {
+    const row = readFileSync(new URL('../src/ui/sidebar-session-row.tsx', import.meta.url), 'utf8')
+    expect(row).toContain('{shortPath(session.cwd)}')
+    expect(row).not.toMatch(/\bbranch\b/)
+    const layout = readFileSync(new URL('../packaging/ios/Heddlework/WorkbenchLayout.swift', import.meta.url), 'utf8')
+    expect(layout).toContain('static func footerLabel(session: SessionSummary) -> String')
+    expect(layout).not.toContain('branchLabel')
+    const view = readFileSync(new URL('../packaging/ios/Heddlework/WorkspaceView.swift', import.meta.url), 'utf8')
+    expect(view).toContain('SessionCatalog.footerLabel(session: session)')
+    expect(view).not.toContain('SessionCatalog.branchLabel')
+  })
   it('shortens host home directories by shape so the browser needs no env access', () => {
     expect(shortPath('/Users/skula/projects/heddlework')).toBe('~/projects/heddlework')
     expect(shortPath('/Users/skula')).toBe('~')

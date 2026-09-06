@@ -111,19 +111,7 @@ enum SessionCatalog {
         return "New thread"
     }
 
-    /// Branch of the current workspace when the session lives there; nil otherwise. Matches src/ui/sidebar.tsx.
-    static func branchLabel(session: SessionSummary, snapshot: WorkbenchSnapshot?) -> String? {
-        guard let snapshot, let workspace = snapshot.workspacePath, let cwd = session.cwd else { return nil }
-        let normalizedWorkspace = URL(fileURLWithPath: workspace).standardizedFileURL.path
-        let normalizedCwd = URL(fileURLWithPath: cwd).standardizedFileURL.path
-        guard normalizedCwd == normalizedWorkspace else { return nil }
-        let branch = snapshot.workspaceDiff?.branch ?? ""
-        return branch.isEmpty ? nil : branch
-    }
-
-    /// Footer text: the workspace branch when the session is in the current workspace, otherwise its folder.
-    static func footerLabel(session: SessionSummary, snapshot: WorkbenchSnapshot?) -> String {
-        if let branch = branchLabel(session: session, snapshot: snapshot) { return branch }
+    static func footerLabel(session: SessionSummary) -> String {
         guard let cwd = session.cwd else { return "" }
         return cwd.replacingOccurrences(of: "^/Users/[^/]+", with: "~", options: .regularExpression)
     }
