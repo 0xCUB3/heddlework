@@ -96,6 +96,11 @@ export class WorkspaceClient {
     })
   }
 
+  reconnect(): void {
+    if (!this.#url) return
+    this.connect(this.#url, this.#token, this.#candidates)
+  }
+
   reportError(error: unknown): void {
     this.#set({ lastError: error instanceof Error ? error.message : String(error) })
   }

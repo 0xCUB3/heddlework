@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { webBuildHash } from './web-build-hash.ts'
 import { resolve } from 'node:path'
 import { webPrecachePaths } from '../src/web/sw-manifest.ts'
+import { webAliasPlugin } from './web-aliases.ts'
 
 const root = resolve(import.meta.dir, '..')
 const outdir = resolve(root, 'dist', 'web')
@@ -17,7 +18,9 @@ const result = await Bun.build({
   sourcemap: 'linked',
   format: 'esm',
   tsconfig: resolve(root, 'src/web/tsconfig.json'),
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: { 'process.env.NODE_ENV': '"production"', 'process.platform': '__hwPlatform', 'process.env.HEDDLEWORK_ADVERTISE': 'undefined' },
+  plugins: [webAliasPlugin(root)],
+  jsx: { runtime: 'automatic', importSource: '@gpuix/react' },
 })
 
 if (!result.success) {

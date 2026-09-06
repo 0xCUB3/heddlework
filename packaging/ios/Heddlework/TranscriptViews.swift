@@ -14,6 +14,8 @@ struct TranscriptView: View {
 
     @State private var cachedRows: [TranscriptProjectionRow] = []
     @State private var cachedProjectionKey = ""
+    @State private var historySentinelVisible = false
+    @State private var earlierPageAnchorId: String?
 
     private var rows: [TranscriptProjectionRow] { cachedRows }
 
@@ -42,10 +44,20 @@ struct TranscriptView: View {
                 ScrollView {
                     LazyVStack(alignment: .center, spacing: mobile ? 10 : 12) {
                         if snapshot?.messagesHasOlder == true {
-                            Button("Load earlier messages") { client.send(CommandFactory.simple("loadEarlierMessages"), label: "Load earlier messages") }
-                                .font(.workbench(size: 12, weight: .medium))
-                                .foregroundStyle(AppColors.primary)
-                                .accessibilityIdentifier("load-earlier")
+                            // Older history pages in on its own when the top of the thread scrolls into view, the way the desktop does.
+                            HStack {
+                                if snapshot?.messagesLoadingEarlier == true {
+                                    ProgressView().controlSize(.small).tint(AppColors.muted)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 24)
+                            .accessibilityIdentifier("history-sentinel")
+                            .onAppear {
+                                historySentinelVisible = true
+                                requestEarlierPage()
+                            }
+                            .onDisappear { historySentinelVisible = false }
                         }
                         ForEach(rows) { row in
                             TranscriptRowView(row: row, expanded: expandedTraceIds.contains(traceId(of: row)), mobile: mobile, onToggle: { toggle(traceId(of: row)) }, onOpenDiff: openDiff)
@@ -125,9 +137,29 @@ struct TranscriptView: View {
                 refreshRows()
                 if followTail { scrollToLatest(proxy) }
             }
-            .onChange(of: followTail) { _, _ in persistChrome() }
+            .onChange(of: followTail) { _, _ in
+                persistChrome()
+                if !followTail && historySentinelVisible { requestEarlierPage() }
+            }
             .onChange(of: expandedTraceIds) { _, _ in persistChrome() }
+            .onChange(of: snapshot?.messagesLoadingEarlier ?? false) { _, loading in
+                guard !loading, let anchor = earlierPageAnchorId else { return }
+                earlierPageAnchorId = nil
+                refreshRows()
+                // Keep the row the reader was looking at in place after the prepend, then keep paging while the top stays in view.
+                DispatchQueue.main.async {
+                    proxy.scrollTo(anchor, anchor: .top)
+                    if historySentinelVisible { requestEarlierPage() }
+                }
+            }
         }
+    }
+
+    // Opening a session lands pinned to the tail and must not page on its own; travel away from the tail counts as demand.
+    private func requestEarlierPage() {
+        guard snapshot?.messagesHasOlder == true, snapshot?.messagesLoadingEarlier != true, earlierPageAnchorId == nil, !followTail else { return }
+        earlierPageAnchorId = rows.first?.id ?? "bottom"
+        client.send(CommandFactory.simple("loadEarlierMessages"), label: "Load earlier messages")
     }
 
     private var tailSignature: String {

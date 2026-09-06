@@ -4,6 +4,7 @@ import type { FlowRuntime } from '../flows/runtime.ts'
 import { isSleepPreventionWhen, parseSleepPreventionPolicy, type SleepPreventionPolicy } from '../power/types.ts'
 import type { ComposerImage, ThinkingLevel } from '../pi/types.ts'
 import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
+import type { NoticeKind } from '../workbench/notices.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { isPresenceSurface, isPresenceVisibility, type PresenceSurface, type PresenceVisibility } from '../workbench/presence.ts'
 import type { QueueLane } from '../workbench/queue.ts'
@@ -65,6 +66,18 @@ export type WorkbenchCommand =
   | { type: 'clearReceipts'; sessionPath: string }
   | { type: 'mergeLane'; laneId: string }
   | { type: 'removeLane'; laneId: string }
+  | { type: 'navigateTree'; entryId: string }
+  | { type: 'cloneSession' }
+  | { type: 'exportSession' }
+  | { type: 'switchWorkspace'; path: string }
+  | { type: 'markThreadsRead'; threads: Array<{ path: string; updatedAt: number }> }
+  | { type: 'drainQueueMessages' }
+  | { type: 'cancelBlockingQueueActivity' }
+  | { type: 'queueFabricPeerGate' }
+  | { type: 'setAskUserQuestionnaireCollapsed'; toolCallId: string; collapsed: boolean }
+  | { type: 'completeUiRequest'; id: number }
+  | { type: 'removeQueuedFlow'; runId: string }
+  | { type: 'notify'; kind: NoticeKind; message: string }
   | SleepPreventionCommand
 
 export type WorkbenchCommandType = WorkbenchCommand['type']
@@ -79,6 +92,8 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
   'wakeThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
   'markNoticeRead', 'markNoticesRead', 'activateNotice', 'clearNotices', 'reportPresence', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
+  'navigateTree', 'cloneSession', 'exportSession', 'switchWorkspace', 'markThreadsRead', 'drainQueueMessages', 'cancelBlockingQueueActivity',
+  'queueFabricPeerGate', 'setAskUserQuestionnaireCollapsed', 'completeUiRequest', 'removeQueuedFlow', 'notify',
 ]
 
 export function isWorkbenchCommand(value: unknown): value is WorkbenchCommand {
@@ -256,6 +271,42 @@ export async function applyWorkbenchCommand(controller: WorkbenchController, com
       return
     case 'removeEditorImage':
       controller.removeEditorImage(command.id)
+      return
+    case 'navigateTree':
+      await controller.navigateTree(command.entryId)
+      return
+    case 'cloneSession':
+      await controller.cloneSession()
+      return
+    case 'exportSession':
+      await controller.exportSession()
+      return
+    case 'switchWorkspace':
+      await controller.switchWorkspace(command.path)
+      return
+    case 'markThreadsRead':
+      controller.markThreadsRead(command.threads)
+      return
+    case 'drainQueueMessages':
+      await controller.drainQueueMessages()
+      return
+    case 'cancelBlockingQueueActivity':
+      controller.cancelBlockingQueueActivity()
+      return
+    case 'queueFabricPeerGate':
+      await controller.queueFabricPeerGate()
+      return
+    case 'setAskUserQuestionnaireCollapsed':
+      controller.setAskUserQuestionnaireCollapsed(command.toolCallId, command.collapsed)
+      return
+    case 'completeUiRequest':
+      controller.completeUiRequest(command.id)
+      return
+    case 'removeQueuedFlow':
+      controller.removeQueuedFlow(command.runId)
+      return
+    case 'notify':
+      controller.notify(command.kind, command.message)
       return
     default: {
       const unreachable: never = command

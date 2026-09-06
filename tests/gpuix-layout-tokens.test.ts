@@ -25,16 +25,7 @@ it('keeps web CSS, iOS metrics, and the GPUix contract on the same layout tokens
   expect(css).toContain('--header-height: 52px')
   expect(css).toContain('--content-max-width: 768px')
   expect(css).toContain('--settings-max-width: 720px')
-  expect(css).toContain('grid-template-columns: var(--web-sidebar-width, 256px)')
-  expect(css).toContain('--web-right-panel-width')
-  expect(css).toContain('border-radius: 22px')
-  expect(css).toContain('min-height: 148px')
-  expect(css).toContain('width: 34px')
-  expect(css).toContain('height: 48px')
-  expect(css).toContain('left: 22px')
-  expect(css).toContain('font-size: 26px')
-  expect(css).toContain('@media (max-width: 1024px)')
-  expect(css).toContain('@media (max-width: 600px)')
+  // Layout geometry on the web comes from the shared src/ui tree through the DOM host, not from CSS selectors.
 
   expect(iosLayout).toContain('fallbackSidebar: CGFloat = 256')
   expect(iosLayout).toContain('fallbackHeader: CGFloat = 52')

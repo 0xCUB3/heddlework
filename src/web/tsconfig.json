@@ -2,11 +2,16 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "jsx": "react-jsx",
-    "jsxImportSource": "react",
+    "jsxImportSource": "@gpuix/react",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["bun"],
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@gpuix/react": ["../dom/host.tsx"],
+      "@gpuix/react/jsx-runtime": ["../dom/host.tsx"],
+      "@gpuix/react/dist/*": ["../../node_modules/@gpuix/react/dist/*"]
+    }
   },
-  "include": ["./**/*.ts", "./**/*.tsx"],
+  "include": ["./**/*.ts", "./**/*.tsx", "../dom/**/*.ts", "../dom/**/*.tsx"],
   "exclude": []
 }

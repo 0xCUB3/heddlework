@@ -16,5 +16,5 @@
     "types": ["bun", "node"]
   },
   "include": ["src", "scripts", "tests"],
-  "exclude": ["src/web", "tests/web-ssr-layout.test.ts", "tests/web-transcript-window.test.ts", "tests/web-markdown.test.tsx"]
+  "exclude": ["src/web", "src/dom", "tests/web-ssr-layout.test.ts", "tests/web-transcript-window.test.ts", "tests/web-markdown.test.tsx"]
 }

@@ -144,9 +144,15 @@ final class WorkbenchParityUITests: XCTestCase {
         save(app.screenshot(), as: "host-alpha-latest.png", in: screenshotDir)
 
         let currentLatest = openedAlpha ? alphaLatest : betaLatest
-        if app.descendants(matching: .any)["load-earlier"].waitForExistence(timeout: 2) {
-            app.descendants(matching: .any)["load-earlier"].tap()
-            XCTAssertTrue(currentLatest.waitForExistence(timeout: 4), "Loading earlier messages must not yank the latest answer")
+        XCTAssertFalse(app.descendants(matching: .any)["load-earlier"].exists, "Older history pages in on scroll; there is no Load earlier button")
+        let list = app.descendants(matching: .any)["transcript-list"].firstMatch
+        if list.exists {
+            for _ in 0..<3 { list.swipeDown() }
+            let jump = app.descendants(matching: .any)["jump-to-latest"]
+            if jump.waitForExistence(timeout: 3) {
+                jump.tap()
+                XCTAssertTrue(currentLatest.waitForExistence(timeout: 4), "Jump to latest must return to the newest answer after paging older history")
+            }
         }
 
         let sidebar = app.descendants(matching: .any)["toggle-left-sidebar"]
