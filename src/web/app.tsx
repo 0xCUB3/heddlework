@@ -12,6 +12,8 @@ import { Transcript } from './transcript.tsx'
 import { Triage } from './triage.tsx'
 import { watchWorkspaceNotifications } from './notifications.ts'
 import { useWorkspace, workspaceClient } from './store.ts'
+import { isLedgerNotice, unreadLedgerNotices } from '../workbench/notices.ts'
+import { workspaceDisplayName } from '../workbench/workspace-name.ts'
 import { BellIcon, BoxIcon, DownloadIcon, FolderIcon, GitBranchIcon, PanelBottomIcon, PanelLeftIcon, PanelRightIcon, PlusIcon, RefreshIcon, SettingsIcon } from './icons.tsx'
 
 type OverlaySheet = 'navigation' | 'panel' | undefined
@@ -27,8 +29,37 @@ export function WebApp() {
 
   useEffect(() => watchWorkspaceNotifications(workspaceClient()), [])
   useEffect(() => {
-    if (rightPanel === 'notifications' && state) setLastSeenNoticeId(state.notices.at(-1)?.id ?? 0)
+    if (rightPanel === 'notifications' && state) {
+      setLastSeenNoticeId(state.notices.filter(isLedgerNotice).at(-1)?.id ?? 0)
+      void workspaceClient().sendAndReport({ type: 'markNoticesRead' })
+    }
   }, [rightPanel, state])
+  useEffect(() => {
+    const client = workspaceClient()
+    const clientId = webClientId()
+    const report = () => {
+      const snapshot = client.getSnapshot().state
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+      void client.sendAndReport({
+        type: 'reportPresence',
+        clientId,
+        surface: 'web',
+        visibility: hidden ? 'hidden' : document.hasFocus() ? 'focused' : 'visible',
+        ...(snapshot?.session.sessionFile ? { sessionPath: snapshot.session.sessionFile } : {}),
+      })
+    }
+    report()
+    const timer = window.setInterval(report, 15_000)
+    document.addEventListener('visibilitychange', report)
+    window.addEventListener('focus', report)
+    window.addEventListener('blur', report)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', report)
+      window.removeEventListener('focus', report)
+      window.removeEventListener('blur', report)
+    }
+  }, [state?.session.sessionFile])
 
   if (view.status !== 'open' || !state) {
     return (
@@ -42,7 +73,7 @@ export function WebApp() {
     )
   }
 
-  const unreadCount = state.notices.filter((notice) => notice.id > lastSeenNoticeId).length
+  const unreadCount = unreadLedgerNotices(state.notices).filter((notice) => notice.id > lastSeenNoticeId).length
   const openSurface = (next: WebSurface): void => {
     setSurface(next)
     if (next === 'settings') setRightPanel(undefined)
@@ -65,7 +96,7 @@ export function WebApp() {
   }
 
   return (
-    <div className="web-workbench" data-right-panel={rightPanel ? 'open' : 'closed'} data-surface={surface} style={{ '--web-sidebar-width': `${webUiContract.layout.sidebarWidth}px` } as CSSProperties}>
+    <div className="web-workbench" data-right-panel={rightPanel ?? 'closed'} data-surface={surface} style={{ '--web-sidebar-width': `${webUiContract.layout.sidebarWidth}px` } as CSSProperties}>
       <aside className="web-sidebar" aria-label="Workbench navigation">
         <SidebarChrome state={state} surface={surface} rightPanel={rightPanel} unreadCount={unreadCount} onSurface={openSurface} onPanel={openPanel} />
       </aside>
@@ -82,7 +113,7 @@ export function WebApp() {
             <button type="button" className="web-header-icon web-overlay-button" onClick={() => setOverlaySheet('navigation')} aria-label="Open navigation"><PanelLeftIcon /></button>
             <div className="web-breadcrumb">
               <FolderIcon className="web-breadcrumb-icon" />
-              <span className="web-project-name">{basename(view.workspacePath)}</span>
+              <span className="web-project-name">{workspaceDisplayName(view.workspacePath)}</span>
               <span className="web-divider">/</span>
               <strong>{surface === 'chat' ? activeThreadTitle(state) : surfaceLabel(surface)}</strong>
             </div>
@@ -115,7 +146,7 @@ export function WebApp() {
           state.messages.length === 0 && !state.session.isStreaming ? (
             <section className="web-chat-surface web-chat-empty" aria-label="Chat">
               <div className="web-empty-hero">
-                <h1>What should we build in <span>{basename(view.workspacePath)}</span>?</h1>
+                <h1>What should we build in <span>{workspaceDisplayName(view.workspacePath)}</span>?</h1>
                 <Composer state={state} hero />
               </div>
               <Dialogs state={state} />
@@ -209,9 +240,23 @@ function RightPanel({ panel, state, runs, onSurface, onPanel }: { panel: WebPane
 }
 
 function NotificationsPanel({ state }: { state: NonNullable<ReturnType<typeof useWorkspace>['state']> }) {
-  const notices = useMemo(() => [...state.notices].reverse(), [state.notices])
-  if (notices.length === 0) return <p className="web-empty">No notifications</p>
-  return <div className="web-notices"><button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'clearNotices' })}>Clear all</button>{notices.map((notice) => <article key={notice.id} className={`web-card web-notice-${notice.kind}`}><strong>{notice.kind}</strong><p>{notice.message}</p><p className="web-empty">{new Date(notice.createdAt).toLocaleString()}</p><button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'dismissNotice', id: notice.id })}>Dismiss</button></article>)}</div>
+  const notices = useMemo(() => [...state.notices.filter(isLedgerNotice)].reverse(), [state.notices])
+  if (notices.length === 0) return <p className="web-empty">Completions, failures, and requests for input land here.</p>
+  return (
+    <div className="web-notices">
+      <button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'clearNotices' })}>Clear all</button>
+      {notices.map((notice) => (
+        <article key={notice.id} className={`web-notice-row${notice.readAt ? '' : ' web-notice-unread'}`}>
+          <button type="button" className="web-notice-open" onClick={() => void workspaceClient().sendAndReport({ type: 'activateNotice', id: notice.id })}>
+            <strong>{notice.sessionTitle || notice.kind}</strong>
+            <p>{notice.message}</p>
+            <span>{new Date(notice.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+          </button>
+          <button type="button" onClick={() => void workspaceClient().sendAndReport({ type: 'dismissNotice', id: notice.id })}>Dismiss</button>
+        </article>
+      ))}
+    </div>
+  )
 }
 
 function SurfacesPanel({ onSurface, onPanel }: { onSurface(surface: WebSurface): void; onPanel(panel: WebPanel): void }) {
@@ -222,9 +267,14 @@ function SurfaceFrame({ title, children }: { title: string; children: ReactNode 
   return <section className="web-surface-frame"><div className="web-surface-content"><h2>{title}</h2>{children}</div></section>
 }
 
-function basename(path: string): string {
-  const parts = path.split(/[/\\]/).filter(Boolean)
-  return parts.at(-1) ?? path
+function webClientId(): string {
+  if (typeof sessionStorage === 'undefined') return 'web'
+  const key = 'heddlework.clientId'
+  const existing = sessionStorage.getItem(key)
+  if (existing) return existing
+  const id = `web-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now())}`
+  sessionStorage.setItem(key, id)
+  return id
 }
 
 function activeThreadTitle(state: NonNullable<ReturnType<typeof useWorkspace>['state']>): string {

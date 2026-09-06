@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react'
 import uiContract from '../workbench/ui-contract.json'
 
 export type ResolvedTheme = 'light' | 'dark'
@@ -87,10 +88,33 @@ function createNativeTheme(appearance: ResolvedTheme, palette: ColorPalette) {
   }
 }
 
-export const nativeTheme = createNativeTheme('dark', darkColors)
+export interface InterfaceFonts {
+  readonly fontSans: string
+  readonly fontMono: string
+}
 
-export function applyResolvedTheme(appearance: ResolvedTheme): void {
+export const DEFAULT_INTERFACE_FONTS: InterfaceFonts = Object.freeze({
+  fontSans: uiContract.typography.fontSans,
+  fontMono: uiContract.typography.fontMono,
+})
+
+const themeListeners = new Set<() => void>()
+const subscribeTheme = (listener: () => void) => {
+  themeListeners.add(listener)
+  return () => { themeListeners.delete(listener) }
+}
+const getNativeTheme = () => nativeTheme
+
+// Memoized rows must repaint typography without remounting their local state.
+export function useNativeTheme() {
+  return useSyncExternalStore(subscribeTheme, getNativeTheme, getNativeTheme)
+}
+
+export let nativeTheme = createNativeTheme('dark', darkColors)
+
+export function applyResolvedTheme(appearance: ResolvedTheme, fonts: InterfaceFonts = DEFAULT_INTERFACE_FONTS): void {
   const palette = appearance === 'light' ? lightColors : darkColors
   Object.assign(colors, palette)
-  Object.assign(nativeTheme, createNativeTheme(appearance, palette))
+  nativeTheme = { ...createNativeTheme(appearance, palette), ...fonts }
+  for (const listener of themeListeners) listener()
 }

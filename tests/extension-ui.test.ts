@@ -93,7 +93,7 @@ describe('Pi extension UI projection', () => {
       })
 
       const state = controller.getSnapshot()
-      expect(state.notices.at(-1)).toMatchObject({ kind: 'warning', message: 'Heads up' })
+      expect(state.notices.some((notice) => notice.message === 'Heads up')).toBe(true)
       expect(state.statusItems.tests).toBe('Running tests')
       expect(state.widgets.todo?.lines).toEqual(['One remaining task'])
       expect(state.windowTitle).toBe('Pi · test session')
@@ -223,7 +223,7 @@ describe('Pi extension UI projection', () => {
       transport.emit({ type: 'extension_ui_request', id: 'queued-dialog', method: 'input', title: 'Also stale' })
       transport.emit({ type: 'extension_ui_request', id: 'old-notice', method: 'notify', message: 'Old session notice' })
       expect(controller.getSnapshot().dialog?.id).toBe('stale-dialog')
-      expect(controller.getSnapshot().notices).toHaveLength(1)
+      expect(controller.getSnapshot().notices.some((notice) => notice.message === 'Old session notice')).toBe(true)
       expect(controller.getSnapshot().dialogQueue).toHaveLength(1)
 
       const creatingSession = controller.newSession()

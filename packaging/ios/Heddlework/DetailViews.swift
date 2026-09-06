@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct DetailPanelView: View {
     let panel: DetailPanel
@@ -19,26 +20,175 @@ struct DetailPanelView: View {
 
 struct NotificationsPanel: View {
     @ObservedObject var client: WorkspaceClient
+    private var notices: [Notice] {
+        Array((client.snapshot?.notices ?? []).filter(\.isLedger).reversed())
+    }
     var body: some View {
         List {
-            ForEach((client.snapshot?.notices ?? []).reversed()) { notice in
-                VStack(alignment: .leading) { Text(notice.kind.uppercased()).font(.caption).foregroundStyle(.secondary); Text(notice.message) }
+            ForEach(notices) { notice in
+                Button {
+                    client.send(CommandFactory.activateNotice(id: notice.id), label: "Open notice")
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(notice.isUnread ? (notice.kind == "error" ? AppColors.error : notice.kind == "warning" ? AppColors.warning : AppColors.success) : AppColors.textFaint)
+                            .frame(width: 8, height: 8)
+                            .padding(.top, 6)
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let title = notice.sessionTitle, !title.isEmpty {
+                                Text(title).font(.workbench(size: 11, weight: .semibold)).foregroundStyle(AppColors.text).lineLimit(1)
+                            }
+                            Text(notice.message).font(.workbench(size: 12)).foregroundStyle(AppColors.muted).lineLimit(2)
+                        }
+                        Spacer(minLength: 8)
+                        Text(Date(timeIntervalSince1970: notice.createdAt / 1000).formatted(date: .omitted, time: .shortened))
+                            .font(.workbench(size: 9))
+                            .foregroundStyle(AppColors.textFaint)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button("Dismiss", role: .destructive) {
+                        client.send(CommandFactory.dismissNotice(id: notice.id), label: "Dismiss notice")
+                    }
+                }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
-            if !(client.snapshot?.notices?.isEmpty == false) { Text("No notifications") }
+            if notices.isEmpty {
+                Text("Completions, failures, and requests for input land here.")
+                    .font(.workbench(size: 12))
+                    .foregroundStyle(AppColors.muted)
+            }
         }
+        .listStyle(.plain)
+        .accessibilityIdentifier("notification-panel")
         .toolbar { Button("Clear") { client.send(CommandFactory.simple("clearNotices"), label: "Clear notices") } }
     }
 }
 
 struct DiffPanel: View {
     @ObservedObject var client: WorkspaceClient
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var mobile: Bool { horizontalSizeClass == .compact }
+    private var diff: WorkspaceDiff? { client.snapshot?.workspaceDiff }
+
     var body: some View {
-        VStack(alignment: .leading) {
-            HStack { Text(client.snapshot?.workspaceDiff?.branch ?? "Changes").font(.headline); Spacer(); Button("Refresh") { client.send(CommandFactory.simple("refreshWorkspaceDiff"), label: "Refresh changes") } }
-            List(client.snapshot?.workspaceDiff?.files ?? []) { file in
-                DisclosureGroup("\(file.path) +\(file.additions) -\(file.deletions)") { Text(file.patch).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(diff?.branch.isEmpty == false ? diff!.branch : "Changes")
+                        .font(.workbench(size: 14, weight: .semibold))
+                    Text(summary)
+                        .font(.workbench(size: 11))
+                        .foregroundStyle(AppColors.muted)
+                }
+                Spacer()
+                Button("Refresh") { client.send(CommandFactory.simple("refreshWorkspaceDiff"), label: "Refresh changes") }
+                    .font(.workbench(size: 12, weight: .medium))
             }
-        }.padding()
+            .padding(.horizontal, mobile ? 12 : 14)
+            .padding(.top, 10)
+            .accessibilityIdentifier("diff-panel-header")
+
+            if let error = diff?.error, !error.isEmpty {
+                Text(error).font(.workbench(size: 12)).foregroundStyle(AppColors.error).padding(.horizontal, mobile ? 12 : 14)
+            }
+
+            List(diff?.files ?? []) { file in
+                DiffFileCard(file: file, compact: mobile)
+                    .listRowInsets(EdgeInsets(top: 6, leading: mobile ? 10 : 12, bottom: 6, trailing: mobile ? 10 : 12))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+            .listStyle(.plain)
+        }
+        .accessibilityIdentifier("diff-panel")
+    }
+
+    private var summary: String {
+        let files = diff?.files.count ?? 0
+        let additions = diff?.additions ?? 0
+        let deletions = diff?.deletions ?? 0
+        return "\(files) \(files == 1 ? "file" : "files")  +\(additions)  -\(deletions)"
+    }
+}
+
+struct DiffFileCard: View {
+    let file: WorkspaceDiffFile
+    var compact = false
+    @State private var expanded = false
+    @State private var copied = false
+    private var lines: [DiffLine] { DiffPatch.parse(file.patch) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Button { expanded.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.workbench(size: 10, weight: .semibold))
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                        Text(file.path)
+                            .font(.workbench(size: 12, weight: .medium, design: .monospaced))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+                .accessibilityIdentifier("diff-file-header")
+                Spacer(minLength: 0)
+                Text("+\(file.additions)")
+                    .font(.workbench(size: 11, design: .monospaced))
+                    .foregroundStyle(AppColors.success)
+                Text("-\(file.deletions)")
+                    .font(.workbench(size: 11, design: .monospaced))
+                    .foregroundStyle(AppColors.error)
+                Button(copied ? "Copied" : "Copy") {
+                    UIPasteboard.general.string = file.patch
+                    copied = true
+                }
+                .font(.workbench(size: 11, weight: .medium))
+            }
+            if expanded {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines) { line in
+                            Text(line.text)
+                                .font(.system(size: compact ? 11 : 12, design: .monospaced))
+                                .foregroundStyle(color(for: line.kind))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(background(for: line.kind))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .accessibilityIdentifier("diff-line")
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border, lineWidth: 1))
+                .accessibilityIdentifier("diff-hunks")
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func color(for kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .add: return AppColors.success
+        case .del: return AppColors.error
+        case .hunk, .fileHeader, .meta: return AppColors.textFaint
+        case .context: return AppColors.text
+        }
+    }
+
+    private func background(for kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .add: return AppColors.success.opacity(0.12)
+        case .del: return AppColors.error.opacity(0.12)
+        default: return Color.clear
+        }
     }
 }
 
@@ -63,15 +213,20 @@ struct QueuePanel: View {
                         if let flow = item.flow { Text("Flow: \(flow.title) · \(flow.phase)").font(.caption).foregroundStyle(.secondary) }
                         HStack { Text(item.lane ?? "followUp").font(.caption); if item.paused == true { Text("paused").font(.caption).foregroundStyle(.orange) } }
                     }
-                    .swipeActions(edge: .leading) {
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button("Steer") { client.send(CommandFactory.withString("steerQueuedInput", key: "id", value: item.id), label: "Steer queued input") }
                         Button(item.paused == true ? "Unpause" : "Pause") { client.send(CommandFactory.withString("toggleQueuedInputPause", key: "id", value: item.id), label: "Toggle queued pause") }
                     }
-                    .swipeActions {
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button("Edit") { editingItem = item; editText = item.text }.tint(.blue)
                         Button("Lane") { client.send(CommandFactory.moveQueuedInputToLane(id: item.id, lane: item.lane == "steer" ? "followUp" : "steer"), label: "Move queued lane") }.tint(.purple)
                         Button("Up") { client.send(CommandFactory.moveQueuedInput(id: item.id, targetIndex: max(0, index - 1)), label: "Move queued input") }.tint(.gray)
                         Button(role: .destructive) { client.send(CommandFactory.withString("removeQueuedInput", key: "id", value: item.id), label: "Remove queued input") } label: { Text("Remove") }
+                    }
+                    .contextMenu {
+                        Button("Steer") { client.send(CommandFactory.withString("steerQueuedInput", key: "id", value: item.id), label: "Steer queued input") }
+                        Button("Edit") { editingItem = item; editText = item.text }
+                        Button("Remove", role: .destructive) { client.send(CommandFactory.withString("removeQueuedInput", key: "id", value: item.id), label: "Remove queued input") }
                     }
                 }
             }
@@ -129,6 +284,7 @@ struct FlowsWorkspace: View {
 
 struct SettingsWorkspace: View {
     @ObservedObject var client: WorkspaceClient
+    @ObservedObject private var notifications = NotificationService.shared
     let contract: UIContract
     var onClose: () -> Void = {}
     var onDisconnect: () -> Void = {}
@@ -171,6 +327,38 @@ struct SettingsWorkspace: View {
                             .frame(minHeight: 46)
                         }
                     }
+                    settingsSection("Power", description: "Controls idle sleep on the connected host computer, not this iPhone or iPad.") {
+                        if let sleep = client.sleepPrevention {
+                            settingsRow("Stay awake", value: sleepWhenLabel(sleep.policy.when))
+                            Picker("Stay awake", selection: Binding(
+                                get: { sleep.policy.when },
+                                set: { client.send(CommandFactory.setSleepPreventionPolicy(when: $0, keepDisplayAwake: sleep.policy.keepDisplayAwake), label: "Host sleep policy") }
+                            )) {
+                                Text("Off").tag("off")
+                                Text("While working").tag("whileWorking")
+                                Text("While open").tag("whileAppOpen")
+                            }
+                            .padding(.horizontal, 13)
+                            .frame(minHeight: 46)
+                            Toggle(isOn: Binding(
+                                get: { sleep.policy.keepDisplayAwake },
+                                set: { client.send(CommandFactory.setSleepPreventionPolicy(when: sleep.policy.when, keepDisplayAwake: $0), label: "Host display wake") }
+                            )) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Keep display awake").font(.workbench(size: 12, weight: .medium)).foregroundStyle(AppColors.text)
+                                    Text(sleep.displaySupported ? "Host screen only. Lid close and Sleep still win." : "Display stay-awake is not available on this host.").font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
+                                }
+                            }
+                            .disabled(!sleep.displaySupported)
+                            .padding(.horizontal, 13)
+                            .frame(minHeight: 54)
+                            settingsRow("Host status", value: sleepStatusLabel(sleep))
+                            settingsRow("Now", value: sleep.reason)
+                            settingsRow("Limits", value: sleep.limits)
+                        } else {
+                            settingsRow("Host power", value: "Connect to an updated host to control idle sleep on that computer.")
+                        }
+                    }
                     settingsSection("Interface", description: "Application-wide presentation and navigation defaults.") {
                         settingsRow("Appearance", value: "System")
                         settingsRow("Text font", value: "Helvetica Neue")
@@ -178,6 +366,18 @@ struct SettingsWorkspace: View {
                     }
                     settingsSection("Remote access", description: "Connection details for this device.") {
                         settingsRow("Host", value: client.candidates.joined(separator: ", "))
+                        settingsRow("Tailnet HTTPS", value: "Turn this on in the Mac app under Settings → Remote access. This device cannot change Tailscale Serve.")
+                        Toggle(isOn: Binding(
+                            get: { notifications.authorized },
+                            set: { enabled in if enabled { notifications.requestAuthorization() } }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Alerts").font(.workbench(size: 12, weight: .medium)).foregroundStyle(AppColors.text)
+                                Text("Works while this app can reach the Mac. Offline Mac or a killed app needs a push relay, which is not configured.").font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
+                            }
+                        }
+                        .padding(.horizontal, 13)
+                        .frame(minHeight: 54)
                     }
                     settingsSection("Updates", description: "Update installation stays on the desktop host.") {
                         settingsRow("Desktop updates", value: "Host only")
@@ -185,8 +385,9 @@ struct SettingsWorkspace: View {
                     settingsSection("Plugins", description: "Remote plugin widgets appear only when the host exposes them.") {
                         settingsRow("Plugin management", value: "Host controlled")
                     }
-                    settingsSection("Terminal", description: "Terminal sessions require the local GPUix desktop process.") {
-                        settingsRow("Terminal docks", value: "Desktop only")
+                    settingsSection("Terminal", description: "Opens a host shell on the connected Mac. This device only sends keystrokes.") {
+                        settingsRow("Host terminal", value: client.terminal == nil ? "Unavailable on this host" : "Ready")
+                        settingsRow("Build", value: AppBuildInfo.label)
                     }
                     settingsSection("Browser", description: "Browser pane and logged-in browser integrations run on the connected host.") {
                         BrowserIntegrationSettings(client: client).padding(13)
@@ -242,6 +443,17 @@ struct SessionsView: View {
         NavigationStack {
             List(client.snapshot?.sessions ?? []) { session in
                 Button { client.send(CommandFactory.withString("switchSession", key: "path", value: session.path), label: "Switch session"); dismiss() } label: { VStack(alignment: .leading) { Text(session.title); Text(session.cwd ?? session.path).font(.caption).foregroundStyle(.secondary) } }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("Settle") { client.send(CommandFactory.withString("settleThread", key: "path", value: session.path), label: "Settle thread") }.tint(.gray)
+                        Button("Snooze") {
+                            let until = Date().addingTimeInterval(3_600).timeIntervalSince1970 * 1_000
+                            client.send(CommandFactory.snoozeThread(path: session.path, snoozedUntil: until), label: "Snooze thread")
+                        }.tint(.orange)
+                    }
+                    .contextMenu {
+                        Button("Open") { client.send(CommandFactory.withString("switchSession", key: "path", value: session.path), label: "Switch session"); dismiss() }
+                        Button("Settle") { client.send(CommandFactory.withString("settleThread", key: "path", value: session.path), label: "Settle thread") }
+                    }
             }
             .navigationTitle("Sessions")
             .toolbar { Button("Load more") { client.send(CommandFactory.simple("loadMoreSessions"), label: "Load more sessions") } }
@@ -277,4 +489,21 @@ struct UnsupportedPanel: View {
     let title: String
     let message: String
     var body: some View { ContentUnavailableView(title, systemImage: "exclamationmark.triangle", description: Text(message)) }
+}
+
+private func sleepWhenLabel(_ when: String) -> String {
+    switch when {
+    case "off": return "Off"
+    case "whileAppOpen": return "While Heddlework is open"
+    default: return "While working"
+    }
+}
+
+private func sleepStatusLabel(_ sleep: SleepPreventionSnapshot) -> String {
+    switch sleep.status {
+    case "active": return "Holding idle sleep"
+    case "unsupported": return "Unavailable on this host"
+    case "error": return "Failed: \(sleep.error ?? sleep.reason)"
+    default: return "Not holding"
+    }
 }

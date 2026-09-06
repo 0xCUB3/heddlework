@@ -4,7 +4,7 @@ import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
-import { colors, nativeTheme } from './theme.ts'
+import { colors, nativeTheme, useNativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS } from './motion.ts'
 
 export const DiffPanel = React.memo(function DiffPanel({
@@ -30,6 +30,7 @@ export const DiffPanel = React.memo(function DiffPanel({
   onNewSurface(): void
   onToggleFullscreen(): void
 }) {
+  useNativeTheme()
   const [filesOpen, setFilesOpen] = useState(false)
   const [fileListMounted, setFileListMounted] = useState(false)
   const [wordWrap, setWordWrap] = useState(false)

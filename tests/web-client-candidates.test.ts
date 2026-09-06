@@ -14,4 +14,9 @@ describe('client address candidates', () => {
   test('socket url keeps bracketed IPv6 hosts and adds the token', () => {
     expect(workspaceSocketUrl('http://[fd7a::1]:47311', 'abc')).toBe('ws://[fd7a::1]:47311/ws?token=abc')
   })
+
+  test('maps tailnet HTTPS to wss including a non-443 port', () => {
+    expect(workspaceSocketUrl('https://mac.tailnet.ts.net:8443', 'tok')).toBe('wss://mac.tailnet.ts.net:8443/ws?token=tok')
+    expect(workspaceSocketUrl('https://mac.tailnet.ts.net', 'tok')).toBe('wss://mac.tailnet.ts.net/ws?token=tok')
+  })
 })

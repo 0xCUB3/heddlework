@@ -236,7 +236,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
           testId="composer"
           tabIndex={0}
           value={state.editorText}
-          placeholder={connected ? (draft ? (layout.mobile ? 'Ask anything, @tag files, or / for commands' : 'Ask anything, @tag files/folders, $use skills, or / for commands') : 'Ask for follow-up changes or attach images') : 'Reconnect to Pi to begin'}
+          placeholder={connected ? (draft ? (layout.mobile ? 'Ask anything, @tag files, or / for commands' : 'Ask anything, @tag files/folders, $use skills, or / for commands') : 'Ask for follow-up changes or attach images') : state.activity === 'Opening thread' ? 'Opening thread…' : 'Reconnect to Pi to begin'}
           minRows={3}
           maxRows={7}
           autoFocus

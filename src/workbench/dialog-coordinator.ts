@@ -139,6 +139,7 @@ export class WorkbenchDialogCoordinator {
     const dialog = this.#host.getState().dialog
     if (!dialog) return
     this.#removeDialog(dialog.id)
+    this.#dropInputNotice(dialog.id)
     this.#sendDialogResponse(dialog.id, response)
   }
 
@@ -200,7 +201,17 @@ export class WorkbenchDialogCoordinator {
     this.#askUserDialogDriver = undefined
     this.#host.patch({ dialog: undefined, dialogQueue: [], questionnaireSubmitting: undefined, questionnaireCollapsed: undefined })
     this.#clearDialogTimer()
-    for (const dialog of pending) this.#sendDialogResponse(dialog.id, { cancelled: true })
+    for (const dialog of pending) {
+      this.#dropInputNotice(dialog.id)
+      this.#sendDialogResponse(dialog.id, { cancelled: true })
+    }
+  }
+
+  #dropInputNotice(dialogId: string): void {
+    this.#host.setState((state) => ({
+      ...state,
+      notices: state.notices.filter((notice) => notice.eventId !== `input:${dialogId}`),
+    }))
   }
 
   dispose(): void {
@@ -212,6 +223,12 @@ export class WorkbenchDialogCoordinator {
     if (!state.dialog) this.#host.patch({ dialog })
     else this.#host.patch({ dialogQueue: [...state.dialogQueue, dialog] })
     this.#scheduleDialogTimer()
+    if (dialog.id.startsWith('workbench-')) return
+    this.#host.setState((current) => addNotice(current, 'warning', dialog.title || 'Input needed', {
+      channel: 'ledger',
+      reason: 'input',
+      eventId: `input:${dialog.id}`,
+    }))
   }
 
   #tryDriveAskUserDialog(dialog: ExtensionDialog, stored: boolean): boolean {

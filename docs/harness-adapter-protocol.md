@@ -32,7 +32,7 @@ The execution methods stay the same as `AgentTransport`: `start`, `stop`, `reque
 
 ## Wire messages
 
-`ClientMessage` is `hello`, `command` (with a numeric `id`), or `ping`. `ServerMessage` is `welcome` (protocol, workspace path, snapshot, flow runtime snapshot, and optional `hostUrls` listing every base URL a remote client can reach this host on so it can rotate when one path drops), `patch`, `flows`, `result` (matched to a command `id`), `error`, or `pong`. `parseClientMessage` and `parseServerMessage` accept raw strings or objects and return `undefined` on malformed input.
+`ClientMessage` is `hello`, `command` (with a numeric `id`), or `ping`. `ServerMessage` is `welcome` (protocol, workspace path, snapshot, flow runtime snapshot, optional `hostUrls` listing every base URL a remote client can reach this host on so it can rotate when one path drops, optional `browserIntegrations`, and optional `sleepPrevention`), `patch`, `flows`, `browserIntegrations`, `sleepPrevention`, `result` (matched to a command `id`), `error`, or `pong`. `parseClientMessage` and `parseServerMessage` accept raw strings or objects and return `undefined` on malformed input. Remote `setSleepPreventionPolicy` commands change idle-sleep policy on the host computer; see [Host sleep prevention](power.md).
 
 ## Browser safety
 

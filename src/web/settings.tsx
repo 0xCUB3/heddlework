@@ -1,14 +1,16 @@
 import { BrowserIntegrationSettings } from './browser-integrations.tsx'
 import { useState, type ReactNode } from 'react'
 import type { WorkbenchSnapshot } from '../protocol/index.ts'
+import type { SleepPreventionWhen } from '../power/types.ts'
 import { webUiContract } from './contract.ts'
 import { isNativeShell, notifyNativeShell } from './native-shell.ts'
 import { requestWorkspaceNotifications } from './notifications.ts'
-import { workspaceClient } from './store.ts'
+import { useWorkspace, workspaceClient } from './store.ts'
 import { applyWebTheme, readStoredWebTheme, resolveWebTheme, storeWebTheme, type WebThemeMode } from './theme.ts'
 
 export function Settings({ state, workspacePath, onDisconnect }: { state: WorkbenchSnapshot; workspacePath: string; onDisconnect: () => void }) {
   const client = workspaceClient()
+  const { sleepPrevention: sleep } = useWorkspace()
   const [themeMode, setThemeMode] = useState<WebThemeMode>(() => (typeof localStorage === 'undefined' ? 'system' : readStoredWebTheme()))
   const [notifyEnabled, setNotifyEnabled] = useState(() => typeof Notification !== 'undefined' && Notification.permission === 'granted')
   const selectedModel = state.session.model ? `${state.session.model.provider}/${state.session.model.id}` : ''
@@ -37,6 +39,26 @@ export function Settings({ state, workspacePath, onDisconnect }: { state: Workbe
             </SettingControlRow>
           </SettingsSection>
 
+          <SettingsSection title="Power" description="Controls idle sleep on the connected host computer, not this browser or phone.">
+            {sleep ? (
+              <>
+                <SettingControlRow label="Stay awake" description={sleepWhenDescription(sleep.policy.when)}>
+                  <select value={sleep.policy.when} onChange={(event) => void client.sendAndReport({ type: 'setSleepPreventionPolicy', when: event.target.value as SleepPreventionWhen, keepDisplayAwake: sleep.policy.keepDisplayAwake })}>
+                    <option value="off">Off</option>
+                    <option value="whileWorking">While working</option>
+                    <option value="whileAppOpen">While Heddlework is open</option>
+                  </select>
+                </SettingControlRow>
+                <SettingControlRow label="Keep display awake" description={sleep.displaySupported ? 'Also block display sleep on the host. Lid close and Sleep still win.' : 'Display stay-awake is not available on this host.'}>
+                  <label className="web-settings-switch"><input type="checkbox" checked={sleep.policy.keepDisplayAwake} disabled={!sleep.displaySupported} onChange={(event) => void client.sendAndReport({ type: 'setSleepPreventionPolicy', when: sleep.policy.when, keepDisplayAwake: event.target.checked })} /><span /></label>
+                </SettingControlRow>
+                <SettingRow label="Host status" value={sleep.status === 'active' ? 'Holding idle sleep' : sleep.status === 'error' ? `Failed: ${sleep.error ?? sleep.reason}` : sleep.status === 'unsupported' ? 'Unavailable on this host' : 'Not holding'} />
+                <SettingRow label="Now" value={sleep.reason} />
+                <SettingRow label="Limits" value={sleep.limits} />
+              </>
+            ) : <SettingRow label="Host power" value="Connect to an updated host to control idle sleep on that computer." />}
+          </SettingsSection>
+
           <SettingsSection title="Interface" description="Application-wide presentation and navigation defaults.">
             <SettingControlRow label="Appearance">
               <select value={themeMode} onChange={(event) => setTheme(event.target.value as WebThemeMode)}><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select>
@@ -50,8 +72,9 @@ export function Settings({ state, workspacePath, onDisconnect }: { state: Workbe
             <SettingRow label="Host" value={workspaceClient().url || 'Unavailable'} />
             <SettingRow label="Install" value={isNativeShell() ? 'Running inside the native web shell.' : 'Use Add to Home Screen or the browser share sheet.'} />
             <SettingRow label="Phone QR" value="Scan the code in the Mac app under Settings → Remote access. This web client is already on the link." />
-            <SettingRow label="LAN fallback" value="If local links fail, start the host with HEDDLEWORK_HOST_BIND=0.0.0.0." />
-            <SettingControlRow label="Notifications" description="Notify when a turn finishes or an approval appears.">
+            <SettingRow label="Tailnet HTTPS" value="Private HTTPS through Tailscale Serve is configured on the Mac under Settings → Remote access. This browser cannot change Serve." />
+            <SettingRow label="LAN fallback" value="If local links fail, start the host with HEDDLEWORK_HOST_BIND=0.0.0.0, or use the tailnet HTTPS link from the Mac app." />
+            <SettingControlRow label="Notifications" description="Alerts for finished work, failures, and input requests while this tab can reach the Mac. Background push while the Mac is offline needs a hosted relay, which is not configured.">
               <label className="web-settings-switch"><input type="checkbox" checked={notifyEnabled} onChange={() => { void requestWorkspaceNotifications().then(setNotifyEnabled).catch((error) => client.reportError(error)) }} /><span /></label>
             </SettingControlRow>
           </SettingsSection>
@@ -91,6 +114,12 @@ function SettingsSection({ title, description, children }: { title: string; desc
       <div className="web-settings-card">{children}</div>
     </section>
   )
+}
+
+function sleepWhenDescription(when: SleepPreventionWhen): string {
+  if (when === 'off') return 'The host may idle-sleep even during agent work.'
+  if (when === 'whileAppOpen') return 'Block idle sleep on the host until Heddlework exits.'
+  return 'Block idle sleep on the host only while agent, tool, flow, or browser work is running.'
 }
 
 function SettingRow({ label, value }: { label: string; value: string }) {

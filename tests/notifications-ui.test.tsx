@@ -21,7 +21,7 @@ afterEach(async () => {
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
 describeNative('notification surfaces', () => {
-  it('keeps notices out of the composer while retaining the notification ledger', async () => {
+  it('keeps copy and settle confirmations as toasts and durable failures in the ledger', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/notification-workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
     controllers.push(controller)
     const root = createTestRoot()
@@ -32,20 +32,24 @@ describeNative('notification surfaces', () => {
     controller.settleThread('fixture-thread')
     await Bun.sleep(40)
     root.renderer.flush()
-    expect(await automation.getByTestId('notification-toast').count()).toBe(0)
-    expect(await automation.getByTestId('composer-notification-stack').count()).toBe(0)
+    expect(await automation.getByTestId('notification-toast').count()).toBe(1)
+    expect(root.renderer.getPaintedText()).toContain('Thread moved to Settled')
     expect(controller.getSnapshot().notices).toHaveLength(1)
 
-    controller.settleThread('fixture-thread-two')
+    controller.notify('error', 'Build failed')
     await Bun.sleep(40)
     root.renderer.flush()
     expect(controller.getSnapshot().notices).toHaveLength(2)
+    for (const notice of controller.getSnapshot().notices.filter((item) => item.channel === 'toast')) controller.dismissNotice(notice.id)
+    await Bun.sleep(20)
+    root.renderer.flush()
 
     await automation.getByTestId('sidebar-notifications').click()
     expect(await automation.getByTestId('notification-panel').count()).toBe(1)
     expect((await automation.getByTestId('notification-panel').bounds()).width).toBe(420)
-    expect(root.renderer.getPaintedText()).toContain('Notifications')
-    expect(root.renderer.getPaintedText()).toContain('Thread moved to Settled')
+    expect(root.renderer.getPaintedText().join('\n')).toContain('Notifications')
+    expect(root.renderer.getPaintedText().join('\n')).toContain('Build failed')
+    expect(root.renderer.getPaintedText().join('\n')).not.toContain('Thread moved to Settled')
     expect(root.renderer.getPaintedText()).toContain('Clear all')
     expect(await automation.getByTestId('clear-notification-ledger').count()).toBe(1)
     expect(await automation.getByTestId('close-notifications').count()).toBe(0)
@@ -76,7 +80,7 @@ describeNative('notification surfaces', () => {
     controller.settleThread('fixture-thread-three')
     await Bun.sleep(25)
     root.renderer.flush()
-    expect(await automation.getByTestId('notification-toast').count()).toBe(0)
+    expect(await automation.getByTestId('notification-toast').count()).toBe(1)
     controller.clearNotices()
     expect(controller.getSnapshot().notices).toHaveLength(0)
 

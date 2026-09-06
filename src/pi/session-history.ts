@@ -1,5 +1,6 @@
 import { open, stat } from 'node:fs/promises'
 import type { PiMessage } from './types.ts'
+import { formatTurnTelemetry } from '../workbench/telemetry.ts'
 
 const REVERSE_SCAN_CHUNK_BYTES = 256 * 1024
 export const SESSION_HISTORY_PAGE_MESSAGES = 80
@@ -17,6 +18,8 @@ interface PersistedSessionEntry {
   display?: boolean
   summary?: string
   tokensBefore?: number
+  data?: unknown
+  details?: unknown
 }
 
 export interface SessionHistoryPage {
@@ -117,6 +120,12 @@ function parseEntry(line: Buffer): PersistedSessionEntry | undefined {
 }
 
 function persistedMessage(entry: PersistedSessionEntry): PiMessage | undefined {
+  if (entry.type === 'custom') {
+    const text = formatTurnTelemetry(entry.data)
+    if (!text) return undefined
+    const timestamp = persistedTimestamp(entry.timestamp)
+    return { role: 'telemetry', content: text, workbenchEntryId: entry.id, ...(timestamp === undefined ? {} : { timestamp }) }
+  }
   if (entry.type === 'message' && entry.message && typeof entry.message.role === 'string') {
     return { ...entry.message, workbenchEntryId: entry.id }
   }
@@ -138,6 +147,7 @@ function persistedMessage(entry: PersistedSessionEntry): PiMessage | undefined {
     role: 'custom',
     display: true,
     workbenchEntryId: entry.id,
+    ...(entry.details === undefined ? {} : { details: entry.details }),
     ...(entry.customType === undefined ? {} : { customType: entry.customType }),
     ...(entry.content === undefined ? {} : { content: entry.content }),
     ...(timestamp === undefined ? {} : { timestamp }),

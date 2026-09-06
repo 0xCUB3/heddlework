@@ -1,6 +1,6 @@
 import React from 'react'
 import uiContract from '../workbench/ui-contract.json'
-import { basename } from 'node:path'
+import { workspaceDisplayName } from '../workbench/workspace-name.ts'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
@@ -29,7 +29,7 @@ export function ChatHeader({
   onToggleDiff(): void
   onToggleTerminal?(): void
 }) {
-  const projectName = basename(state.workspacePath) || state.workspacePath
+  const projectName = workspaceDisplayName(state.workspacePath)
   const title = activeThreadTitle(state)
   const layout = useResponsiveLayout()
   const collapsedLeftInset = process.platform === 'darwin' ? 132 : 54

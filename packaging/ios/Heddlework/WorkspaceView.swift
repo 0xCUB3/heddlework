@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 struct WorkspaceView: View {
     let link: ConnectLink
@@ -11,7 +12,9 @@ struct WorkspaceView: View {
     @State private var contract = UIContract.load()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingSidebar = false
+    @State private var terminalOpen = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -31,6 +34,25 @@ struct WorkspaceView: View {
         }
         .task(id: link.hostURL.absoluteString + link.token) { client.connect(link) }
         .onDisappear { client.disconnect(clearState: false) }
+        .onAppear {
+            NotificationService.shared.refreshAuthorization()
+            reportPresence()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            reportPresence(visibility: phase == .active ? "focused" : "hidden")
+        }
+        .onChange(of: client.snapshot?.session?.sessionFile) { _, _ in
+            reportPresence()
+        }
+        .onChange(of: panel) { _, next in
+            if next == .notifications { client.send(CommandFactory.simple("markNoticesRead"), label: "Mark notices read") }
+        }
+        .task {
+            while !Task.isCancelled {
+                reportPresence()
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+            }
+        }
         .sheet(isPresented: $showingSidebar) { NavigationStack { SidebarView(client: client, surface: $surface, panel: $panel, columnVisibility: $columnVisibility, showingSessions: $showingSessions, contract: contract, onDisconnect: onDisconnect).navigationTitle("Heddlework") } }
         .sheet(isPresented: $showingSessions) { SessionsView(client: client) }
         .sheet(item: dialogBinding) { DialogView(dialog: $0, client: client) }
@@ -47,7 +69,7 @@ struct WorkspaceView: View {
                 SettingsWorkspace(client: client, contract: contract, onClose: { surface = .chat }, onDisconnect: onDisconnect)
             } else if horizontalSizeClass == .compact {
                 VStack(spacing: 0) {
-                    HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, contract: contract)
+                    HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, terminalOpen: $terminalOpen, contract: contract)
                     if let panel {
                         DetailPanelView(panel: panel, client: client, contract: contract)
                     } else {
@@ -58,12 +80,14 @@ struct WorkspaceView: View {
                 GeometryReader { geo in
                     HStack(spacing: 0) {
                         VStack(spacing: 0) {
-                            HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, contract: contract)
+                            HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, terminalOpen: $terminalOpen, contract: contract)
                             content
                         }
                         if let panel {
                             DetailPanelView(panel: panel, client: client, contract: contract)
-                                .frame(width: WorkbenchLayoutMetrics.standardPanelWidth(mainWidth: geo.size.width))
+                                .frame(width: panel == .notifications
+                                    ? WorkbenchLayoutMetrics.notificationsPanelWidth(mainWidth: geo.size.width)
+                                    : WorkbenchLayoutMetrics.standardPanelWidth(mainWidth: geo.size.width))
                                 .overlay(alignment: .leading) { Rectangle().fill(AppColors.border).frame(width: 1) }
                                 .accessibilityIdentifier("right-panel-host")
                         }
@@ -82,12 +106,22 @@ struct WorkspaceView: View {
         if surface == .flows {
             FlowsWorkspace(client: client)
         } else {
-            ChatWorkspace(client: client)
+            ChatWorkspace(client: client, terminalOpen: $terminalOpen)
         }
     }
 
     private var dialogBinding: Binding<ExtensionDialog?> {
         Binding(get: { client.snapshot?.dialog }, set: { _ in })
+    }
+
+    private func reportPresence(visibility: String? = nil) {
+        let hidden = scenePhase != .active
+        client.send(CommandFactory.reportPresence(
+            clientId: NotificationService.shared.clientId,
+            surface: "ios",
+            visibility: visibility ?? (hidden ? "hidden" : "focused"),
+            sessionPath: client.snapshot?.session?.sessionFile
+        ), label: "Presence", quiet: true)
     }
 }
 
@@ -202,47 +236,72 @@ struct SidebarView: View {
                 }
             }
             .padding(8)
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(activeSessions) { session in
-                        NativeSessionCard(session: session, snapshot: snapshot, snoozeOpen: snoozePath == session.path, onOpen: { openSession(session) }, onSettle: { client.send(CommandFactory.withString("settleThread", key: "path", value: session.path), label: "Settle thread") }, onSnooze: { snoozePath = snoozePath == session.path ? nil : session.path }, onSchedule: { until in
-                            snoozePath = nil
-                            client.send(CommandFactory.snoozeThread(path: session.path, snoozedUntil: until), label: "Snooze thread")
-                        })
-                    }
-                    if !snoozedSessions.isEmpty {
+            List {
+                ForEach(activeSessions) { session in
+                    NativeSessionCard(session: session, snapshot: snapshot, snoozeOpen: snoozePath == session.path, onOpen: { openSession(session) }, onSettle: { settle(session) }, onSnooze: { snoozePath = snoozePath == session.path ? nil : session.path }, onSchedule: { until in
+                        snoozePath = nil
+                        snooze(session, until: until)
+                    })
+                    .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .sessionSwipeActions(lifecycle: .active, onOpen: { openSession(session) }, onSettle: { settle(session) }, onSnooze: { snooze(session) }, onWake: {})
+                    .contextMenu { sessionContextMenu(session, lifecycle: .active) }
+                }
+                if !snoozedSessions.isEmpty {
+                    Section {
+                        ForEach(snoozedSessions) { session in
+                            CompactSessionRow(session: session, snapshot: snapshot, lifecycle: .snoozed, onOpen: { openSession(session) }, onWake: { wake(session) })
+                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .sessionSwipeActions(lifecycle: .snoozed, onOpen: { openSession(session) }, onSettle: {}, onSnooze: {}, onWake: { wake(session) })
+                                .contextMenu { sessionContextMenu(session, lifecycle: .snoozed) }
+                        }
+                    } header: {
                         sectionLabel("Snoozed (\(snoozedSessions.count))", accent: true)
                     }
-                    ForEach(snoozedSessions) { session in
-                        CompactSessionRow(session: session, snapshot: snapshot, lifecycle: .snoozed, onOpen: { openSession(session) }, onWake: { client.send(CommandFactory.withString("wakeThread", key: "path", value: session.path), label: "Wake thread") })
-                    }
-                    if !settledSessions.isEmpty {
+                }
+                if !settledSessions.isEmpty {
+                    Section {
+                        ForEach(renderedSettled) { session in
+                            CompactSessionRow(session: session, snapshot: snapshot, lifecycle: .settled, onOpen: { openSession(session) }, onWake: { wake(session) })
+                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .sessionSwipeActions(lifecycle: .settled, onOpen: { openSession(session) }, onSettle: {}, onSnooze: {}, onWake: { wake(session) })
+                                .contextMenu { sessionContextMenu(session, lifecycle: .settled) }
+                        }
+                    } header: {
                         Button { settledExpanded.toggle() } label: {
                             HStack(spacing: 7) {
                                 Text(settledExpanded ? "Settled" : "Settled (\(settledSessions.count))").font(.workbench(size: 10, weight: .medium)).foregroundStyle(AppColors.settledText)
                                 Rectangle().fill(AppColors.settledDivider).frame(height: 1)
                                 Image(systemName: settledExpanded ? "chevron.up" : "chevron.down").font(.workbench(size: 10)).foregroundStyle(AppColors.settledText)
                             }
-                            .padding(.horizontal, 11)
+                            .padding(.horizontal, 3)
                             .frame(height: 32)
                         }
                     }
-                    ForEach(renderedSettled) { session in
-                        CompactSessionRow(session: session, snapshot: snapshot, lifecycle: .settled, onOpen: { openSession(session) }, onWake: { client.send(CommandFactory.withString("wakeThread", key: "path", value: session.path), label: "Wake thread") })
-                    }
-                    if filteredSessions.isEmpty {
-                        Text(sessionSearch.isEmpty ? "No threads in this project" : "No threads found")
-                            .font(.workbench(size: 11))
-                            .foregroundStyle(AppColors.textFaint)
-                            .padding(.top, 22)
-                    }
-                    if snapshot?.sessionsHasMore == true {
-                        Button("Load more") { client.send(CommandFactory.simple("loadMoreSessions"), label: "Load more sessions") }
-                            .font(.workbench(size: 11))
-                            .foregroundStyle(AppColors.textFaint)
-                    }
+                }
+                if filteredSessions.isEmpty {
+                    Text(sessionSearch.isEmpty ? "No threads in this project" : "No threads found")
+                        .font(.workbench(size: 11))
+                        .foregroundStyle(AppColors.textFaint)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+                if snapshot?.sessionsHasMore == true {
+                    Button("Load more") { client.send(CommandFactory.simple("loadMoreSessions"), label: "Load more sessions") }
+                        .font(.workbench(size: 11))
+                        .foregroundStyle(AppColors.textFaint)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 36)
             HStack(spacing: 2) {
                 footerButton("gearshape", active: surface == .settings, label: "Settings", identifier: "sidebar-settings") { surface = surface == .settings ? .chat : .settings; panel = nil; dismiss() }
                 footerButton("bell", active: panel == .notifications, label: "Notifications", identifier: "sidebar-notifications") { panel = .notifications; surface = .chat; dismiss() }
@@ -265,6 +324,35 @@ struct SidebarView: View {
         panel = nil
         columnVisibility = .detailOnly
         dismiss()
+    }
+
+    private func settle(_ session: SessionSummary) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        client.send(CommandFactory.withString("settleThread", key: "path", value: session.path), label: "Settle thread")
+    }
+
+    private func wake(_ session: SessionSummary) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        client.send(CommandFactory.withString("wakeThread", key: "path", value: session.path), label: "Wake thread")
+    }
+
+    private func snooze(_ session: SessionSummary, until: Double? = nil) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let deadline = until ?? (Date().addingTimeInterval(3_600).timeIntervalSince1970 * 1_000)
+        client.send(CommandFactory.snoozeThread(path: session.path, snoozedUntil: deadline), label: "Snooze thread")
+    }
+
+    @ViewBuilder
+    private func sessionContextMenu(_ session: SessionSummary, lifecycle: LifecycleBucket) -> some View {
+        Button("Open") { openSession(session) }
+        if lifecycle == .active {
+            Button("Settle") { settle(session) }
+            ForEach(SessionCatalog.snoozeOptions(), id: \.label) { option in
+                Button("Snooze \(option.label)") { snooze(session, until: option.until) }
+            }
+        } else {
+            Button("Wake") { wake(session) }
+        }
     }
 
     private var connectionColor: Color {
@@ -325,25 +413,19 @@ private struct NativeSessionCard: View {
                 .padding(9)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            HStack(spacing: 4) {
-                Text(SessionCatalog.relativeTime(from: session.modifiedAt ?? session.updatedAt)).font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
-                Button(action: onSnooze) { Image(systemName: "clock").font(.workbench(size: 11)).foregroundStyle(AppColors.textFaint) }
-                Button(action: onSettle) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "checkmark").font(.workbench(size: 10))
-                        Text("Settle").font(.workbench(size: 9))
-                    }
-                    .foregroundStyle(AppColors.textFaint)
-                }
-            }
-            .padding(.top, 9)
-            .padding(.trailing, 6)
+            Text(SessionCatalog.relativeTime(from: session.modifiedAt ?? session.updatedAt))
+                .font(.workbench(size: 9))
+                .foregroundStyle(AppColors.textFaint)
+                .padding(.top, 9)
+                .padding(.trailing, 6)
         }
         .frame(height: WorkbenchLayoutMetrics.sessionCardHeight)
         .background(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? AppColors.sidebarActive : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 8)
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? "sidebar-session-card-active" : "sidebar-session-card")
+        .accessibilityLabel(session.title)
         .overlay(alignment: .topTrailing) {
             if snoozeOpen {
                 VStack(alignment: .leading, spacing: 2) {
@@ -414,6 +496,7 @@ struct HeaderView: View {
     @Binding var panel: DetailPanel?
     @Binding var showingSidebar: Bool
     @Binding var columnVisibility: NavigationSplitViewVisibility
+    @Binding var terminalOpen: Bool
     let contract: UIContract
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -479,11 +562,17 @@ struct HeaderView: View {
                 headerHostButton("shippingbox", label: "Open")
                 headerHostButton("square.and.arrow.down", label: "Export")
             }
-            Button(action: {}) {
-                Image(systemName: "rectangle.bottomhalf.inset.filled").font(.workbench(size: 14)).foregroundStyle(AppColors.muted).frame(width: 30, height: 30)
+            Button {
+                terminalOpen.toggle()
+            } label: {
+                Image(systemName: "rectangle.bottomhalf.inset.filled")
+                    .font(.workbench(size: 14))
+                    .foregroundStyle(terminalOpen ? AppColors.text : AppColors.muted)
+                    .frame(width: 30, height: 30)
             }
-            .disabled(true)
+            .disabled(client.status != .open)
             .accessibilityLabel("Toggle terminal panel")
+            .accessibilityIdentifier("toggle-terminal")
 
             Button {
                 if panel == .diff { panel = nil }
@@ -523,11 +612,17 @@ struct HeaderView: View {
 
 struct ChatWorkspace: View {
     @ObservedObject var client: WorkspaceClient
+    @Binding var terminalOpen: Bool
     @State private var draft = ""
     @State private var queue = false
+    @State private var sessionKey = ""
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var mobile: Bool { horizontalSizeClass == .compact }
+    private var currentSessionKey: String {
+        client.snapshot?.session?.sessionFile ?? client.snapshot?.session?.sessionId ?? client.workspacePath
+    }
+    private var memoryHost: String { client.candidates.first ?? "" }
 
     var isEmptyChat: Bool {
         (client.snapshot?.messages ?? []).isEmpty && client.snapshot?.liveAssistant == nil && (client.snapshot?.liveTools ?? []).isEmpty
@@ -543,88 +638,30 @@ struct ChatWorkspace: View {
                     .padding(.horizontal, mobile ? 10 : 20)
                     .padding(.bottom, 10)
             }
-        }
-    }
-}
-
-struct TranscriptView: View {
-    let snapshot: WorkbenchSnapshot?
-    @ObservedObject var client: WorkspaceClient
-    var mobile = false
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .center, spacing: 12) {
-                    if snapshot?.messagesHasOlder == true {
-                        Button("Load earlier messages") { client.send(CommandFactory.simple("loadEarlierMessages"), label: "Load earlier messages") }
-                    }
-                    ForEach(snapshot?.messages ?? []) { message in
-                        MessageBubble(message: message)
-                            .frame(maxWidth: WorkbenchLayoutMetrics.fallbackContentMax)
-                            .frame(maxWidth: .infinity)
-                    }
-                    if let live = snapshot?.liveAssistant { LiveAssistantView(live: live).frame(maxWidth: WorkbenchLayoutMetrics.fallbackContentMax).frame(maxWidth: .infinity) }
-                    ForEach(snapshot?.liveTools ?? []) { ToolRunView(tool: $0).frame(maxWidth: WorkbenchLayoutMetrics.fallbackContentMax).frame(maxWidth: .infinity) }
-                    Color.clear.frame(height: 1).id("bottom")
-                }.padding(.horizontal, mobile ? 10 : 20).padding(.vertical, mobile ? 14 : 20)
-            }.onChange(of: snapshot?.messages?.count ?? 0) { _, _ in proxy.scrollTo("bottom") }
-        }
-    }
-}
-
-struct MessageBubble: View {
-    let message: PiMessage
-    var body: some View {
-        VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 8) {
-            ForEach(Array((message.content?.blocks ?? []).enumerated()), id: \.offset) { _, block in
-                if block.type == "thinking" || block.thinking != nil {
-                    DisclosureGroup("Thinking") { Text(block.thinking ?? block.text ?? "").font(.system(.body, design: .monospaced)).textSelection(.enabled) }
-                } else if block.type?.contains("tool") == true || block.name != nil {
-                    ToolCard(name: block.name ?? block.type ?? "tool", text: block.textValue)
-                } else {
-                    Text(displayText(block.textValue)).textSelection(.enabled)
-                }
+            if terminalOpen {
+                TerminalPanelView(client: client, onClose: { terminalOpen = false })
+                    .frame(height: mobile ? 280 : 220)
+                    .overlay(alignment: .top) { Rectangle().fill(AppColors.border).frame(height: 1) }
+                    .transition(.move(edge: .bottom))
             }
-            if message.content == nil { Text(displayText(message.contentText)).textSelection(.enabled) }
         }
-        .padding(message.role == "user" ? 10 : 0)
-        .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
-        .background(message.role == "user" ? AppColors.raised : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .onAppear { restoreDraft() }
+        .onChange(of: currentSessionKey) { _, _ in
+            persistDraft()
+            restoreDraft()
+        }
+        .onChange(of: draft) { _, _ in persistDraft() }
     }
 
-    private func displayText(_ text: String) -> String {
-        if text.count <= 16_384 { return text }
-        return String(text.prefix(16_384)) + "\n…"
+    private func restoreDraft() {
+        sessionKey = currentSessionKey
+        draft = WorkspaceSessionMemory.shared.chrome(host: memoryHost, session: currentSessionKey).draft
     }
-}
 
-struct LiveAssistantView: View {
-    let live: LiveAssistant
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text("Assistant is working…").font(.caption).foregroundStyle(.secondary)
-            ForEach(live.blocks) { block in
-                if block.kind == "thinking" { DisclosureGroup("Thinking") { Text(block.text).font(.system(.body, design: .monospaced)) } }
-                else { Text(block.text).textSelection(.enabled) }
-            }
-        }.padding(.vertical, 4)
-    }
-}
-
-struct ToolRunView: View {
-    let tool: ToolRun
-    var body: some View { ToolCard(name: "\(tool.name) · \(tool.status)", text: tool.output ?? tool.argsText ?? "") }
-}
-
-struct ToolCard: View {
-    let name: String
-    let text: String
-    var body: some View {
-        DisclosureGroup(name) { Text(text.isEmpty ? "No output yet" : text).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-            .font(.subheadline)
-            .foregroundStyle(AppColors.muted)
-            .padding(.vertical, 6)
+    private func persistDraft() {
+        WorkspaceSessionMemory.shared.update(host: memoryHost, session: currentSessionKey) { chrome in
+            chrome.draft = draft
+        }
     }
 }
 
@@ -669,9 +706,10 @@ struct EmptyChatView: View {
 
     private var workspaceName: String {
         if let path = client.snapshot?.workspacePath ?? (client.workspacePath.isEmpty ? nil : client.workspacePath) {
-            return URL(fileURLWithPath: path).lastPathComponent
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            if !name.isEmpty && name != "/" && name != "." { return name }
         }
-        return "Heddlework"
+        return "workspace"
     }
 }
 
@@ -713,10 +751,12 @@ struct ComposerView: View {
 
     private var composerSurface: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let notice = client.snapshot?.notices?.last { Text(notice.message).font(.workbench(size: 11)).foregroundStyle(notice.kind == "error" ? AppColors.error : AppColors.warning) }
+            if let notice = client.snapshot?.notices?.last(where: { $0.isLedger && $0.isUnread && ($0.reason == "failure" || $0.reason == "input" || $0.kind == "error") }) {
+                Text(notice.message).font(.workbench(size: 11)).foregroundStyle(notice.kind == "error" ? AppColors.error : AppColors.warning).lineLimit(2)
+            }
             TextField("Ask for changes, send follow-ups, or attach images", text: $draft, axis: .vertical)
                 .font(.workbench(size: 14))
-                .lineLimit(3...7)
+                .lineLimit(mobile ? 2...5 : 3...7)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, mobile ? 13 : 16)
                 .accessibilityIdentifier("composer")
@@ -778,7 +818,7 @@ struct ComposerView: View {
         }
         .padding(.top, 14)
         .padding(.bottom, 12)
-        .frame(minHeight: WorkbenchLayoutMetrics.composerMinHeight)
+        .frame(minHeight: mobile ? 120 : WorkbenchLayoutMetrics.composerMinHeight)
         .background(AppColors.composer)
         .clipShape(RoundedRectangle(cornerRadius: WorkbenchLayoutMetrics.composerRadius))
         .overlay(RoundedRectangle(cornerRadius: WorkbenchLayoutMetrics.composerRadius).stroke(AppColors.composerFrame, lineWidth: 1))
@@ -825,4 +865,23 @@ private func icon(forSurface surface: WorkspaceSurface) -> String {
 
 private func icon(forPanel panel: DetailPanel) -> String {
     switch panel { case .notifications: return "bell"; case .surfaces: return "rectangle.3.group"; case .diff: return "plus.forwardslash.minus"; case .queue: return "tray.full"; case .triage: return "checklist"; case .receipts: return "receipt" }
+}
+
+
+private extension View {
+    func sessionSwipeActions(lifecycle: LifecycleBucket, onOpen: @escaping () -> Void, onSettle: @escaping () -> Void, onSnooze: @escaping () -> Void, onWake: @escaping () -> Void) -> some View {
+        self
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                Button("Open", action: onOpen).tint(.blue)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if lifecycle == .active {
+                    Button("Snooze", action: onSnooze).tint(.orange)
+                    Button("Settle", action: onSettle).tint(.gray)
+                } else {
+                    Button("Wake", action: onWake).tint(.green)
+                }
+            }
+            .accessibilityAction(named: "Open", onOpen)
+    }
 }

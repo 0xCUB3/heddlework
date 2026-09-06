@@ -37,22 +37,36 @@ struct WorkbenchSnapshot: Decodable, Equatable {
 }
 
 struct SessionState: Decodable, Equatable {
-    var model: PiModel?
-    var thinkingLevel: String?
-    var isStreaming: Bool?
-    var isCompacting: Bool?
-    var steeringMode: String?
-    var followUpMode: String?
-    var sessionName: String?
-    var sessionId: String?
-    var sessionFile: String?
+    var model: PiModel? = nil
+    var thinkingLevel: String? = nil
+    var isStreaming: Bool? = nil
+    var isCompacting: Bool? = nil
+    var steeringMode: String? = nil
+    var followUpMode: String? = nil
+    var sessionName: String? = nil
+    var sessionId: String? = nil
+    var sessionFile: String? = nil
 }
 
-struct PiModel: Decodable, Equatable, Identifiable, Hashable { var id: String; var provider: String; var name: String?; var reasoning: Bool?; var label: String { name?.isEmpty == false ? name! : id }; var key: String { "\(provider)/\(id)" } }
+struct PiModel: Decodable, Equatable, Identifiable, Hashable { var id: String; var provider: String; var name: String? = nil; var reasoning: Bool? = nil; var label: String { name?.isEmpty == false ? name! : id }; var key: String { "\(provider)/\(id)" } }
 
 struct PiMessage: Decodable, Equatable, Identifiable {
-    var role: String; var content: MessageContent?; var customType: String?; var display: Bool?; var timestamp: Double?; var toolCallId: String?; var toolName: String?; var isError: Bool?; var command: String?; var output: String?; var exitCode: Int?
-    var id: String { "\(timestamp ?? 0)-\(role)-\(toolCallId ?? String(contentText.prefix(20)))" }
+    var role: String
+    var content: MessageContent? = nil
+    var customType: String? = nil
+    var display: Bool? = nil
+    var timestamp: Double? = nil
+    var toolCallId: String? = nil
+    var toolName: String? = nil
+    var isError: Bool? = nil
+    var command: String? = nil
+    var output: String? = nil
+    var exitCode: Int? = nil
+    var workbenchEntryId: String? = nil
+    var details: JSONValue? = nil
+    var summary: String? = nil
+    var tokensBefore: Double? = nil
+    var id: String { workbenchEntryId ?? "\(timestamp ?? 0)-\(role)-\(toolCallId ?? "")-\(contentText.prefix(24))" }
     var contentText: String { content?.text ?? output ?? command ?? "" }
 }
 
@@ -62,21 +76,32 @@ enum MessageContent: Decodable, Equatable {
     case string(String), blocks([ContentBlock])
     init(from decoder: Decoder) throws { let c = try decoder.singleValueContainer(); if let s = try? c.decode(String.self) { self = .string(s) } else { self = .blocks((try? c.decode([ContentBlock].self)) ?? []) } }
     var text: String { switch self { case .string(let s): return s; case .blocks(let b): return b.map(\.textValue).filter { !$0.isEmpty }.joined(separator: "\n") } }
-    var blocks: [ContentBlock] { switch self { case .string(let s): return [ContentBlock(type: "text", text: s, thinking: nil, id: nil, name: nil, arguments: nil)]; case .blocks(let b): return b } }
+    var blocks: [ContentBlock] { switch self { case .string(let s): return [ContentBlock(type: "text", text: s)]; case .blocks(let b): return b } }
 }
 
-struct ContentBlock: Decodable, Equatable, Identifiable { var type: String?; var text: String?; var thinking: String?; var id: String?; var name: String?; var arguments: JSONValue?; var stableId: String { id ?? UUID().uuidString }; var textValue: String { text ?? thinking ?? name ?? "" } }
+struct ContentBlock: Decodable, Equatable, Identifiable {
+    var type: String? = nil
+    var text: String? = nil
+    var thinking: String? = nil
+    var id: String? = nil
+    var name: String? = nil
+    var arguments: JSONValue? = nil
+    var data: String? = nil
+    var mimeType: String? = nil
+    var stableId: String { id ?? [type, name, String((text ?? thinking ?? "").prefix(24))].compactMap { $0 }.joined(separator: ":") }
+    var textValue: String { text ?? thinking ?? name ?? "" }
+}
 struct LiveAssistant: Decodable, Equatable, Identifiable { var id: String; var blocks: [LiveBlock] }
 struct LiveBlock: Decodable, Equatable, Identifiable { var index: Int; var kind: String; var text: String; var id: Int { index } }
-struct ToolRun: Decodable, Equatable, Identifiable { var id: String; var name: String; var args: JSONValue?; var argsText: String?; var output: String?; var details: JSONValue?; var status: String; var isError: Bool }
+struct ToolRun: Decodable, Equatable, Identifiable { var id: String; var name: String; var args: JSONValue? = nil; var argsText: String? = nil; var output: String? = nil; var details: JSONValue? = nil; var status: String; var isError: Bool }
 struct SessionSummary: Decodable, Equatable, Identifiable {
     var path: String
-    var name: String?
-    var cwd: String?
-    var sessionTitle: String?
-    var updatedAt: Double?
-    var modifiedAt: Double?
-    var messageCount: Int?
+    var name: String? = nil
+    var cwd: String? = nil
+    var sessionTitle: String? = nil
+    var updatedAt: Double? = nil
+    var modifiedAt: Double? = nil
+    var messageCount: Int? = nil
     var id: String { path }
     var title: String {
         if let name, !name.isEmpty { return name }
@@ -90,7 +115,7 @@ struct SessionSummary: Decodable, Equatable, Identifiable {
     }
 }
 
-struct QueueState: Decodable, Equatable { var items: [QueuedInput]; var steering: [String]?; var followUp: [String]?; var paused: Bool; var pauseReason: String?; var dispatchingId: String?; var blockingActivity: String?; var blockingNote: String? }
+struct QueueState: Decodable, Equatable { var items: [QueuedInput]; var steering: [String]? = nil; var followUp: [String]? = nil; var paused: Bool; var pauseReason: String? = nil; var dispatchingId: String? = nil; var blockingActivity: String? = nil; var blockingNote: String? = nil }
 struct QueuedInput: Decodable, Equatable, Identifiable { var id: String; var text: String; var images: [SnapshotComposerImage]; var createdAt: Double; var lane: String?; var paused: Bool?; var flow: FlowQueueMetadata? }
 struct FlowQueueMetadata: Decodable, Equatable { var runId: String; var taskId: String; var title: String; var mode: String; var source: String; var scheduleId: String?; var taskIndex: Int; var taskCount: Int; var phase: String; var specId: String?; var dependsOn: [String]?; var lane: String?; var lanePath: String?; var attempt: Int?; var retries: Int? }
 
@@ -105,12 +130,27 @@ enum SnapshotImageData: Decodable, Equatable {
 }
 struct OmittedImageData: Decodable, Equatable { var omitted: Bool; var bytes: Int }
 
-struct Notice: Decodable, Equatable, Identifiable { var id: Int; var kind: String; var message: String; var createdAt: Double }
+struct Notice: Decodable, Equatable, Identifiable {
+    var id: Int
+    var kind: String
+    var message: String
+    var createdAt: Double
+    var transcriptTurn: Int?
+    var transcriptPosition: Int?
+    var eventId: String?
+    var channel: String?
+    var reason: String?
+    var sessionPath: String?
+    var sessionTitle: String?
+    var readAt: Double?
+    var isLedger: Bool { channel != "toast" }
+    var isUnread: Bool { readAt == nil }
+}
 struct ThreadLifecycle: Decodable, Equatable { var settledAt: Double?; var snoozedUntil: Double?; var unsettledAt: Double?; var readAt: Double?; var priority: Int?; var labels: [String]? }
 struct SlashCommand: Decodable, Equatable, Identifiable { var name: String; var description: String?; var argumentHint: String?; var source: String; var id: String { name } }
 struct WorkbenchUiRequest: Decodable, Equatable { var id: Int; var kind: String; var text: String? }
 
-struct WorkspaceDiff: Decodable, Equatable { var status: String; var branch: String; var files: [WorkspaceDiffFile]; var additions: Int; var deletions: Int; var error: String? }
+struct WorkspaceDiff: Decodable, Equatable { var status: String; var branch: String; var files: [WorkspaceDiffFile]; var additions: Int; var deletions: Int; var error: String? = nil }
 struct WorkspaceDiffFile: Decodable, Equatable, Identifiable { var path: String; var patch: String; var additions: Int; var deletions: Int; var id: String { path } }
 struct ExtensionWidget: Decodable, Equatable, Identifiable { var key: String; var lines: [String]; var placement: String; var id: String { key } }
 struct ExtensionDialog: Decodable, Equatable, Identifiable { var id: String; var method: String; var title: String; var message: String?; var options: [String]?; var placeholder: String?; var prefill: String? }

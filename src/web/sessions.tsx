@@ -99,9 +99,11 @@ function SessionCard({ state, session, snoozeOpen, onSnooze, onSchedule }: { sta
         <div className="web-session-branch"><GitBranchIcon />{branch}</div>
       </button>
       <div className="web-session-meta">
-        <span>{running ? 'Working' : relativeTime(session.modifiedAt)}</span>
-        <button type="button" className="web-session-icon" aria-label="Snooze" onClick={onSnooze}><ClockIcon /></button>
-        <button type="button" className="web-session-icon" aria-label="Settle" onClick={() => void client.sendAndReport({ type: 'settleThread', path: session.path })}><CheckIcon /> Settle</button>
+        <span className="web-session-time">{running ? 'Working' : relativeTime(session.modifiedAt)}</span>
+        <div className="web-session-actions">
+          <button type="button" className="web-session-icon" aria-label="Snooze" onClick={onSnooze}><ClockIcon /></button>
+          <button type="button" className="web-session-icon" aria-label="Settle" onClick={() => void client.sendAndReport({ type: 'settleThread', path: session.path })}><CheckIcon /> Settle</button>
+        </div>
       </div>
       {snoozeOpen ? <SnoozeMenu onSchedule={onSchedule} /> : null}
     </div>
@@ -148,8 +150,8 @@ function SnoozeMenu({ onSchedule }: { onSchedule(until: number): void }) {
 }
 
 function basename(path: string): string {
-  const parts = path.split(/[/\\]/).filter(Boolean)
-  return parts.at(-1) ?? path
+  const parts = path.split(/[/\\]/).filter((part) => part && part !== '.')
+  return parts.at(-1) || 'workspace'
 }
 
 function relativeTime(timestamp: number): string {

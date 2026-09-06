@@ -6,7 +6,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 gpuix_tag="@gpuix/native@0.7.0"
-build_version="${GPUIX_BUILD_VERSION:-0.7.0-heddlework.1}"
+build_version="${GPUIX_BUILD_VERSION:-0.7.0-heddlework.3}"
 checkout="${GPUIX_CHECKOUT:-$root/../gpuix-heddlework-0.7}"
 patch="$root/patches/gpuix-0.7.0-heddlework.patch"
 out="$root/vendor/gpuix"

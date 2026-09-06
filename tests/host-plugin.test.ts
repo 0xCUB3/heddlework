@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
 import { createFlowRuntimePlugin } from '../src/flows/plugin.ts'
-import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from '../src/host/plugin.ts'
+import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, tailnetServeToken, workspaceHostToken } from '../src/host/plugin.ts'
 import { loadOrCreateHostToken, timingSafeEqualToken } from '../src/host/token.ts'
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createNoopSleepBackend } from '../src/power/backends.ts'
+import { createSleepPreventionPlugin } from '../src/power/plugin.ts'
 import {
   createAgentTransportPlugin,
   createSessionCatalogPlugin,
@@ -16,6 +18,7 @@ import {
 function mountCore(kernel: WorkbenchKernel, workspace: string): void {
   kernel.mount(createWorkbenchControllerPlugin(workspace))
   kernel.mount(createFlowRuntimePlugin({ path: false, tickIntervalMs: 60_000 }))
+  kernel.mount(createSleepPreventionPlugin({ preferencePath: false, backend: createNoopSleepBackend({ supported: false }) }))
   kernel.mount(createSessionCatalogPlugin({ scope: 'cwd' }))
   kernel.mount(localWorkspaceDiffPlugin)
   kernel.mount(createAgentTransportPlugin({ cwd: workspace, demo: true, piArgs: [] }))
@@ -27,6 +30,7 @@ describe('workspace host plugin', () => {
     mountCore(kernel, '/tmp/heddlework-host-plugin-off')
     kernel.mount(createWorkspaceHostPlugin({ enabled: false, workspacePath: '/tmp/heddlework-host-plugin-off' }))
     expect(kernel.get(workspaceHostToken)).toBeUndefined()
+    expect(kernel.get(tailnetServeToken).getSnapshot().enabled).toBe(false)
     await kernel.dispose()
   })
 

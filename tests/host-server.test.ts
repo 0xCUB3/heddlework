@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
 import { createFlowRuntimePlugin, flowRuntimeToken } from '../src/flows/plugin.ts'
 import { applyWorkbenchCommand, FrameAssembler, MAX_WS_FRAME_BYTES, utf8ByteLength, type ClientMessage, type ServerMessage } from '../src/protocol/index.ts'
-import { createWorkspaceHost, hostConnectUrl, phonePairingLink, type WorkspaceHost } from '../src/host/server.ts'
+import { createWorkspaceHost, hostConnectUrl, phonePairingLink, preferredPairingLink, type WorkspaceHost } from '../src/host/server.ts'
 import { generateHostToken } from '../src/host/token.ts'
 import type { WorkbenchController } from '../src/workbench/controller.ts'
 import {
@@ -158,4 +158,36 @@ describe('workspace host server', () => {
     await host.close()
     await kernel.dispose()
   }, 20_000)
+
+  it('puts extra tailnet HTTPS origins first on welcome and prefers them for pairing', async () => {
+    const { kernel, host } = await bootstrapExtra()
+    const client = new TestClient(wsUrl(host))
+    await client.open()
+    const welcome = await client.next((message) => message.kind === 'welcome')
+    if (welcome.kind !== 'welcome') throw new Error('expected welcome')
+    expect(welcome.hostUrls?.[0]).toBe('https://mac.tailnet.ts.net:8443')
+    expect(preferredPairingLink(host, 'https://mac.tailnet.ts.net:8443')).toBe(`https://mac.tailnet.ts.net:8443/?token=${encodeURIComponent(host.token)}`)
+    await host.close()
+    await kernel.dispose()
+  }, 10_000)
 })
+
+async function bootstrapExtra() {
+  const kernel = new WorkbenchKernel()
+  kernel.mount(createWorkbenchControllerPlugin(WORKSPACE))
+  kernel.mount(createFlowRuntimePlugin({ path: false, tickIntervalMs: 60_000 }))
+  kernel.mount(createSessionCatalogPlugin({ scope: 'cwd' }))
+  kernel.mount(localWorkspaceDiffPlugin)
+  kernel.mount(createAgentTransportPlugin({ cwd: WORKSPACE, demo: true, piArgs: [] }))
+  const controller = kernel.get(workbenchControllerToken)
+  await controller.start()
+  const host = createWorkspaceHost({
+    controller,
+    flows: kernel.get(flowRuntimeToken),
+    workspacePath: WORKSPACE,
+    port: 0,
+    token: generateHostToken(),
+    extraHostUrls: () => ['https://mac.tailnet.ts.net:8443'],
+  })
+  return { kernel, host }
+}

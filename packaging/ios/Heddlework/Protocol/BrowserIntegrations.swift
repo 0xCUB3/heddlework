@@ -22,3 +22,20 @@ struct BrowserIntegrationSnapshot: Decodable, Equatable {
     let task: BrowserIntegrationTask?
     let error: String?
 }
+
+struct SleepPreventionPolicy: Decodable, Equatable {
+    let when: String
+    let keepDisplayAwake: Bool
+}
+
+struct SleepPreventionSnapshot: Decodable, Equatable {
+    let policy: SleepPreventionPolicy
+    let status: String
+    let inhibiting: Bool
+    let displaySupported: Bool
+    let platform: String
+    let backend: String
+    let reason: String
+    let limits: String
+    let error: String?
+}

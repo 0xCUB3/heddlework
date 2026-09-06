@@ -9,7 +9,8 @@ import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { DraftWorkspaceChooser } from './workspace-chooser.tsx'
 import { FlowsView } from './flows-view.tsx'
-import { NotificationLedgerView } from './notifications.tsx'
+import { ComposerNotificationStack, NotificationLedgerView } from './notifications.tsx'
+import { watchDesktopAttention } from './os-notifications.ts'
 import { SettingsView } from './settings-view.tsx'
 import { WorkbenchSidebar } from './sidebar.tsx'
 import { SurfacePickerPanel } from './surface-picker.tsx'
@@ -17,7 +18,7 @@ import { Transcript } from './transcript.tsx'
 import type { WorkbenchUiRegistry } from './extensions.ts'
 import type { ToolPresenter } from './tool-presenters.ts'
 import { Icon } from './icons.tsx'
-import { colors } from './theme.ts'
+import { colors, nativeTheme } from './theme.ts'
 import { defaultThemeManager, type ThemeManager } from './theme-manager.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS } from './motion.ts'
 import { ResponsiveLayoutProvider, resolveResponsiveLayout } from './responsive.tsx'
@@ -30,8 +31,12 @@ import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
 import type { RemoteAccessService } from '../host/remote-access.ts'
+import type { TailnetServeService } from '../host/tailnet-serve.ts'
 import type { PluginHost } from '../plugins/host.ts'
+import type { SleepPreventionService } from '../power/service.ts'
 import type { UpdateService } from '../updates/service.ts'
+import { isLedgerNotice, toastNotices, unreadLedgerNotices } from '../workbench/notices.ts'
+import { DESKTOP_CLIENT_ID } from '../workbench/presence.ts'
 
 type Surface = 'chat' | 'flows' | 'settings'
 type RightPanel = 'notifications' | 'surfaces' | `surface:${string}`
@@ -52,8 +57,10 @@ export function WorkbenchApp({
   terminals,
   browsers,
   browserIntegrations,
+  sleepPrevention,
   themeManager = defaultThemeManager,
   remoteAccess,
+  tailnetServe,
   pluginHost,
   updates,
   onQuit,
@@ -63,10 +70,12 @@ export function WorkbenchApp({
   ui: WorkbenchUiRegistry
   flows?: FlowRuntime | undefined
   remoteAccess?: RemoteAccessService | undefined
+  tailnetServe?: TailnetServeService | undefined
   pluginHost?: PluginHost | undefined
   updates?: UpdateService | undefined
   terminals?: TerminalSessionService
   browserIntegrations?: BrowserIntegrationService
+  sleepPrevention?: SleepPreventionService
   browsers?: BrowserSessionService
   themeManager?: ThemeManager
   onQuit?(): void
@@ -97,8 +106,10 @@ export function WorkbenchApp({
   const diffOpen = rightPanel === surfacePanelId('diff')
   const notificationsOpen = rightPanel === 'notifications'
   const [lastSeenNoticeId, setLastSeenNoticeId] = useState(0)
-  const latestNoticeId = state.notices.at(-1)?.id ?? 0
-  const unreadCount = state.notices.filter((notice) => notice.id > lastSeenNoticeId).length
+  const latestNoticeId = state.notices.filter(isLedgerNotice).at(-1)?.id ?? 0
+  const unreadCount = unreadLedgerNotices(state.notices).filter((notice) => notice.id > lastSeenNoticeId).length
+  const toasts = toastNotices(state.notices)
+  const newestToastId = toasts.at(-1)?.id
   const draft = state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
   const setLeftSidebarVisibility = useCallback((open: boolean) => {
     if (!open) setLeftSidebarMounted(true)
@@ -136,8 +147,43 @@ export function WorkbenchApp({
   }, [bottomTerminalOpen])
 
   useEffect(() => {
-    if (notificationsOpen) setLastSeenNoticeId(latestNoticeId)
-  }, [latestNoticeId, notificationsOpen])
+    if (notificationsOpen) {
+      setLastSeenNoticeId(latestNoticeId)
+      controller.markNoticesRead()
+    }
+  }, [controller, latestNoticeId, notificationsOpen])
+
+  useEffect(() => {
+    const report = (visibility: 'focused' | 'hidden' = typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 'hidden' : 'focused') => {
+      controller.presence.upsert({
+        clientId: DESKTOP_CLIENT_ID,
+        surface: 'desktop',
+        visibility,
+        ...(state.session.sessionFile ? { sessionPath: state.session.sessionFile } : {}),
+      })
+    }
+    report()
+    if (typeof document === 'undefined') return undefined
+    const onVisibility = () => report()
+    const onFocus = () => report('focused')
+    const onBlur = () => report('hidden')
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [controller, state.session.sessionFile])
+
+  useEffect(() => watchDesktopAttention(controller), [controller])
+
+  useEffect(() => {
+    if (newestToastId === undefined) return undefined
+    const timer = setTimeout(() => controller.dismissNotice(newestToastId), 4_000)
+    return () => clearTimeout(timer)
+  }, [controller, newestToastId])
 
   useEffect(() => {
     if (rightPanel) {
@@ -298,7 +344,7 @@ export function WorkbenchApp({
   const displayedSurface = uiSnapshot.surfaces.find((candidate) => candidate.id === displayedSurfaceId)
   const SurfaceComponent = displayedSurface?.component
   const panel = displayedRightPanel === 'notifications'
-    ? <NotificationLedgerView state={state} fullscreen={panelFullscreenVisible} fullscreenProgress={panelFullscreenProgress} panelWidth={panelWidth} onClear={() => controller.clearNotices()} onClose={closeRightPanel} />
+    ? <NotificationLedgerView state={state} fullscreen={panelFullscreenVisible} fullscreenProgress={panelFullscreenProgress} panelWidth={panelWidth} onClear={() => controller.clearNotices()} onClose={closeRightPanel} onOpen={(id) => { void controller.activateNotice(id); closeRightPanel() }} />
     : displayedRightPanel === 'surfaces'
       ? <SurfacePickerPanel surfaces={uiSnapshot.surfaces} fullscreen={panelFullscreenVisible} fullscreenProgress={panelFullscreenProgress} fullscreenLocked={layout.panelOverlay} panelWidth={panelWidth} onToggleFullscreen={togglePanelFullscreen} onSelect={selectSurface} onClose={closeRightPanel} />
       : SurfaceComponent
@@ -348,7 +394,7 @@ export function WorkbenchApp({
     <TerminalServiceProvider service={terminals}>
     <BrowserServiceProvider service={browsers}>
     <ResponsiveLayoutProvider layout={layout}>
-      <div testId="workbench-root" style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, overflow: 'hidden' }}>
+      <div testId="workbench-root" style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: colors.background, color: colors.text, fontFamily: nativeTheme.fontSans, overflow: 'hidden' }}>
         <div
           testId="workbench-safe-area"
           style={{ position: 'absolute', top: windowInsets.effective.top, right: windowInsets.effective.right, bottom: windowInsets.effective.bottom, left: windowInsets.effective.left, display: 'flex', flexDirection: 'row', backgroundColor: colors.background, overflow: 'hidden' }}
@@ -357,7 +403,7 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView browserIntegrations={browserIntegrations} state={state} controller={controller} remoteAccess={remoteAccess} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
+            <SettingsView browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} state={state} controller={controller} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} onFontsChange={(fonts) => themeManager.setFonts(fonts)} onFontsReset={() => themeManager.resetFonts()} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>
@@ -366,11 +412,19 @@ export function WorkbenchApp({
                 </MotionDiv>
                 <MotionDiv initial={false} animate={{ flexGrow: conversationBodyFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} testId="conversation-body" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: conversationBodyFlexGrow, minHeight: 0, overflow: 'hidden' }}>
                   {draft ? (
-                    <DraftWorkspaceChooser state={state} controller={controller} />
+                    <>
+                      <DraftWorkspaceChooser state={state} controller={controller} />
+                      <ComposerNotificationStack notices={toasts} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => {
+                        for (const notice of toasts) controller.dismissNotice(notice.id)
+                      }} />
+                    </>
                   ) : (
                     <>
                       <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.navigateTree(entryId)} onDismissNotice={(id) => controller.dismissNotice(id)} onLoadEarlier={controller.loadEarlierMessages} />
                       <TranscriptFade />
+                      <ComposerNotificationStack notices={toasts} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => {
+                        for (const notice of toasts) controller.dismissNotice(notice.id)
+                      }} />
                       <Composer state={state} controller={controller} onPickerOpenChange={setComposerPickerOpen} />
                     </>
                   )}
@@ -454,6 +508,15 @@ export function WorkbenchApp({
               <div style={{ width: 15, height: 15, pointerEvents: 'none' }}><Icon name={leftSidebarOpen ? 'panelLeftClose' : 'panelLeft'} size={15} color={colors.textMuted} /></div>
             </MotionDiv>
           )}
+          {toasts.length > 0 && surface !== 'chat' ? (
+            <div testId="global-notification-stack" style={{ position: 'absolute', left: 0, right: 0, bottom: 28, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+              <div style={{ pointerEvents: 'auto', width: '100%', maxWidth: 768, paddingLeft: 20, paddingRight: 20 }}>
+                <ComposerNotificationStack notices={toasts} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => {
+                  for (const notice of toasts) controller.dismissNotice(notice.id)
+                }} />
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </ResponsiveLayoutProvider>

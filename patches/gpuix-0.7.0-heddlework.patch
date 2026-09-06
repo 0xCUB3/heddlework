@@ -1941,10 +1941,10 @@ index 0000000..1608070
 +}
 diff --git a/packages/native/src/custom_elements/browser_cef.rs b/packages/native/src/custom_elements/browser_cef.rs
 new file mode 100644
-index 0000000..c521fa4
+index 0000000..2670194
 --- /dev/null
 +++ b/packages/native/src/custom_elements/browser_cef.rs
-@@ -0,0 +1,2483 @@
+@@ -0,0 +1,2514 @@
 +use std::{
 +    cell::RefCell,
 +    collections::HashMap,
@@ -1952,7 +1952,7 @@ index 0000000..c521fa4
 +    fs,
 +    path::{Path, PathBuf},
 +    sync::{
-+        atomic::{AtomicBool, AtomicPtr, Ordering},
++        atomic::{AtomicBool, AtomicI64, AtomicPtr, Ordering},
 +        Arc, OnceLock,
 +    },
 +    thread,
@@ -1975,6 +1975,14 @@ index 0000000..c521fa4
 +
 +static HANDLING_SEND_EVENT: AtomicBool = AtomicBool::new(false);
 +static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
++// Chromium runs on the host's AppKit loop through CEF's external message pump. CEF tells us when it next wants
++// work via on_schedule_message_pump_work; we store that deadline (ms since PUMP_EPOCH, -1 = nothing pending)
++// and service it from the renderer tick. Letting CEF pump itself nests [NSApplication run] inside the tick, which
++// fires AppKit's gesture run-loop observers and cancels standard window button presses before their mouseUp.
++// Between CEF requests we still poll every PUMP_MAX_IDLE so timers CEF forgot to schedule cannot stall.
++static PUMP_DEADLINE_MS: AtomicI64 = AtomicI64::new(0);
++static PUMP_EPOCH: OnceLock<Instant> = OnceLock::new();
++const PUMP_MAX_IDLE: Duration = Duration::from_millis(30);
 +static DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
 +const MAX_BROWSER_CREATION_ATTEMPTS: u8 = 60;
 +const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -2043,11 +2051,30 @@ index 0000000..c521fa4
 +    PROCESS.with(|process| process.borrow().error.clone())
 +}
 +
++fn pump_now_ms() -> i64 {
++    PUMP_EPOCH.get_or_init(Instant::now).elapsed().as_millis() as i64
++}
++
++fn schedule_pump_work(delay_ms: i64) {
++    let due = pump_now_ms() + delay_ms.max(0);
++    // Keep the earliest pending deadline; a later request must not push earlier work out.
++    let _ = PUMP_DEADLINE_MS.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
++        (due < current).then_some(due)
++    });
++}
++
 +pub(super) fn do_message_loop_work() {
 +    let initialized = PROCESS.with(|process| process.borrow().initialized);
-+    if initialized {
-+        cef::do_message_loop_work();
++    if !initialized {
++        return;
 +    }
++    let now = pump_now_ms();
++    if now < PUMP_DEADLINE_MS.load(Ordering::Acquire) {
++        return;
++    }
++    // Clear before running: CEF may reschedule from inside do_message_loop_work.
++    PUMP_DEADLINE_MS.store(now + PUMP_MAX_IDLE.as_millis() as i64, Ordering::Release);
++    cef::do_message_loop_work();
 +}
 +
 +pub(super) fn shutdown() -> Result<(), String> {
@@ -2170,7 +2197,7 @@ index 0000000..c521fa4
 +            .map(cef_path_string)
 +            .transpose()?
 +            .unwrap_or_default(),
-+        external_message_pump: 0,
++        external_message_pump: 1,
 +        root_cache_path: cef_path_string(&root_cache_path)?,
 +        persist_session_cookies: 1,
 +        log_file: cef_path_string(&root_cache_path.join("chromium.log"))?,
@@ -2582,6 +2609,10 @@ index 0000000..c521fa4
 +                eprintln!("[gpuix-cef] context initialized");
 +            }
 +            self.ready.store(true, Ordering::Release);
++        }
++
++        fn on_schedule_message_pump_work(&self, delay_ms: i64) {
++            schedule_pump_work(delay_ms);
 +        }
 +    }
 +}
@@ -5858,10 +5889,54 @@ index eb719b8..055a5cd 100644
      fn disabled_initial_state_starts_at_the_target() {
          let now = Instant::now();
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
-index d66ab63..7e5ac58 100644
+index d66ab63..fcb7e2c 100644
 --- a/packages/native/src/renderer.rs
 +++ b/packages/native/src/renderer.rs
-@@ -1020,15 +1020,33 @@ impl GpuixRenderer {
+@@ -50,7 +50,7 @@ fn with_window_menu_actions(root: gpui::Div) -> gpui::Div {
+ 
+     root.on_action(|_: &MinimizeWindow, window, _cx| window.minimize_window())
+         .on_action(|_: &ZoomWindow, window, _cx| window.zoom_window())
+-        .on_action(|_: &CloseWindow, window, _cx| window.remove_window())
++        .on_action(|_: &CloseWindow, window, _cx| window.hide_window())
+ }
+ 
+ #[cfg(not(target_os = "macos"))]
+@@ -972,10 +972,19 @@ impl GpuixRenderer {
+         let startup_error = Rc::new(RefCell::new(None));
+         let opened_window_for_app = opened_window.clone();
+         let startup_error_for_app = startup_error.clone();
+-        // bun/node is not a .app. A Dock icon with no window cannot relaunch.
+-        // Last window close quits AppKit; tick() returns false and JS exits.
++        // Retain the host, PTYs, and React tree when the macOS window is closed.
+         let app = gpui::Application::with_platform(platform.clone())
+             .with_quit_mode(gpui::QuitMode::LastWindowClosed);
++        app.on_reopen(|cx| {
++            GPUI_WINDOW.with(|stored| {
++                if let Some(handle) = *stored.borrow() {
++                    let _ = handle.update(cx, |_, window, cx| {
++                        window.activate_window();
++                        cx.activate(true);
++                    });
++                }
++            });
++        });
+         let app_handle = app.run_embedded(move |cx: &mut gpui::App| {
+             crate::custom_elements::input::init(cx);
+             // After the other bindings: `set_menus` reads key equivalents out of
+@@ -989,7 +998,11 @@ impl GpuixRenderer {
+ 
+             match cx.open_window(
+                 to_gpui_window_options(&window_options, bounds),
+-                |_window, cx| {
++                |window, cx| {
++                    window.on_window_should_close(cx, |window, _cx| {
++                        window.hide_window();
++                        false
++                    });
+                     cx.new(|_| {
+                         GpuixView::new(tree.clone(), callback.clone(), title, selection.clone())
+                     })
+@@ -1020,15 +1033,33 @@ impl GpuixRenderer {
              Ok(window_handle) => window_handle,
              Err(error) => {
                  app_handle.update(|cx| cx.quit());
@@ -5896,15 +5971,25 @@ index d66ab63..7e5ac58 100644
          MAC_PLATFORM.with(|stored| {
              *stored.borrow_mut() = Some(platform);
          });
-@@ -1214,6 +1232,7 @@ impl GpuixRenderer {
+@@ -1214,12 +1245,17 @@ impl GpuixRenderer {
  
          #[cfg(target_os = "macos")]
          {
-+            crate::custom_elements::browser::do_message_loop_work();
++            // AppKit owns native window controls and their tracking loops. Drain its
++            // input before CEF can consume the same events in its external pump.
              let running = MAC_PLATFORM.with(|p| {
                  p.borrow()
                      .as_ref()
-@@ -1248,6 +1267,26 @@ impl GpuixRenderer {
+                     .map(|platform| platform.pump_events())
+                     .unwrap_or(false)
+             });
++            if running {
++                crate::custom_elements::browser::do_message_loop_work();
++            }
+             return Ok(running);
+         }
+ 
+@@ -1248,6 +1284,26 @@ impl GpuixRenderer {
          *self.initialized.lock().unwrap()
      }
  
@@ -5931,7 +6016,7 @@ index d66ab63..7e5ac58 100644
      /// Whether JavaScript must call tick() until it returns false.
      ///
      /// macOS: tick() pumps AppKit. Windows/Linux: tick() only reports whether
-@@ -1263,6 +1302,60 @@ impl GpuixRenderer {
+@@ -1263,6 +1319,60 @@ impl GpuixRenderer {
          ))
      }
  
@@ -5992,7 +6077,7 @@ index d66ab63..7e5ac58 100644
      /// The paintable size of the window in logical pixels, excluding any
      /// platform title bar. This used to answer a hardcoded 800x600, so anything
      /// that turned a mouse position into layout coordinates pointed at the
-@@ -2400,6 +2493,33 @@ impl WebGpuixRenderer {
+@@ -2400,6 +2510,33 @@ impl WebGpuixRenderer {
  
      pub fn tick(&self) {}
  
@@ -6026,7 +6111,7 @@ index d66ab63..7e5ac58 100644
      #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
      pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
          let window = web_sys::window()
-@@ -4355,7 +4475,14 @@ pub(crate) fn build_host_container(
+@@ -4355,7 +4492,14 @@ pub(crate) fn build_host_container(
              // Primary button only, like the DOM. Right and middle clicks go to
              // `onAuxClick`, and `onMouseDown` sees every button.
              "click" => {
@@ -6041,7 +6126,7 @@ index d66ab63..7e5ac58 100644
                      emit_event_full(&callback, id, "click", |p| {
                          let (x, y) = point_to_xy(click_event.position());
                          p.x = Some(x);
-@@ -4363,6 +4490,9 @@ pub(crate) fn build_host_container(
+@@ -4363,6 +4507,9 @@ pub(crate) fn build_host_container(
                          p.modifiers = Some(click_event.modifiers().into());
                          p.click_count = Some(click_event.click_count() as u32);
                          p.is_right_click = Some(click_event.is_right_click());
@@ -6051,7 +6136,7 @@ index d66ab63..7e5ac58 100644
                      });
                  });
              }
-@@ -4377,6 +4507,9 @@ pub(crate) fn build_host_container(
+@@ -4377,6 +4524,9 @@ pub(crate) fn build_host_container(
                          p.modifiers = Some(click_event.modifiers().into());
                          p.click_count = Some(click_event.click_count() as u32);
                          p.is_right_click = Some(click_event.is_right_click());
@@ -6061,7 +6146,7 @@ index d66ab63..7e5ac58 100644
                      });
                  });
              }
-@@ -4965,6 +5098,10 @@ pub(crate) fn point_to_xy(p: gpui::Point<gpui::Pixels>) -> (f64, f64) {
+@@ -4965,6 +5115,10 @@ pub(crate) fn point_to_xy(p: gpui::Point<gpui::Pixels>) -> (f64, f64) {
  }
  
  /// Convert GPUI MouseButton to our u32 encoding: 0=left, 1=middle, 2=right.
@@ -6072,7 +6157,7 @@ index d66ab63..7e5ac58 100644
  pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
      match button {
          gpui::MouseButton::Left => 0,
-@@ -5482,6 +5619,11 @@ pub struct WindowOptions {
+@@ -5482,6 +5636,11 @@ pub struct WindowOptions {
      /// `"opaque"` | `"transparent"` | `"blurred"`. `transparent: true` is the
      /// same as `"transparent"` when this is unset.
      pub window_background: Option<String>,
@@ -6084,7 +6169,7 @@ index d66ab63..7e5ac58 100644
      pub traffic_light_x: Option<f64>,
      pub traffic_light_y: Option<f64>,
      /// Give the window key focus when it opens. `false` opens it behind the
-@@ -5506,6 +5648,8 @@ impl Default for WindowOptions {
+@@ -5506,6 +5665,8 @@ impl Default for WindowOptions {
              transparent: Some(false),
              titlebar_transparent: Some(false),
              window_background: None,
@@ -6093,7 +6178,7 @@ index d66ab63..7e5ac58 100644
              traffic_light_x: None,
              traffic_light_y: None,
              focus: Some(true),
-@@ -5945,6 +6089,14 @@ mod window_options_tests {
+@@ -5945,6 +6106,14 @@ mod window_options_tests {
          assert!(gpui_options.focus);
      }
  
@@ -7141,10 +7226,19 @@ index ff7e6c2980..82c7d64167 100644
              events.borrow().as_slice(),
              ["down", "other-move", "other-up"]
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 64a84df390..bc366c0802 100644
+index 64a84df..9819af7 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -1339,6 +1339,18 @@ pub trait PlatformAtlas {
+@@ -845,6 +845,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+         answers: &[PromptButton],
+     ) -> Option<oneshot::Receiver<usize>>;
+     fn activate(&self);
++    /// Hide a window without destroying its retained state.
++    fn hide(&self) {}
+     /// Requests that the operating system draw attention to this window.
+     fn request_attention(&self) {}
+     fn is_active(&self) -> bool;
+@@ -1339,6 +1341,18 @@ pub trait PlatformAtlas {
          key: &AtlasKey,
          build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
      ) -> Result<Option<AtlasTile>>;
@@ -7164,7 +7258,7 @@ index 64a84df390..bc366c0802 100644
  
      #[cfg(any(test, feature = "test-support"))]
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 25f98cde6b..1adc429bb1 100644
+index 25f98cd..a91f1c8 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -2463,6 +2463,13 @@ impl Window {
@@ -7278,6 +7372,18 @@ index 25f98cde6b..1adc429bb1 100644
      /// Removes an image from the sprite atlas.
      pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
          for frame_index in 0..data.frame_count() {
+@@ -5804,6 +5878,11 @@ impl Window {
+     }
+ 
+     /// Minimize the current window at the platform level.
++    pub fn hide_window(&self) {
++        self.platform_window.hide();
++    }
++
++    /// Minimize the window.
+     pub fn minimize_window(&self) {
+         self.platform_window.minimize();
+     }
 diff --git a/crates/gpui_apple/src/metal_atlas.rs b/crates/gpui_apple/src/metal_atlas.rs
 index 9cfd445ba8..7ff1170b12 100644
 --- a/crates/gpui_apple/src/metal_atlas.rs
@@ -7563,7 +7669,7 @@ index 9b6f5f2fd3..1cb11209cc 100644
  }
  
 diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
-index faf27e036b..e1126e920a 100644
+index faf27e0..1ad4c3f 100644
 --- a/crates/gpui_macos/src/window.rs
 +++ b/crates/gpui_macos/src/window.rs
 @@ -135,6 +135,10 @@ unsafe fn build_classes() {
@@ -7577,7 +7683,26 @@ index faf27e036b..e1126e920a 100644
  
              decl.add_method(
                  sel!(performKeyEquivalent:),
-@@ -2546,11 +2550,25 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent:
+@@ -1604,6 +1608,18 @@ impl PlatformWindow for MacWindow {
+             .detach();
+     }
+ 
++    fn hide(&self) {
++        let lock = self.0.lock();
++        let window = lock.native_window;
++        let closed = lock.closed.clone();
++        let executor = lock.foreground_executor.clone();
++        executor.spawn(async move {
++            if !closed.load(Ordering::Acquire) {
++                unsafe { let _: () = msg_send![window, orderOut: nil]; }
++            }
++        }).detach();
++    }
++
+     fn request_attention(&self) {
+         if self.is_active() {
+             return;
+@@ -2546,11 +2562,25 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent:
  }
  
  extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {

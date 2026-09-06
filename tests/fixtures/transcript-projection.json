@@ -1,0 +1,660 @@
+{
+  "cases": [
+    {
+      "name": "collapsed-work",
+      "isStreaming": false,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "Plan"
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "complete",
+            "isError": false
+          }
+        },
+        {
+          "id": "edit",
+          "kind": "tool",
+          "tool": {
+            "id": "edit",
+            "name": "edit",
+            "args": {
+              "path": "src/a.ts"
+            },
+            "status": "complete",
+            "isError": false
+          }
+        },
+        {
+          "id": "answer",
+          "kind": "assistant",
+          "text": "Done"
+        }
+      ],
+      "expected": {
+        "name": "collapsed-work",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace",
+          "assistant"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-edit",
+          "answer"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header",
+          "trace-files",
+          "timeline-item"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-edit",
+          "work-trace-edit:files",
+          "answer"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "live-boundary",
+      "isStreaming": true,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "live-thinking",
+          "kind": "thinking",
+          "text": "Planning",
+          "streaming": true
+        },
+        {
+          "id": "live-tool",
+          "kind": "tool",
+          "tool": {
+            "id": "live-tool",
+            "name": "read",
+            "status": "running",
+            "isError": false
+          }
+        }
+      ],
+      "expected": {
+        "name": "live-boundary",
+        "isStreaming": true,
+        "groupedKinds": [
+          "user",
+          "work-trace"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-after-user"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-after-user"
+        ],
+        "liveWorkTraceId": "work-trace-after-user",
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "fold-intermediate-assistants",
+      "isStreaming": false,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "first",
+          "kind": "assistant",
+          "text": "I will inspect the repo."
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "complete",
+            "isError": false
+          }
+        },
+        {
+          "id": "second",
+          "kind": "assistant",
+          "text": "There is a session-switch path."
+        },
+        {
+          "id": "grep",
+          "kind": "tool",
+          "tool": {
+            "id": "grep",
+            "name": "grep",
+            "status": "complete",
+            "isError": false
+          }
+        },
+        {
+          "id": "final",
+          "kind": "assistant",
+          "text": "Here is the answer."
+        }
+      ],
+      "expected": {
+        "name": "fold-intermediate-assistants",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace",
+          "assistant"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-grep",
+          "final"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header",
+          "timeline-item"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-grep",
+          "final"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "compaction-standalone",
+      "isStreaming": false,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "Plan"
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "complete",
+            "isError": false
+          }
+        },
+        {
+          "id": "compact",
+          "kind": "compaction",
+          "text": "Summarized earlier work.",
+          "tokensBefore": 150000
+        },
+        {
+          "id": "grep",
+          "kind": "tool",
+          "tool": {
+            "id": "grep",
+            "name": "grep",
+            "status": "complete",
+            "isError": false
+          }
+        },
+        {
+          "id": "answer",
+          "kind": "assistant",
+          "text": "Done"
+        }
+      ],
+      "expected": {
+        "name": "compaction-standalone",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace",
+          "work-trace",
+          "work-trace",
+          "assistant"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-read",
+          "work-trace-compact",
+          "work-trace-grep",
+          "answer"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header",
+          "trace-header",
+          "trace-header",
+          "timeline-item"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-read",
+          "work-trace-compact",
+          "work-trace-grep",
+          "answer"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked",
+          "Compacted from 150,000 tokens",
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "notices-grouped",
+      "isStreaming": false,
+      "expanded": true,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "Plan"
+        },
+        {
+          "id": "notice-1",
+          "kind": "notice",
+          "notice": {
+            "id": 1,
+            "kind": "info",
+            "message": "One",
+            "createdAt": 1000
+          }
+        },
+        {
+          "id": "notice-2",
+          "kind": "notice",
+          "notice": {
+            "id": 2,
+            "kind": "info",
+            "message": "Two",
+            "createdAt": 2000
+          }
+        },
+        {
+          "id": "notice-3",
+          "kind": "notice",
+          "notice": {
+            "id": 3,
+            "kind": "info",
+            "message": "Three",
+            "createdAt": 8000
+          }
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "complete",
+            "isError": false
+          }
+        }
+      ],
+      "expected": {
+        "name": "notices-grouped",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-read"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header",
+          "trace-entry",
+          "trace-notices",
+          "trace-notices",
+          "trace-entry"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-read",
+          "work-trace-read:entry:thinking",
+          "work-trace-read:notices:notice-1",
+          "work-trace-read:notices:notice-3",
+          "work-trace-read:entry:read"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "tool-only",
+      "isStreaming": false,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "complete",
+            "isError": false
+          }
+        }
+      ],
+      "expected": {
+        "name": "tool-only",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-read"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-read"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "thinking-only",
+      "isStreaming": false,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "Plan"
+        },
+        {
+          "id": "answer",
+          "kind": "assistant",
+          "text": "Done"
+        }
+      ],
+      "expected": {
+        "name": "thinking-only",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace",
+          "assistant"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-thinking",
+          "answer"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header",
+          "timeline-item"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-thinking",
+          "answer"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "error-tool",
+      "isStreaming": false,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "complete",
+            "isError": true
+          }
+        },
+        {
+          "id": "answer",
+          "kind": "assistant",
+          "text": "The read failed."
+        }
+      ],
+      "expected": {
+        "name": "error-tool",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace",
+          "assistant"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-read",
+          "answer"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header",
+          "timeline-item"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-read",
+          "answer"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "abort-status",
+      "isStreaming": false,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "complete",
+            "isError": false
+          }
+        },
+        {
+          "id": "abort",
+          "kind": "status",
+          "text": "Interrupted",
+          "tone": "error"
+        }
+      ],
+      "expected": {
+        "name": "abort-status",
+        "isStreaming": false,
+        "groupedKinds": [
+          "user",
+          "work-trace",
+          "status"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-read",
+          "abort"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header",
+          "timeline-item"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-read",
+          "abort"
+        ],
+        "liveWorkTraceId": null,
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    },
+    {
+      "name": "stream-handoff",
+      "isStreaming": true,
+      "expanded": false,
+      "timeline": [
+        {
+          "id": "user",
+          "kind": "user",
+          "text": "Prompt",
+          "images": []
+        },
+        {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "Plan",
+          "streaming": true
+        },
+        {
+          "id": "read",
+          "kind": "tool",
+          "tool": {
+            "id": "read",
+            "name": "read",
+            "status": "running",
+            "isError": false
+          }
+        }
+      ],
+      "expected": {
+        "name": "stream-handoff",
+        "isStreaming": true,
+        "groupedKinds": [
+          "user",
+          "work-trace"
+        ],
+        "groupedIds": [
+          "user",
+          "work-trace-after-user"
+        ],
+        "rowKinds": [
+          "timeline-item",
+          "trace-header"
+        ],
+        "rowIds": [
+          "user",
+          "work-trace-after-user"
+        ],
+        "liveWorkTraceId": "work-trace-after-user",
+        "pendingWorkTraceId": null,
+        "labels": [
+          "Worked"
+        ]
+      }
+    }
+  ]
+}

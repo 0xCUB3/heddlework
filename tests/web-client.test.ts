@@ -61,10 +61,15 @@ describe('web workspace client', () => {
     await first.host.close()
     await waitFor(client, () => client.getSnapshot().status === 'connecting' || client.getSnapshot().status === 'closed')
 
+    // A send during the outage records an error; the next welcome must clear it so the banner does not outlive the outage.
+    await client.sendAndReport({ type: 'setEditorText', text: 'offline' })
+    expect(client.getSnapshot().lastError).toBe('Not connected')
+
     const second = await bootstrap()
     client.connect(second.host.url, second.host.token)
     await waitFor(client, () => client.getSnapshot().status === 'open')
     expect(client.getSnapshot().state).toBeDefined()
+    expect(client.getSnapshot().lastError).toBeUndefined()
 
     client.disconnect()
     await second.host.close()

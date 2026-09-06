@@ -12,7 +12,7 @@ final class UIContractTests: XCTestCase {
         XCTAssertEqual(contract.surfaces.map(\.id), ["chat", "flows", "settings"])
         XCTAssertEqual(
             contract.settings.map(\.id),
-            ["runtime", "interface", "remote-access", "updates", "plugins", "terminal", "browser", "about"]
+            ["runtime", "power", "interface", "remote-access", "updates", "plugins", "terminal", "browser", "about"]
         )
         XCTAssertEqual(UIContract.fallback.settings.map(\.id), contract.settings.map(\.id))
     }

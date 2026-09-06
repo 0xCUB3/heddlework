@@ -7,6 +7,7 @@ import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScrollEvent } from './primitives.tsx'
+import { SIDEBAR_VIRTUAL_WINDOW_SIZE, useNativeVirtualWindow, usePrependCount } from './virtual-list.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
 import { colors } from './theme.ts'
 import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
@@ -15,6 +16,12 @@ export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from './sidebar-sess
 
 const SIDEBAR_WIDTH = 256
 const ALL_PROJECTS_SCOPE = '__all-projects__'
+
+type SidebarListRow =
+  | { id: string; kind: 'session'; session: PiSessionSummary; lifecycle: 'active' | 'snoozed' | 'settled' }
+  | { id: 'snoozed-label'; kind: 'snoozed-label'; count: number }
+  | { id: 'settled-header'; kind: 'settled-header'; count: number; expanded: boolean }
+  | { id: 'empty'; kind: 'empty'; searching: boolean }
 
 export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   width = SIDEBAR_WIDTH,
@@ -149,6 +156,21 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     )
   }
 
+  const listRows = useMemo<SidebarListRow[]>(() => {
+    const next: SidebarListRow[] = activeSessions.map((session) => ({ id: session.path, kind: 'session', session, lifecycle: 'active' as const }))
+    if (snoozedSessions.length > 0) next.push({ id: 'snoozed-label', kind: 'snoozed-label', count: snoozedSessions.length })
+    for (const session of snoozedSessions) next.push({ id: session.path, kind: 'session', session, lifecycle: 'snoozed' })
+    if (settledSessions.length > 0) next.push({ id: 'settled-header', kind: 'settled-header', count: settledSessions.length, expanded: settledExpanded })
+    for (const session of renderedSettledSessions) next.push({ id: session.path, kind: 'session', session, lifecycle: 'settled' })
+    if (visibleSessions.length === 0 && !state.sessionsLoading) next.push({ id: 'empty', kind: 'empty', searching: Boolean(normalizedSearch) })
+    return next
+  }, [activeSessions, normalizedSearch, renderedSettledSessions, settledExpanded, settledSessions, snoozedSessions, state.sessionsLoading, visibleSessions.length])
+  const listIds = useMemo(() => listRows.map((row) => row.id), [listRows])
+  const prepended = usePrependCount(listIds, `${projectScope}:${normalizedSearch}`)
+  const virtualWindow = useNativeVirtualWindow(listRows.length, `${projectScope}:${normalizedSearch}`, 0, SIDEBAR_VIRTUAL_WINDOW_SIZE, { prepended })
+  const windowed = listRows.length > SIDEBAR_VIRTUAL_WINDOW_SIZE
+  const visibleListRows = windowed ? listRows.slice(virtualWindow.windowStart, virtualWindow.windowEnd) : listRows
+
   const handleSessionScroll = (event: NativeScrollEvent) => {
     const offset = renderer.getScrollOffset?.(event.elementId)?.[1] ?? sessionLastOffset.current
     const downwardDistance = Math.max(0, sessionLastOffset.current - offset)
@@ -204,19 +226,32 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         </div>
       </div>
 
-      <div testId="sidebar-session-region" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', opacity: state.sessionsLoading || state.connection === 'connecting' ? 0.55 : 1 }}>
-      <NativeVirtualList testId="sidebar-session-list" elementRef={sessionListRef} alignment="top" estimatedItemHeight={78} overdraw={280} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
-        {activeSessions.map((session) => renderSession(session, 'active'))}
-        {snoozedSessions.length > 0 && <SectionLabel label={`Snoozed (${snoozedSessions.length})`} tone="accent" />}
-        {snoozedSessions.map((session) => renderSession(session, 'snoozed'))}
-        {settledSessions.length > 0 && (
-          <SettledShelfHeader count={settledSessions.length} expanded={settledExpanded} onToggle={() => setSettledExpanded((value) => !value)} />
-        )}
-        {renderedSettledSessions.map((session) => renderSession(session, 'settled'))}
-        {visibleSessions.length === 0 && !state.sessionsLoading && (
-          <div style={{ paddingTop: 22, paddingLeft: 78 }}>
-            <text style={{ color: colors.textFaint, fontSize: 11 }}>{normalizedSearch ? 'No threads found' : 'No threads in this project'}</text>
-          </div>
+      <div testId="sidebar-session-region" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+      <NativeVirtualList testId="sidebar-session-list" elementRef={sessionListRef} alignment="top" estimatedItemHeight={78} overdraw={280} {...(windowed ? { itemCount: listRows.length, windowStart: virtualWindow.windowStart, onVisibleRange: virtualWindow.onVisibleRange } : {})} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
+        {windowed ? visibleListRows.map((row) => {
+          if (row.kind === 'session') return renderSession(row.session, row.lifecycle)
+          if (row.kind === 'snoozed-label') return <SectionLabel key={row.id} label={`Snoozed (${row.count})`} tone="accent" />
+          if (row.kind === 'settled-header') return <SettledShelfHeader key={row.id} count={row.count} expanded={row.expanded} onToggle={() => setSettledExpanded((value) => !value)} />
+          return (
+            <div key={row.id} style={{ paddingTop: 22, paddingLeft: 78 }}>
+              <text style={{ color: colors.textFaint, fontSize: 11 }}>{row.searching ? 'No threads found' : 'No threads in this project'}</text>
+            </div>
+          )
+        }) : (
+          <>
+            {activeSessions.map((session) => renderSession(session, 'active'))}
+            {snoozedSessions.length > 0 && <SectionLabel label={`Snoozed (${snoozedSessions.length})`} tone="accent" />}
+            {snoozedSessions.map((session) => renderSession(session, 'snoozed'))}
+            {settledSessions.length > 0 && (
+              <SettledShelfHeader count={settledSessions.length} expanded={settledExpanded} onToggle={() => setSettledExpanded((value) => !value)} />
+            )}
+            {renderedSettledSessions.map((session) => renderSession(session, 'settled'))}
+            {visibleSessions.length === 0 && !state.sessionsLoading && (
+              <div style={{ paddingTop: 22, paddingLeft: 78 }}>
+                <text style={{ color: colors.textFaint, fontSize: 11 }}>{normalizedSearch ? 'No threads found' : 'No threads in this project'}</text>
+              </div>
+            )}
+          </>
         )}
       </NativeVirtualList>
       </div>

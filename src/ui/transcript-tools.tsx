@@ -7,6 +7,7 @@ import { Icon, type IconName } from './icons.tsx'
 import { TranscriptInlineAction } from './transcript-actions.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { headlineArg } from './call-preview.ts'
+import { AnsiText } from './ansi-text.tsx'
 import {
   resolveToolPresentation,
   type FabricAuditPresentation,
@@ -87,7 +88,7 @@ export function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { it
         onKeyDown={(event) => { if (event.key === 'enter') toggleExpanded() }}
       >
         <div style={{ width: presentation.fabric ? 12 : 22, height: presentation.fabric ? 16 : 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Icon name={tool.isError ? 'x' : icon} size={presentation.fabric ? 11 : 15} color={tool.isError ? colors.error : colors.textFaint} />
+          <Icon name={tool.isError ? 'x' : icon} size={presentation.fabric ? 11 : 15} color={tool.isError ? colors.error : tool.status === 'complete' ? colors.success : colors.info} />
         </div>
         <text testId="tool-summary-label" style={{ color: colors.textMuted, fontSize: 10, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: nativeTheme.fontMono, hover: { color: colors.text } }}>{summary}</text>
         <div style={{ flexGrow: 1 }} />
@@ -107,7 +108,7 @@ export function ToolRow({ item, presenters, expanded, onToggle, onRevert }: { it
           {content ? (
             presentation.kind === 'diff'
               ? <diff patch={content} wordDiff maxLines={500} theme={toolCodeTheme()} style={{ width: '100%', fontFamily: nativeTheme.fontMono }} />
-              : (
+              : content.includes('\u001b') ? <AnsiText text={content} /> : (
                 <code
                   code={content}
                   theme={toolCodeTheme()}

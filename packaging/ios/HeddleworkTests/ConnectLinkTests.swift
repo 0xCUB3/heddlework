@@ -25,6 +25,19 @@ final class ConnectLinkTests: XCTestCase {
         XCTAssertNil(ConnectLink(url: URL(string: "http://192.168.1.20:47311/")!))
     }
 
+    func testParsesTailnetHttpsLink() throws {
+        let link = try XCTUnwrap(ConnectLink(url: URL(string: "https://macbook-pro-m4.tail8b9c7.ts.net:8443/?token=abc123")!))
+        XCTAssertEqual(link.hostURL.absoluteString, "https://macbook-pro-m4.tail8b9c7.ts.net:8443")
+        XCTAssertEqual(link.token, "abc123")
+        let socket = try XCTUnwrap(link.webSocketURL)
+        XCTAssertEqual(socket.scheme, "wss")
+        XCTAssertEqual(socket.port, 8443)
+        XCTAssertEqual(socket.path, "/ws")
+        let def = try XCTUnwrap(ConnectLink(url: URL(string: "https://macbook-pro-m4.tail8b9c7.ts.net/?token=abc123")!))
+        XCTAssertEqual(def.hostURL.absoluteString, "https://macbook-pro-m4.tail8b9c7.ts.net")
+        XCTAssertNil(def.hostURL.port)
+    }
+
     func testWebSocketURLCarriesHostAndToken() throws {
         let scanned = try XCTUnwrap(ConnectLink(url: URL(string: "http://100.101.102.103:4817/?token=abcdefghijklmnopqrstuvwxyz0123456789-_")!))
         XCTAssertEqual(scanned.hostURL.host, "100.101.102.103")

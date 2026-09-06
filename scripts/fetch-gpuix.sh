@@ -6,7 +6,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/vendor/gpuix"
 repo="${GPUIX_RELEASE_REPO:-0xCUB3/heddlework}"
-build_version="${GPUIX_BUILD_VERSION:-0.7.0-heddlework.1}"
+build_version="${GPUIX_BUILD_VERSION:-0.7.0-heddlework.3}"
 tag="gpuix-$build_version"
 base="https://github.com/$repo/releases/download/$tag"
 

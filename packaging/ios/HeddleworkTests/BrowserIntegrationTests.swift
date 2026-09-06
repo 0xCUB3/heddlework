@@ -19,4 +19,17 @@ final class BrowserIntegrationTests: XCTestCase {
         XCTAssertEqual(payload["type"], "approveBrowserTask")
         XCTAssertEqual(payload["id"], "one")
     }
+
+    func testDecodesHostSleepPreventionAndPolicyCommand() throws {
+        let data = Data(#"{"kind":"sleepPrevention","sleepPrevention":{"policy":{"when":"whileWorking","keepDisplayAwake":false},"status":"active","inhibiting":true,"displaySupported":true,"platform":"darwin","backend":"caffeinate","reason":"This computer will not idle-sleep. The display may still sleep.","limits":"Prevents idle sleep via caffeinate.","error":null}}"#.utf8)
+        let envelope = try JSONDecoder().decode(ServerEnvelope.self, from: data)
+        XCTAssertEqual(envelope.sleepPrevention?.policy.when, "whileWorking")
+        XCTAssertEqual(envelope.sleepPrevention?.status, "active")
+        XCTAssertEqual(envelope.sleepPrevention?.backend, "caffeinate")
+        XCTAssertEqual(envelope.kind, "sleepPrevention")
+        let command = CommandFactory.setSleepPreventionPolicy(when: "whileAppOpen", keepDisplayAwake: true)
+        XCTAssertEqual(command["type"], .string("setSleepPreventionPolicy"))
+        XCTAssertEqual(command["when"], .string("whileAppOpen"))
+        XCTAssertEqual(command["keepDisplayAwake"], .bool(true))
+    }
 }

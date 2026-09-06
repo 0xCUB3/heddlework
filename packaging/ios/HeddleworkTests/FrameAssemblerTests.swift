@@ -52,7 +52,7 @@ final class FrameAssemblerTests: XCTestCase {
         let decoded = expectation(description: "decoded welcome")
         var onMain = true
         await engine.setPublisher { event in
-            if case .welcome(_, let snapshot, _, _, _, let protocolVersion) = event {
+            if case .welcome(_, let snapshot, _, _, _, _, _, let protocolVersion) = event {
                 onMain = Thread.isMainThread
                 XCTAssertEqual(protocolVersion, 1)
                 XCTAssertEqual(snapshot.messages?.count, 40)

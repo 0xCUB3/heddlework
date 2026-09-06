@@ -2,13 +2,14 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { applyResolvedTheme, type ResolvedTheme } from './theme.ts'
+import { applyResolvedTheme, DEFAULT_INTERFACE_FONTS, type InterfaceFonts, type ResolvedTheme } from './theme.ts'
 
 export type ThemeMode = 'system' | ResolvedTheme
 
 export interface ThemeSnapshot {
   mode: ThemeMode
   resolved: ResolvedTheme
+  fonts: InterfaceFonts
 }
 
 interface ThemeManagerOptions {
@@ -30,8 +31,8 @@ export class ThemeManager {
     this.#resolveSystemTheme = options.resolveSystemTheme ?? detectSystemTheme
     this.#pollIntervalMs = options.pollIntervalMs ?? 2_000
     const mode = readThemeMode(this.#preferencePath) ?? 'system'
-    this.#snapshot = { mode, resolved: mode === 'system' ? this.#resolveSystemTheme() : mode }
-    applyResolvedTheme(this.#snapshot.resolved)
+    this.#snapshot = { mode, resolved: mode === 'system' ? this.#resolveSystemTheme() : mode, fonts: readInterfaceFonts(this.#preferencePath) }
+    applyResolvedTheme(this.#snapshot.resolved, this.#snapshot.fonts)
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -44,10 +45,23 @@ export class ThemeManager {
   setMode(mode: ThemeMode): void {
     const resolved = mode === 'system' ? this.#resolveSystemTheme() : mode
     if (mode === this.#snapshot.mode && resolved === this.#snapshot.resolved) return
-    this.#snapshot = { mode, resolved }
-    applyResolvedTheme(resolved)
-    writeThemeMode(this.#preferencePath, mode)
+    this.#snapshot = { ...this.#snapshot, mode, resolved }
+    applyResolvedTheme(resolved, this.#snapshot.fonts)
+    writePreferences(this.#preferencePath, { themeMode: mode })
     this.#emit()
+  }
+
+  setFonts(patch: Partial<InterfaceFonts>): void {
+    const fonts = resolveInterfaceFonts({ ...this.#snapshot.fonts, ...patch })
+    if (fonts.fontSans === this.#snapshot.fonts.fontSans && fonts.fontMono === this.#snapshot.fonts.fontMono) return
+    this.#snapshot = { ...this.#snapshot, fonts }
+    applyResolvedTheme(this.#snapshot.resolved, fonts)
+    writePreferences(this.#preferencePath, { interfaceFonts: fonts })
+    this.#emit()
+  }
+
+  resetFonts(): void {
+    this.setFonts(DEFAULT_INTERFACE_FONTS)
   }
 
   start(): void {
@@ -60,8 +74,8 @@ export class ThemeManager {
     if (this.#snapshot.mode !== 'system') return
     const resolved = this.#resolveSystemTheme()
     if (resolved === this.#snapshot.resolved) return
-    this.#snapshot = { mode: 'system', resolved }
-    applyResolvedTheme(resolved)
+    this.#snapshot = { ...this.#snapshot, resolved }
+    applyResolvedTheme(resolved, this.#snapshot.fonts)
     this.#emit()
   }
 
@@ -120,11 +134,39 @@ function readThemeMode(path: string | false): ThemeMode | undefined {
   }
 }
 
-function writeThemeMode(path: string | false, mode: ThemeMode): void {
+export function resolveInterfaceFonts(value: unknown): InterfaceFonts {
+  const input = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const family = (key: keyof InterfaceFonts) => {
+    const raw = input[key]
+    return typeof raw === 'string'
+      ? raw.trim().replace(/\s+/gu, ' ').slice(0, 160) || DEFAULT_INTERFACE_FONTS[key]
+      : DEFAULT_INTERFACE_FONTS[key]
+  }
+  return { fontSans: family('fontSans'), fontMono: family('fontMono') }
+}
+
+function readInterfaceFonts(path: string | false): InterfaceFonts {
+  if (path) {
+    try {
+      return resolveInterfaceFonts(JSON.parse(readFileSync(path, 'utf8'))?.interfaceFonts)
+    } catch {
+      // Invalid or missing preferences use the shipped font families.
+    }
+  }
+  return DEFAULT_INTERFACE_FONTS
+}
+
+function writePreferences(path: string | false, patch: Record<string, unknown>): void {
   if (!path) return
   try {
+    let existing: Record<string, unknown> = {}
+    try {
+      existing = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    } catch {
+      existing = {}
+    }
     mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, `${JSON.stringify({ themeMode: mode }, null, 2)}\n`, 'utf8')
+    writeFileSync(path, `${JSON.stringify({ ...existing, ...patch }, null, 2)}\n`, 'utf8')
   } catch {
     // Theme changes still apply for this run when the preference cannot be persisted.
   }

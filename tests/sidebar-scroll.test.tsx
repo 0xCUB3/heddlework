@@ -5,6 +5,7 @@ import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import type { PiSessionSummary } from '../src/pi/session-catalog.ts'
 import { WorkbenchSidebar } from '../src/ui/sidebar.tsx'
+import { SIDEBAR_VIRTUAL_WINDOW_SIZE } from '../src/ui/virtual-window.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 import { createInitialState } from '../src/workbench/state.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
@@ -44,7 +45,8 @@ describeNative('sidebar initial session position', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       const automation = await connectTest(root.renderer)
-      expect(root.renderer.findByTestId('sidebar-session-region')?.style.opacity).toBe(0.55)
+      // Loading must not dim the list: native sidebars stay at full opacity while their contents settle.
+      expect(root.renderer.findByTestId('sidebar-session-region')?.style.opacity ?? 1).toBe(1)
       const list = root.renderer.findByTestId('sidebar-session-list')!
       root.renderer.scrollTo(list.id, 0, -1_000)
       expect(root.renderer.getScrollOffset(list.id)?.[1] ?? 0).toBeLessThan(-100)
@@ -52,7 +54,7 @@ describeNative('sidebar initial session position', () => {
       render({ ...createInitialState('/tmp/project'), sessions, sessionsLoading: false })
       await Bun.sleep(0)
       root.renderer.flush()
-      expect(root.renderer.findByTestId('sidebar-session-region')?.style.opacity).toBe(1)
+      expect(root.renderer.findByTestId('sidebar-session-region')?.style.opacity ?? 1).toBe(1)
       expect(Math.abs(root.renderer.getScrollOffset(list.id)?.[1] ?? 0)).toBeLessThanOrEqual(0.01)
       await Bun.sleep(0)
       root.renderer.flush()
@@ -122,6 +124,50 @@ describeNative('sidebar initial session position', () => {
       await Bun.sleep(0)
       root.renderer.flush()
       expect(await automation.getByTestId('sidebar-settled-row').count()).toBe(0)
+      await automation.close()
+    } finally {
+      root.unmount()
+      await controller.dispose()
+    }
+  })
+
+  it('windows a 400-thread sidebar instead of mounting every row', async () => {
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/project', testControllerDependencies())
+    const many = Array.from({ length: 400 }, (_, index): PiSessionSummary => ({
+      id: `many-${index}`,
+      path: `/tmp/many-${index}.jsonl`,
+      cwd: '/tmp/project',
+      title: `Thread ${index}`,
+      firstMessage: `Prompt ${index}`,
+      messageCount: 2,
+      createdAt: now - index * 1_000,
+      modifiedAt: now - index * 1_000,
+    }))
+    const root = createTestRoot()
+    try {
+      root.render(
+        <WorkbenchSidebar
+          state={{ ...createInitialState('/tmp/project'), sessions: many }}
+          controller={controller}
+          settingsActive={false}
+          notificationsActive={false}
+          unreadCount={0}
+          onSelectSession={() => undefined}
+          onSettings={() => undefined}
+          onNotifications={() => undefined}
+        />,
+      )
+      const automation = await connectTest(root.renderer)
+      const list = root.renderer.findByTestId('sidebar-session-list')!
+      expect(Number(list.customProps?.itemCount ?? 0)).toBe(400)
+      expect(list.children.length).toBeLessThanOrEqual(SIDEBAR_VIRTUAL_WINDOW_SIZE + 4)
+      expect(root.renderer.getPaintedText()).toContain('Thread 0')
+      root.renderer.scrollToItem(list.id, 399)
+      root.renderer.flush()
+      await Bun.sleep(25)
+      root.renderer.flush()
+      expect(list.children.length).toBeLessThanOrEqual(SIDEBAR_VIRTUAL_WINDOW_SIZE + 4)
+      expect(await automation.getByText('Thread 399').count()).toBe(1)
       await automation.close()
     } finally {
       root.unmount()

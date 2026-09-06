@@ -30,11 +30,15 @@ struct ServerEnvelope: Decodable {
     let flows: FlowRuntimeSnapshot?
     let hostUrls: [String]?
     let browserIntegrations: BrowserIntegrationSnapshot?
+    let sleepPrevention: SleepPreventionSnapshot?
+    let terminal: RemoteTerminalSnapshot?
+    let terminalFrame: RemoteTerminalFrame?
     let patch: SnapshotPatch?
     let id: Int?
     let ok: Bool?
     let error: String?
     let message: String?
+    let event: AttentionEvent?
 
     enum CodingKeys: String, CodingKey {
         case kind
@@ -44,12 +48,24 @@ struct ServerEnvelope: Decodable {
         case flows
         case hostUrls
         case browserIntegrations
+        case sleepPrevention
+        case terminal
+        case terminalFrame
         case patch
         case id
         case ok
         case error
         case message
+        case event
     }
+}
+
+struct AttentionEvent: Decodable, Sendable {
+    var eventId: String
+    var noticeId: Double
+    var title: String
+    var body: String
+    var sessionPath: String?
 }
 
 struct SnapshotPatch: Decodable, Equatable {
@@ -114,6 +130,34 @@ enum CommandFactory {
         var command = simple("setModel")
         command["provider"] = .string(provider)
         command["id"] = .string(id)
+        return command
+    }
+
+    static func setSleepPreventionPolicy(when: String, keepDisplayAwake: Bool) -> [String: JSONValue] {
+        var command = simple("setSleepPreventionPolicy")
+        command["when"] = .string(when)
+        command["keepDisplayAwake"] = .bool(keepDisplayAwake)
+        return command
+    }
+
+    static func reportPresence(clientId: String, surface: String, visibility: String, sessionPath: String?) -> [String: JSONValue] {
+        var command = simple("reportPresence")
+        command["clientId"] = .string(clientId)
+        command["surface"] = .string(surface)
+        command["visibility"] = .string(visibility)
+        if let sessionPath { command["sessionPath"] = .string(sessionPath) }
+        return command
+    }
+
+    static func activateNotice(id: Int) -> [String: JSONValue] {
+        var command = simple("activateNotice")
+        command["id"] = .number(Double(id))
+        return command
+    }
+
+    static func dismissNotice(id: Int) -> [String: JSONValue] {
+        var command = simple("dismissNotice")
+        command["id"] = .number(Double(id))
         return command
     }
 

@@ -18,7 +18,7 @@ import { FlowLabelPicker, FlowLabelPills, FlowPriorityPicker } from './flow-meta
 import { FlowRail, statusTone, type FlowRailShape } from './flow-rail.tsx'
 import { Icon, type IconName } from './icons.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
-import { colors, nativeTheme } from './theme.ts'
+import { colors, nativeTheme, useNativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 
 type FlowTab = 'work' | 'triage' | 'scheduled'
@@ -65,6 +65,7 @@ interface FlowsViewProps {
 }
 
 export const FlowsView = memo(function FlowsView({ state, controller, runtime, titlebarInset, onClose, onOpenSession }: FlowsViewProps) {
+  useNativeTheme()
   const layout = useResponsiveLayout()
   const runtimeState = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
   const projectionNow = useProjectionClock()
@@ -198,6 +199,7 @@ const WorkTaskRow = memo(function WorkTaskRow({ row, mobile, compact, activeFabr
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   onOpenTask(task: FlowTaskProjection): void
 }) {
+  useNativeTheme()
   const { task } = row
   const dependency = taskDependency(task, row.run)
   return (
@@ -527,6 +529,7 @@ function TriagePage({ runs, controller, onOpenTask }: { runs: FlowRunProjection[
 }
 
 const TriageRow = memo(function TriageRow({ task, selected, onClick }: { task: FlowTaskProjection; selected: boolean; onClick(): void }) {
+  useNativeTheme()
   return (
     <div testId={`triage-task-${task.id}`} tabIndex={0} style={{ height: 64, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 10, paddingRight: 10, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: selected ? colors.sidebarActive : colors.transparent, overflow: 'hidden', cursor: 'pointer', hover: { backgroundColor: colors.hover } }} onClick={onClick}>
       <FlowRail status={task.status} before={false} after={false} compact />
@@ -607,6 +610,7 @@ function ScheduledPage({ schedules, pendingCount, state, runtime, creating, onCr
 }
 
 const ScheduleRow = memo(function ScheduleRow({ schedule, mobile, runtime, controller }: { schedule: FlowSchedule; mobile: boolean; runtime: FlowRuntime; controller: WorkbenchController }) {
+  useNativeTheme()
   return (
     <div style={{ ...contentRowStyle(0), minHeight: mobile ? 98 : 64, paddingBottom: 7 }}>
       <div testId={`schedule-${schedule.id}`} style={{ minHeight: mobile ? 91 : 57, width: '100%', minWidth: 0, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: mobile ? 8 : 10, padding: 10, borderRadius: 9, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>

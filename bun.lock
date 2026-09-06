@@ -5,8 +5,8 @@
     "": {
       "name": "heddlework",
       "dependencies": {
-        "@gpuix/native": "file:vendor/gpuix/gpuix-native-0.7.0-heddlework.1.tgz",
-        "@gpuix/react": "file:vendor/gpuix/gpuix-react-0.7.0-heddlework.1.tgz",
+        "@gpuix/native": "file:vendor/gpuix/gpuix-native-0.7.0-heddlework.3.tgz",
+        "@gpuix/react": "file:vendor/gpuix/gpuix-react-0.7.0-heddlework.3.tgz",
         "@mathjax/src": "4.1.3",
         "react": "19.2.8",
         "react-dom": "19.2.8",
@@ -21,16 +21,16 @@
     },
   },
   "overrides": {
-    "@gpuix/native": "file:vendor/gpuix/gpuix-native-0.7.0-heddlework.1.tgz",
+    "@gpuix/native": "file:vendor/gpuix/gpuix-native-0.7.0-heddlework.3.tgz",
   },
   "packages": {
-    "@gpuix/native": ["@gpuix/native@vendor/gpuix/gpuix-native-0.7.0-heddlework.1.tgz", { "optionalDependencies": { "@gpuix/native-darwin-x64": "0.7.0", "@gpuix/native-linux-x64-gnu": "0.7.0", "@gpuix/native-win32-x64-msvc": "0.7.0" } }, "sha512-GEAN7mXu0Amo+j7ilRNjBGYEqOReLUUR7kPvSuGimQs8ALqPVedZR84Km9W+3WSO5TA/Px6suDeyKaBwZOQHgQ=="],
+    "@gpuix/native": ["@gpuix/native@vendor/gpuix/gpuix-native-0.7.0-heddlework.3.tgz", { "optionalDependencies": { "@gpuix/native-darwin-x64": "0.7.0", "@gpuix/native-linux-x64-gnu": "0.7.0", "@gpuix/native-win32-x64-msvc": "0.7.0" } }, "sha512-XgNxYddvq+Yr+knjRK5J8t6nwhmx+OLs7cujfMGJL27ddNmSUPsBhdapFg8A9w5ujVJzyPZd+mKZT2wY3dmZZQ=="],
 
     "@gpuix/native-linux-x64-gnu": ["@gpuix/native-linux-x64-gnu@0.7.0", "", { "os": "linux", "cpu": "x64" }, "sha512-jch73oOMDX5kr+Qe6SjFQ7jroCnjgo42cYEVQ8UonWLOVxRIhXo0InJEgLk70HJ9bgNkKXwBSoqBTXBpG/Xgng=="],
 
     "@gpuix/native-win32-x64-msvc": ["@gpuix/native-win32-x64-msvc@0.7.0", "", { "os": "win32", "cpu": "x64" }, "sha512-NTJPEmyU2Cxn+nejY7H8f7htZS3WVz79ek+R7gnAlFtASKvPaUtUYCKHrhAb1HToxqVm7cvaKf3ZxjY3ej4BCw=="],
 
-    "@gpuix/react": ["@gpuix/react@vendor/gpuix/gpuix-react-0.7.0-heddlework.1.tgz", { "dependencies": { "@gpuix/native": "0.7.0-heddlework.1", "eventsource-parser": "^4.1.0", "react-reconciler": "^0.31.0", "zod": "^4.4.3" }, "peerDependencies": { "react": "^18.0.0 || ^19.0.0" } }, "sha512-8nNBR6xTH8bfGeiYmiwuIx9/CpKwxbH9JWDA3uQvHa3azX+K6zo2SZBCqMZJReETcroOMXf5bvfy7pOH5JpFaQ=="],
+    "@gpuix/react": ["@gpuix/react@vendor/gpuix/gpuix-react-0.7.0-heddlework.3.tgz", { "dependencies": { "@gpuix/native": "0.7.0-heddlework.3", "eventsource-parser": "^4.1.0", "react-reconciler": "^0.31.0", "zod": "^4.4.3" }, "peerDependencies": { "react": "^18.0.0 || ^19.0.0" } }, "sha512-L0YD/PcR4Q7MPAHEBroaL3DVF4xpQ56XFZfA62OHOGMzE1zZIrd2hGYx4kGJEiumkDZeaEas2wBFP2tiFuiHMA=="],
 
     "@mathjax/mathjax-newcm-font": ["@mathjax/mathjax-newcm-font@4.1.3", "", {}, "sha512-gzAB3dFHilHX1l5x2xUqRL+1jDQt3Fyza1DkEMVXWC4E8SvsGdlgEza47HYi2WhVcgfkvf4zgUGzuhbq3Pjlew=="],
 

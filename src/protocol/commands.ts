@@ -1,15 +1,29 @@
 import { BROWSER_INTEGRATION_COMMAND_TYPES, isBrowserIntegrationCommand, type BrowserIntegrationCommand } from '../browser/integration-types.ts'
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
+import { isSleepPreventionWhen, parseSleepPreventionPolicy, type SleepPreventionPolicy } from '../power/types.ts'
 import type { ComposerImage, ThinkingLevel } from '../pi/types.ts'
 import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
+import { isPresenceSurface, isPresenceVisibility, type PresenceSurface, type PresenceVisibility } from '../workbench/presence.ts'
 import type { QueueLane } from '../workbench/queue.ts'
 import type { ThreadPriority } from '../workbench/state.ts'
+import { applyTerminalCommand, isTerminalCommand, TERMINAL_COMMAND_TYPES, type TerminalCommand, type TerminalCommandTarget } from './terminal.ts'
+
+export type SleepPreventionCommand = { type: 'setSleepPreventionPolicy'; when: SleepPreventionPolicy['when']; keepDisplayAwake: boolean }
+
+export const SLEEP_PREVENTION_COMMAND_TYPES = ['setSleepPreventionPolicy'] as const
+
+export function isSleepPreventionCommand(value: unknown): value is SleepPreventionCommand {
+  if (!value || typeof value !== 'object') return false
+  const command = value as { type?: unknown; when?: unknown; keepDisplayAwake?: unknown }
+  return command.type === 'setSleepPreventionPolicy' && isSleepPreventionWhen(command.when) && typeof command.keepDisplayAwake === 'boolean'
+}
 
 // Every command a remote surface may issue. Each member maps onto one public WorkbenchController method.
 export type WorkbenchCommand =
   | BrowserIntegrationCommand
+  | TerminalCommand
   | { type: 'submit'; text: string; queue?: boolean }
   | { type: 'queueInput'; text: string; lane?: QueueLane; paused?: boolean }
   | { type: 'updateQueuedInput'; id: string; text: string }
@@ -40,36 +54,47 @@ export type WorkbenchCommand =
   | { type: 'markThreadRead'; path: string; updatedAt: number }
   | { type: 'refreshWorkspaceDiff' }
   | { type: 'dismissNotice'; id: number }
+  | { type: 'markNoticeRead'; id: number }
+  | { type: 'markNoticesRead' }
+  | { type: 'activateNotice'; id: number }
   | { type: 'clearNotices' }
+  | { type: 'reportPresence'; clientId: string; surface: PresenceSurface; visibility: PresenceVisibility; sessionPath?: string }
   | { type: 'setEditorText'; text: string }
   | { type: 'addEditorImage'; image: ComposerImage }
   | { type: 'removeEditorImage'; id: string }
   | { type: 'clearReceipts'; sessionPath: string }
   | { type: 'mergeLane'; laneId: string }
   | { type: 'removeLane'; laneId: string }
+  | SleepPreventionCommand
 
 export type WorkbenchCommandType = WorkbenchCommand['type']
 
 export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   ...BROWSER_INTEGRATION_COMMAND_TYPES,
+  ...SLEEP_PREVENTION_COMMAND_TYPES,
+  ...TERMINAL_COMMAND_TYPES,
   'submit', 'queueInput', 'updateQueuedInput', 'removeQueuedInput', 'moveQueuedInput', 'moveQueuedInputToLane',
   'toggleQueuedInputPause', 'steerQueuedInput', 'resumeQueue', 'pause', 'abort', 'newSession', 'switchSession',
   'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
   'wakeThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
-  'clearNotices', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
+  'markNoticeRead', 'markNoticesRead', 'activateNotice', 'clearNotices', 'reportPresence', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
 ]
 
 export function isWorkbenchCommand(value: unknown): value is WorkbenchCommand {
   if (!value || typeof value !== 'object') return false
   const type = (value as { type?: unknown }).type
   if (typeof type === 'string' && (BROWSER_INTEGRATION_COMMAND_TYPES as readonly string[]).includes(type)) return isBrowserIntegrationCommand(value)
+  if (typeof type === 'string' && (SLEEP_PREVENTION_COMMAND_TYPES as readonly string[]).includes(type)) return isSleepPreventionCommand(value)
+  if (typeof type === 'string' && (TERMINAL_COMMAND_TYPES as readonly string[]).includes(type)) return isTerminalCommand(value)
   return typeof type === 'string' && (WORKBENCH_COMMAND_TYPES as readonly string[]).includes(type)
 }
 
 export interface WorkbenchCommandTargets {
   browserIntegrations?: BrowserIntegrationService | undefined
   flows?: Pick<FlowRuntime, 'mergeLane' | 'removeLane'> | undefined
+  sleepPrevention?: { setPolicy(policy: SleepPreventionPolicy): void } | undefined
+  terminals?: TerminalCommandTarget | undefined
 }
 
 export async function applyWorkbenchCommand(controller: WorkbenchController, command: WorkbenchCommand, targets: WorkbenchCommandTargets = {}): Promise<void> {
@@ -77,6 +102,14 @@ export async function applyWorkbenchCommand(controller: WorkbenchController, com
     case 'selectBrowserIntegration': case 'requestBrowserTask': case 'approveBrowserTask': case 'cancelBrowserTask': case 'clearBrowserTask':
       if (!targets.browserIntegrations) throw new Error('Browser integrations unavailable on this host')
       targets.browserIntegrations.dispatch(command)
+      return
+    case 'setSleepPreventionPolicy':
+      if (!targets.sleepPrevention) throw new Error('Sleep prevention is unavailable on this host')
+      targets.sleepPrevention.setPolicy(parseSleepPreventionPolicy(command))
+      return
+    case 'openTerminal': case 'writeTerminal': case 'resizeTerminal': case 'closeTerminal':
+      if (!targets.terminals) throw new Error('Terminal is unavailable on this host')
+      await applyTerminalCommand(targets.terminals, command)
       return
     case 'mergeLane': {
       if (!targets.flows) throw new Error('Flow runtime is not available')
@@ -190,6 +223,24 @@ export async function applyWorkbenchCommand(controller: WorkbenchController, com
       return
     case 'dismissNotice':
       controller.dismissNotice(command.id)
+      return
+    case 'markNoticeRead':
+      controller.markNoticeRead(command.id)
+      return
+    case 'markNoticesRead':
+      controller.markNoticesRead()
+      return
+    case 'activateNotice':
+      await controller.activateNotice(command.id)
+      return
+    case 'reportPresence':
+      if (!command.clientId || !isPresenceSurface(command.surface) || !isPresenceVisibility(command.visibility)) return
+      controller.presence.upsert({
+        clientId: command.clientId,
+        surface: command.surface,
+        visibility: command.visibility,
+        ...(command.sessionPath ? { sessionPath: command.sessionPath } : {}),
+      })
       return
     case 'clearNotices':
       controller.clearNotices()

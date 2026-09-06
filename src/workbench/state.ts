@@ -4,18 +4,10 @@ import { BUILTIN_SLASH_COMMANDS } from '../pi/slash-commands.ts'
 import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, PiSessionStats, RpcRecord, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import { createQueueState, type WorkbenchQueueState } from './queue.ts'
 import type { MutationReceipt } from '../receipts/types.ts'
+import { appendNotice, classifyNotice, type Notice, type NoticeKind, type NoticeOptions } from './notices.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
-export type NoticeKind = 'info' | 'warning' | 'error'
-
-export interface Notice {
-  id: number
-  kind: NoticeKind
-  message: string
-  createdAt: number
-  transcriptTurn?: number
-  transcriptPosition?: number
-}
+export type { Notice, NoticeKind, NoticeOptions } from './notices.ts'
 
 export type ThreadPriority = 0 | 1 | 2 | 3 | 4
 
@@ -243,15 +235,32 @@ export function applyRpcEvent(state: WorkbenchState, event: RpcRecord): Workbenc
   }
 }
 
-export function addNotice(state: WorkbenchState, kind: NoticeKind, message: string, transcriptPosition?: number): WorkbenchState {
+export function addNotice(state: WorkbenchState, kind: NoticeKind, message: string, transcriptPositionOrOptions?: number | NoticeOptions): WorkbenchState {
+  const options: NoticeOptions = typeof transcriptPositionOrOptions === 'number'
+    ? { transcriptPosition: transcriptPositionOrOptions }
+    : transcriptPositionOrOptions ?? {}
+  const classified = classifyNotice(kind, message, options)
+  const sessionPath = options.sessionPath ?? state.session.sessionFile ?? undefined
+  const sessionTitle = options.sessionTitle ?? state.session.sessionName ?? undefined
+  const id = ++noticeId
   const notice: Notice = {
-    id: ++noticeId,
+    id,
+    eventId: options.eventId ?? `notice:${id}`,
     kind,
+    channel: classified.channel,
+    reason: classified.reason,
     message,
-    createdAt: Date.now(),
-    ...(transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, state.messages.filter((candidate) => candidate.role === 'user').length - 1), transcriptPosition }),
+    createdAt: options.createdAt ?? Date.now(),
+    ...(sessionPath ? { sessionPath } : {}),
+    ...(sessionTitle ? { sessionTitle } : {}),
+    ...(options.action
+      ? { action: options.action }
+      : classified.channel === 'ledger' && sessionPath
+        ? { action: { type: 'openSession', path: sessionPath } }
+        : {}),
+    ...(options.transcriptPosition === undefined ? {} : { transcriptTurn: Math.max(0, state.messages.filter((candidate) => candidate.role === 'user').length - 1), transcriptPosition: options.transcriptPosition }),
   }
-  return { ...state, notices: [...state.notices, notice] }
+  return { ...state, notices: appendNotice(state.notices, notice) }
 }
 
 function beginMessage(state: WorkbenchState, event: RpcRecord): WorkbenchState {

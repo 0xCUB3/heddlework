@@ -17,8 +17,11 @@ import { FileThreadMetadataStore, threadMetadataStorePath } from '../workbench/t
 import { createReceiptPlugin } from '../receipts/plugin.ts'
 import { createCheckoutLanePlugin } from '../workspace/checkout-lanes.ts'
 import { receiptStorePath } from '../receipts/store.ts'
-import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, workspaceHostToken } from './plugin.ts'
-import { hostConnectUrl, lanConnectUrl, remoteConnectUrls } from './server.ts'
+import { createSleepPreventionPlugin } from '../power/plugin.ts'
+import { createTerminalPlugin } from '../terminal/plugin.ts'
+import { themePreferencePath } from '../ui/theme-manager.ts'
+import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, tailnetServeToken, workspaceHostToken } from './plugin.ts'
+import { bestConnectUrl, hostConnectUrl, remoteConnectUrls } from './server.ts'
 import { qrAscii } from '../web/qr.ts'
 import { resolveStaticRoot } from './static-root.ts'
 import { hostTokenPath } from './token.ts'
@@ -38,12 +41,21 @@ kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
 kernel.mount(createCheckoutLanePlugin())
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
 const browserIntegrations = createBrowserIntegrationService()
+kernel.mount(createSleepPreventionPlugin({
+  browserIntegrations,
+  preferencePath: demoMode ? false : themePreferencePath(),
+}))
+kernel.mount(createTerminalPlugin({
+  cwd: workspacePath,
+  ...(demoMode ? { appearancePath: false as const } : {}),
+}))
 kernel.mount(createWorkspaceHostPlugin({
   browserIntegrations,
   enabled: true,
   workspacePath,
   port: hostOptions.port,
   hostname: hostOptions.hostname,
+  preferencePath: demoMode ? false : themePreferencePath(),
   tokenPath: demoMode ? false : hostTokenPath(),
   staticRoot: resolveStaticRoot(),
 }))
@@ -61,6 +73,9 @@ await startExternalPlugins(kernel, workspacePath, { trustPath: demoMode ? false 
 const controller = kernel.get(workbenchControllerToken)
 const host = kernel.get(workspaceHostToken)
 if (!host) throw new Error('Workspace host failed to start')
+const tailnet = kernel.get(tailnetServeToken)
+await tailnet.idle()
+const serveUrl = tailnet.getSnapshot().status === 'ready' ? tailnet.getSnapshot().url : undefined
 
 let disposed = false
 const shutdown = (): void => {
@@ -75,9 +90,12 @@ process.once('SIGTERM', shutdown)
 console.log(`Heddlework host serving ${workspacePath}`)
 console.log(`  url     ${host.url}`)
 console.log(`  connect ${hostConnectUrl(host)}`)
+if (serveUrl) console.log(`  tailnet ${bestConnectUrl(host, serveUrl)}`)
 for (const remote of remoteConnectUrls(host)) console.log(`  ${remote.kind.padEnd(7)} ${remote.url}`)
 if (!demoMode) console.log(`  token   ${hostTokenPath()}`)
-console.log(qrAscii(lanConnectUrl(host)))
+const tailnetStatus = tailnet.getSnapshot()
+if (tailnetStatus.status !== 'ready' && tailnetStatus.status !== 'idle' && tailnetStatus.message) console.log(`  serve   ${tailnetStatus.message}`)
+console.log(qrAscii(bestConnectUrl(host, serveUrl)))
 void controller.start()
 
 function resolveWorkspacePath(): string {

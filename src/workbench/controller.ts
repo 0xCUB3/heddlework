@@ -41,10 +41,13 @@ import {
   contentText,
   createInitialState,
   type NoticeKind,
+  type NoticeOptions,
   type ThreadPriority,
   type WorkbenchState,
   type WorkbenchUiRequest,
 } from './state.ts'
+import { ledgerNotices, markLedgerRead, markNoticeRead } from './notices.ts'
+import { PresenceRegistry } from './presence.ts'
 import {
   createQueueState,
   moveQueuedInput,
@@ -62,6 +65,7 @@ import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 import type { MutationReceipt } from '../receipts/types.ts'
+import { liveFieldsOnlyChanged, TrailingNotifier } from './notify-batch.ts'
 
 const SESSION_PAGE_SIZE = 120
 const RECONNECT_BASE_DELAY_MS = 1_000
@@ -97,7 +101,11 @@ export class WorkbenchController {
   readonly #threadMetadataStore: ThreadMetadataStoreService | undefined
   readonly #dialogs: WorkbenchDialogCoordinator
   readonly #stopTransportOnDispose: boolean
+  readonly presence = new PresenceRegistry()
   readonly #listeners = new Set<() => void>()
+  readonly #notifier = new TrailingNotifier(() => {
+    for (const listener of this.#listeners) listener()
+  })
   #state: WorkbenchState
   #started = false
   #connecting = false
@@ -108,6 +116,10 @@ export class WorkbenchController {
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
   #sessionTransitionDepth = 0
+  #sessionSwitch: Promise<void> | undefined
+  #sessionPreview: WorkbenchState | undefined
+  #sessionSwitchGeneration = 0
+  #bootstrapGeneration = 0
   #historyPager: PiSessionHistoryPager | undefined
   #sessionTree: PiSessionTree | undefined
   #nextQueueId = 0
@@ -156,15 +168,16 @@ export class WorkbenchController {
     return () => this.#listeners.delete(listener)
   }
 
-  readonly getSnapshot = (): WorkbenchState => this.#state
+  readonly getSnapshot = (): WorkbenchState => this.#sessionPreview ?? this.#state
 
   readonly loadEarlierMessages = async (): Promise<void> => {
+    if (this.#sessionSwitch) return
     const pager = this.#historyPager
     if (!pager || !this.#state.messagesHasOlder || this.#state.messagesLoadingEarlier) return
     this.#patch({ messagesLoadingEarlier: true })
     try {
       const page = await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
-      if (pager !== this.#historyPager) return
+      if (this.#sessionSwitch || pager !== this.#historyPager) return
       const known = new Set(this.#state.messages.flatMap((message) => messageEntryId(message) ? [messageEntryId(message)!] : []))
       const older = page.messages.filter((message) => !known.has(messageEntryId(message) ?? ''))
       this.#patch({
@@ -173,7 +186,7 @@ export class WorkbenchController {
         messagesLoadingEarlier: false,
       })
     } catch (error) {
-      if (pager !== this.#historyPager) return
+      if (this.#sessionSwitch || pager !== this.#historyPager) return
       this.#patch({ messagesHasOlder: false, messagesLoadingEarlier: false })
       this.#setState((state) => addNotice(state, 'warning', `Could not load earlier transcript: ${errorMessage(error)}`))
     }
@@ -182,8 +195,8 @@ export class WorkbenchController {
   readonly acceptAgentEvent = (event: RpcRecord): void => this.#handleEvent(event)
   readonly acceptAgentStatus = (status: TransportStatus): void => this.#handleStatus(status)
 
-    notify(kind: NoticeKind, message: string): void {
-    this.#setState((state) => addNotice(state, kind, message))
+  notify(kind: NoticeKind, message: string, options?: NoticeOptions): void {
+    this.#setState((state) => addNotice(state, kind, message, options))
   }
 
   async start(): Promise<void> {
@@ -216,6 +229,7 @@ export class WorkbenchController {
   }
 
   async submit(text: string, options: { queue?: boolean } = {}): Promise<void> {
+    if (this.#sessionSwitch) return
     const message = text.trim()
     const editorImages = this.#state.editorImages
     if ((!message && editorImages.length === 0) || this.#state.connection !== 'connected') return
@@ -390,6 +404,7 @@ export class WorkbenchController {
   }
 
   async steerQueuedInput(id: string): Promise<void> {
+    if (this.#sessionSwitch) return
     const item = this.#state.queue.items.find((candidate) => candidate.id === id)
     if (!item || !this.#state.session.isStreaming || this.#state.queue.dispatchingId) return
     if (queuedInputControl(item)) return
@@ -422,6 +437,7 @@ export class WorkbenchController {
   }
 
   async drainQueueMessages(): Promise<void> {
+    if (this.#sessionSwitch) return
     if (this.#state.queue.dispatchingId || this.#compactionHold) {
       this.#setState((state) => addNotice(state, 'warning', 'The queue can drain after the current control or compaction finishes'))
       return
@@ -489,6 +505,7 @@ export class WorkbenchController {
   }
 
   async newSession(): Promise<void> {
+    if (this.#sessionSwitch) return
     if (this.#state.session.isStreaming) return
     this.#sessionTransitionDepth += 1
     try {
@@ -505,7 +522,7 @@ export class WorkbenchController {
         liveTools: [],
         editorText: '',
         editorImages: [],
-        notices: [],
+        notices: ledgerNotices(this.#state.notices),
         statusItems: {},
         widgets: {},
         dialog: undefined,
@@ -540,15 +557,56 @@ export class WorkbenchController {
   }
 
   async switchSession(session: PiSessionSummary): Promise<void> {
-    if (isCurrentPiSession(session, this.#state.session)) return
+    if (!this.#sessionSwitch && isCurrentPiSession(session, this.#state.session)) return
     if (this.#state.connection !== 'connected') {
       this.#setState((state) => addNotice(state, 'warning', 'Reconnect Pi before switching sessions'))
       return
     }
-    if (this.#sessionTransitionDepth > 0) return
-    this.#sessionTransitionDepth += 1
+    if (this.#sessionPreview?.session.sessionFile === session.path) return this.#sessionSwitch
+    if (!this.#sessionSwitch && this.#sessionTransitionDepth > 0) return
+    if (!this.#sessionSwitch) this.#sessionTransitionDepth += 1
+    this.#dialogs.cancelAll()
+    if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
+    this.#refreshTimer = undefined
+    const generation = ++this.#sessionSwitchGeneration
+    ++this.#bootstrapGeneration
+    // Reading history must not wait for Pi's extension session-switch hooks.
+    this.#sessionPreview = {
+      ...this.#state,
+      workspacePath: session.cwd ? resolve(session.cwd) : this.#state.workspacePath,
+      session: { ...this.#state.session, sessionId: session.id, sessionFile: session.path, sessionName: session.title, isStreaming: false },
+      connection: 'connecting', connectionMessage: 'Opening thread', activity: 'Opening thread',
+      messages: [], messagesHasOlder: false, messagesLoadingEarlier: false,
+      liveAssistant: undefined, liveTools: [], forkMessages: [], stats: undefined,
+      dialog: undefined, dialogQueue: [], statusItems: {}, widgets: {},
+      questionnaireSubmitting: undefined, questionnaireCollapsed: undefined,
+      editorText: '', editorImages: [], queue: createQueueState(),
+      workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
+    }
+    this.#notifier.notify(true)
+    void new PiSessionHistoryPager(session.path).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS).then((page) => {
+      if (this.#disposed || generation !== this.#sessionSwitchGeneration || !this.#sessionPreview) return
+      this.#sessionPreview = { ...this.#sessionPreview, messages: page.messages }
+      this.#notifier.notify(true)
+    }).catch(() => { /* Missing files fall back to Pi's transcript after activation. */ })
+    const task = (this.#sessionSwitch ?? Promise.resolve()).then(async () => {
+      if (this.#disposed || generation !== this.#sessionSwitchGeneration) return
+      await this.#activateSession(session)
+    }).finally(() => {
+      if (this.#sessionSwitch !== task) return
+      this.#sessionSwitch = undefined
+      this.#sessionPreview = undefined
+      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
+      this.#notifier.notify(true)
+      if (!this.#disposed) this.#drainAvailableQueueLane()
+    })
+    this.#sessionSwitch = task
+    return task
+  }
+
+  async #activateSession(session: PiSessionSummary): Promise<void> {
+    if (isCurrentPiSession(session, this.#state.session)) return
     try {
-      this.#dialogs.cancelAll()
       this.#patch({ activity: 'Opening thread' })
       if (this.#state.session.isStreaming) {
         this.#pauseAfterTools = false
@@ -562,6 +620,7 @@ export class WorkbenchController {
         type: 'switch_session',
         sessionPath: session.path,
       })
+      if (this.#disposed) return
       if (result.cancelled) {
         this.#patch({ activity: 'Ready' })
         return
@@ -578,7 +637,7 @@ export class WorkbenchController {
         liveTools: [],
         editorText: '',
         editorImages: [],
-        notices: [],
+        notices: ledgerNotices(this.#state.notices),
         statusItems: {},
         widgets: {},
         dialog: undefined,
@@ -588,13 +647,11 @@ export class WorkbenchController {
         queue: resolve(workspacePath) === resolve(this.#state.workspacePath) ? this.#state.queue : this.#queueStore?.load(workspacePath) ?? createQueueState(),
         workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
       })
-      await this.#bootstrap(false)
+      await this.#bootstrap(false, true)
       void this.refreshSessions()
     } catch (error) {
       this.#patch({ activity: 'Ready' })
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
-    } finally {
-      this.#sessionTransitionDepth = Math.max(0, this.#sessionTransitionDepth - 1)
     }
   }
 
@@ -627,6 +684,7 @@ export class WorkbenchController {
   }
 
   async openSessionTree(options: { preserveQueue?: boolean } = {}): Promise<void> {
+    if (this.#sessionSwitch) return
     if (this.#state.session.isStreaming) return
     try {
       const sessionTree = await this.#requestSessionTree()
@@ -644,6 +702,7 @@ export class WorkbenchController {
   }
 
   async navigateTree(entryId: string, options: NavigateTreeOptions = {}): Promise<void> {
+    if (this.#sessionSwitch) return
     if (!entryId || this.#state.session.isStreaming) return
     this.#patch({ activity: options.summarize ? 'Summarizing branch' : 'Navigating session tree' })
     try {
@@ -660,7 +719,7 @@ export class WorkbenchController {
         return
       }
       this.#historyPager = undefined
-      this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
+      this.#patch({ notices: ledgerNotices(this.#state.notices), queue: options.preserveQueue ? this.#state.queue : createQueueState() })
       await this.#bootstrap(false)
       if (result.editorText !== undefined) this.#patch({ editorText: result.editorText, editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Navigated within the current Pi session'))
@@ -693,11 +752,12 @@ export class WorkbenchController {
   }
 
   async cloneSession(): Promise<void> {
+    if (this.#sessionSwitch) return
     if (this.#state.session.isStreaming) return
     try {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
       if (result.cancelled) return
-      this.#patch({ notices: [], queue: createQueueState() })
+      this.#patch({ notices: ledgerNotices(this.#state.notices), queue: createQueueState() })
       await this.#bootstrap(false)
       this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
     } catch (error) {
@@ -706,11 +766,12 @@ export class WorkbenchController {
   }
 
   async forkFrom(entryId: string, options: { preserveQueue?: boolean } = {}): Promise<void> {
+    if (this.#sessionSwitch) return
     if (!entryId || this.#state.session.isStreaming) return
     try {
       const result = await this.#transport.request<{ text?: string; cancelled?: boolean }>({ type: 'fork', entryId })
       if (result.cancelled) return
-      this.#patch({ notices: [], queue: options.preserveQueue ? this.#state.queue : createQueueState() })
+      this.#patch({ notices: ledgerNotices(this.#state.notices), queue: options.preserveQueue ? this.#state.queue : createQueueState() })
       await this.#bootstrap(false)
       this.#patch({ editorText: result.text ?? '', editorImages: [] })
       this.#setState((state) => addNotice(state, 'info', 'Branched from the selected turn'))
@@ -731,6 +792,7 @@ export class WorkbenchController {
   }
 
   async setModel(model: PiModel): Promise<void> {
+    if (this.#sessionSwitch) return
     try {
       await this.#transport.request({ type: 'set_model', provider: model.provider, modelId: model.id })
       const [session, levels] = await Promise.all([
@@ -744,6 +806,7 @@ export class WorkbenchController {
   }
 
   async setThinkingLevel(level: ThinkingLevel): Promise<void> {
+    if (this.#sessionSwitch) return
     try {
       await this.#transport.request({ type: 'set_thinking_level', level })
       this.#patch({ session: { ...this.#state.session, thinkingLevel: level } })
@@ -753,6 +816,7 @@ export class WorkbenchController {
   }
 
   async compact(): Promise<void> {
+    if (this.#sessionSwitch) return
     if (this.#state.session.isStreaming) return
     await this.#runBuiltinSlashCommand({ name: 'compact', argument: '' }, false)
   }
@@ -762,10 +826,12 @@ export class WorkbenchController {
   }
 
   setEditorText(text: string): void {
+    if (this.#sessionSwitch) return
     this.#patch({ editorText: text })
   }
 
   addEditorImage(image: ComposerImage): void {
+    if (this.#sessionSwitch) return
     const acceptedInputs = this.#state.session.model?.input
     if (acceptedInputs && !acceptedInputs.includes('image')) {
       this.#setState((state) => addNotice(state, 'warning', 'The selected model does not accept images'))
@@ -785,6 +851,24 @@ export class WorkbenchController {
 
   dismissNotice(id: number): void {
     this.#patch({ notices: this.#state.notices.filter((notice) => notice.id !== id) })
+  }
+
+  markNoticeRead(id: number): void {
+    this.#patch({ notices: markNoticeRead(this.#state.notices, id) })
+  }
+
+  markNoticesRead(): void {
+    this.#patch({ notices: markLedgerRead(this.#state.notices) })
+  }
+
+  async activateNotice(id: number): Promise<void> {
+    const notice = this.#state.notices.find((candidate) => candidate.id === id)
+    if (!notice) return
+    this.markNoticeRead(id)
+    const path = notice.action?.path ?? notice.sessionPath
+    if (!path || path === this.#state.session.sessionFile) return
+    const session = this.#state.sessions.find((candidate) => candidate.path === path)
+    if (session) await this.switchSession(session)
   }
 
   clearNotices(): void {
@@ -913,6 +997,7 @@ export class WorkbenchController {
     this.#unsubscribeEvent()
     this.#unsubscribeStatus()
     if (this.#stopTransportOnDispose) await this.#transport.stop()
+    this.#notifier.cancel()
     this.#listeners.clear()
   }
 
@@ -963,6 +1048,7 @@ export class WorkbenchController {
   }
 
   #drainSteering(): void {
+    if (this.#sessionTransitionDepth > 0) return
     if (this.#queueDispatch) return
     const task = this.#drainSteeringHead()
     this.#queueDispatch = task
@@ -1010,6 +1096,7 @@ export class WorkbenchController {
   }
 
   #drainQueue(): void {
+    if (this.#sessionTransitionDepth > 0) return
     if (this.#queueDispatch) return
     const task = this.#drainQueueHead()
     this.#queueDispatch = task
@@ -1187,7 +1274,7 @@ export class WorkbenchController {
           const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'clone' })
           if (result.cancelled) return false
           this.#historyPager = undefined
-          this.#patch({ notices: [], queue: queued ? { ...this.#state.queue, steering: [], followUp: [] } : createQueueState() })
+          this.#patch({ notices: ledgerNotices(this.#state.notices), queue: queued ? { ...this.#state.queue, steering: [], followUp: [] } : createQueueState() })
           await this.#bootstrap(false)
           this.#setState((state) => addNotice(state, 'info', 'Cloned thread into a new Pi session'))
           return true
@@ -1213,7 +1300,7 @@ export class WorkbenchController {
               liveTools: [],
               editorText: '',
               editorImages: [],
-              notices: [],
+              notices: ledgerNotices(this.#state.notices),
               statusItems: {},
               widgets: {},
               dialog: undefined,
@@ -1292,43 +1379,45 @@ export class WorkbenchController {
     this.#patch({ uiRequest })
   }
 
-  async #bootstrap(includeModels: boolean): Promise<void> {
+  async #bootstrap(includeModels: boolean, deferMetadata = false): Promise<void> {
+    const generation = ++this.#bootstrapGeneration
     const [session, sessionTree] = await Promise.all([
       this.#transport.request<PiSessionState>({ type: 'get_state' }),
       this.#tryRequestSessionTree(),
     ])
+    if (this.#disposed || generation !== this.#bootstrapGeneration) return
     this.#sessionTree = sessionTree
     this.#reconnectAttempts = 0
     this.#patch({
-      connection: 'connected',
-      connectionMessage: 'Connected',
-      session,
-      liveAssistant: undefined,
-      liveTools: [],
-      activity: session.isStreaming ? 'Working' : 'Ready',
+      connection: 'connected', connectionMessage: 'Connected', session,
+      liveAssistant: undefined, liveTools: [], activity: session.isStreaming ? 'Working' : 'Ready',
     })
-    const tasks = await Promise.allSettled([
-      this.#loadInitialTranscript(session, sessionTree?.leafId),
-      includeModels
-        ? this.#transport.request<{ models: PiModel[] }>({ type: 'get_available_models' })
-        : Promise.resolve({ models: this.#state.models }),
+    const current = () => !this.#disposed && generation === this.#bootstrapGeneration
+    const transcript = this.#loadInitialTranscript(session, sessionTree?.leafId).then(({ page, pager }) => {
+      if (!current()) return
+      this.#historyPager = pager
+      this.#patch({ messages: page.messages, messagesHasOlder: page.hasOlder, messagesLoadingEarlier: false })
+    })
+    // Supplementary RPC metadata must never hold the transcript or navigation hostage.
+    const metadata = Promise.allSettled([
+      includeModels ? this.#transport.request<{ models: PiModel[] }>({ type: 'get_available_models' }) : Promise.resolve({ models: this.#state.models }),
       this.#getThinkingLevels(),
       this.#transport.request<PiSessionStats>({ type: 'get_session_stats' }),
       this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
       this.#transport.request<{ commands: RpcSlashCommand[] }>({ type: 'get_commands' }),
-    ])
-    const [messagesResult, modelsResult, levelsResult, statsResult, forkMessagesResult, commandsResult] = tasks
-    this.#historyPager = messagesResult.status === 'fulfilled' ? messagesResult.value.pager : undefined
-    this.#patch({
-      messages: messagesResult.status === 'fulfilled' ? messagesResult.value.page.messages : this.#state.messages,
-      messagesHasOlder: messagesResult.status === 'fulfilled' ? messagesResult.value.page.hasOlder : false,
-      messagesLoadingEarlier: false,
-      forkMessages: forkMessagesResult.status === 'fulfilled' ? forkMessagesFrom(forkMessagesResult.value) : this.#state.forkMessages,
-      models: modelsResult.status === 'fulfilled' ? modelsResult.value.models : this.#state.models,
-      thinkingLevels: levelsResult.status === 'fulfilled' ? levelsResult.value : this.#state.thinkingLevels,
-      stats: statsResult.status === 'fulfilled' ? statsResult.value : this.#state.stats,
-      commands: commandsResult.status === 'fulfilled' ? slashCommandsFromRpc(commandsResult.value) : this.#state.commands,
+    ]).then(([models, levels, stats, forks, commands]) => {
+      if (!current()) return
+      this.#patch({
+        models: models.status === 'fulfilled' ? models.value.models : this.#state.models,
+        thinkingLevels: levels.status === 'fulfilled' ? levels.value : this.#state.thinkingLevels,
+        stats: stats.status === 'fulfilled' ? stats.value : this.#state.stats,
+        forkMessages: forks.status === 'fulfilled' ? forkMessagesFrom(forks.value) : this.#state.forkMessages,
+        commands: commands.status === 'fulfilled' ? slashCommandsFromRpc(commands.value) : this.#state.commands,
+      })
     })
+    await transcript
+    if (!deferMetadata) await metadata
+    if (!current()) return
     void this.refreshWorkspaceDiff()
     if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
   }
@@ -1371,16 +1460,19 @@ export class WorkbenchController {
 
   async #refreshMessages(): Promise<void> {
     try {
+      const generation = this.#sessionSwitchGeneration
       const sessionFile = this.#state.session.sessionFile
       const previousTree = this.#sessionTree
       const [sessionTree, forkMessages] = await Promise.all([
         this.#tryRequestSessionTree(),
         this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
       ])
+      if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
       if (sessionTree) this.#sessionTree = sessionTree
       if (sessionFile) {
         const latestPager = new PiSessionHistoryPager(sessionFile, sessionTree?.leafId)
         const page = await latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
+        if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
         const branchChanged = previousTree !== undefined
           && sessionTree !== undefined
           && !sessionTreeLeafDescendsFrom(sessionTree, previousTree.leafId)
@@ -1397,6 +1489,7 @@ export class WorkbenchController {
         return
       }
       const messages = await this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
+      if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
       this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
     } catch (error) {
       this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
@@ -1420,6 +1513,7 @@ export class WorkbenchController {
   }
 
   #scheduleRefresh(full: boolean): void {
+    if (this.#sessionTransitionDepth > 0 || this.#disposed) return
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
     this.#refreshTimer = setTimeout(() => {
       this.#refreshTimer = undefined
@@ -1557,6 +1651,16 @@ export class WorkbenchController {
     if (event.type === 'agent_settled') {
       this.#scheduleRefresh(true)
       this.#drainQueue()
+      const sessionPath = this.#state.session.sessionFile
+      const sessionTitle = this.#state.session.sessionName
+        ?? this.#state.sessions.find((session) => session.path === sessionPath)?.title
+      this.#setState((state) => addNotice(state, 'info', sessionTitle ? `${sessionTitle} finished` : 'Turn finished', {
+        channel: 'ledger',
+        reason: 'completion',
+        eventId: `completion:${sessionPath ?? 'session'}:${Date.now()}`,
+        ...(sessionPath ? { sessionPath, action: { type: 'openSession', path: sessionPath } } : {}),
+        ...(sessionTitle ? { sessionTitle } : {}),
+      }))
     }
   }
 
@@ -1613,7 +1717,7 @@ export class WorkbenchController {
     this.#state = next
     if (next.queue !== previous.queue || next.workspacePath !== previous.workspacePath) this.#queueStore?.save(next.workspacePath, next.queue)
     if (next.threadLifecycle !== previous.threadLifecycle) this.#threadMetadataStore?.save(next.threadLifecycle)
-    for (const listener of this.#listeners) listener()
+    this.#notifier.notify(liveFieldsOnlyChanged(previous, next) ? false : true)
   }
 }
 

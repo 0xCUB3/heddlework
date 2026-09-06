@@ -18,7 +18,7 @@ import { createReceiptPlugin } from './receipts/plugin.ts'
 import { createUpdatePlugin, updateServiceToken } from './updates/plugin.ts'
 import { createCheckoutLanePlugin } from './workspace/checkout-lanes.ts'
 import { receiptStorePath } from './receipts/store.ts'
-import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, remoteAccessToken } from './host/plugin.ts'
+import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, remoteAccessToken, tailnetServeToken } from './host/plugin.ts'
 import { startExternalPlugins } from './plugins/host.ts'
 import { resolveStaticRoot } from './host/static-root.ts'
 import { hostTokenPath } from './host/token.ts'
@@ -32,6 +32,7 @@ import {
 import { createTerminalPlugin, terminalSessionToken } from './terminal/plugin.ts'
 import { createBrowserIntegrationService } from './browser/integrations.ts'
 import { browserSessionToken, createBrowserPlugin } from './browser/plugin.ts'
+import { createSleepPreventionPlugin, sleepPreventionToken } from './power/plugin.ts'
 
 interface RuntimeHandle {
   kernel: WorkbenchKernel
@@ -62,6 +63,11 @@ kernel.mount(createCheckoutLanePlugin())
 kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
 const hostOptions = hostOptionsFromEnvironment(process.env, demoMode ? false : themePreferencePath())
 const browserIntegrations = createBrowserIntegrationService()
+kernel.mount(createSleepPreventionPlugin({
+  browserIntegrations,
+  preferencePath: demoMode ? false : themePreferencePath(),
+}))
+kernel.mount(createTerminalPlugin({ cwd: workspacePath }))
 kernel.mount(createWorkspaceHostPlugin({
   browserIntegrations,
   enabled: hostOptions.enabled,
@@ -76,7 +82,6 @@ kernel.mount(createWorkspaceHostPlugin({
 kernel.mount(createUpdatePlugin({ enabled: demoMode ? false : undefined }))
 kernel.mount(createCoreUiExtensionPlugin())
 kernel.mount(workbenchUiHostPlugin)
-kernel.mount(createTerminalPlugin({ cwd: workspacePath }))
 kernel.mount(createBrowserPlugin({
   ...(demoMode ? { statePath: false as const } : {}),
   cleanupOrphanedProfiles: coldStart,
@@ -96,9 +101,11 @@ const controller = kernel.get(workbenchControllerToken)
 const flows = kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
 const remoteAccess = kernel.get(remoteAccessToken)
+const tailnetServe = kernel.get(tailnetServeToken)
 const updates = kernel.get(updateServiceToken)
 const terminals = kernel.get(terminalSessionToken)
 const browsers = kernel.get(browserSessionToken)
+const sleepPrevention = kernel.get(sleepPreventionToken)
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
   shutdown(isGpuixWindowCloseRace(error) ? undefined : error)
@@ -164,13 +171,13 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 render(
-  <WorkbenchApp browserIntegrations={browserIntegrations} controller={controller} flows={flows} remoteAccess={remoteAccess} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
+  <WorkbenchApp browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} controller={controller} flows={flows} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
   {
     ...createWindowOptions(
       process.platform,
       debugOverlay(),
       browsers.nativeProfileRoot() ?? '',
-      browsers.canInitializeNativeBrowser(),
+      browsers.canInitializeNativeBrowser() && process.env.HEDDLEWORK_NATIVE_BROWSER !== '0',
     ),
     ...(browserSmokeUrl ? { focus: false, show: false } : {}),
     onTerminated: shutdown,

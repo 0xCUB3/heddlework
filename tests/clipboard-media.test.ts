@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createComposerImage, editorTextAfterImagePaste, hydrateMessageImages } from '../src/ui/clipboard-media.ts'
+import { createComposerImage, editorTextAfterImagePaste, hydrateMessageImages, messageImageSrc } from '../src/ui/clipboard-media.ts'
 
 const PNG = readFileSync(resolve(import.meta.dir, 'fixtures/pasted-image.png'))
 
@@ -24,6 +24,27 @@ describe('clipboard media', () => {
     }])
     const content = messages[0]!.content
     expect(Array.isArray(content)).toBe(true)
-    if (Array.isArray(content)) expect(content[1]?.previewPath).toBeTruthy()
+    if (Array.isArray(content)) {
+      const image = content[1]
+      const previewPath = typeof image?.previewPath === 'string' ? image.previewPath : undefined
+      expect(previewPath).toBeTruthy()
+      expect(image?.data).toBe('')
+      expect(messageImageSrc(previewPath ? { previewPath } : {})).toBe(previewPath)
+    }
+  })
+
+  it('keeps a data URL fallback when hydrate cannot materialize a preview', () => {
+    const messages = hydrateMessageImages([{
+      role: 'user',
+      content: [{ type: 'text', text: 'Look' }, { type: 'image', data: '', mimeType: 'image/png' }],
+    }])
+    const content = messages[0]!.content
+    expect(Array.isArray(content)).toBe(true)
+    if (Array.isArray(content)) {
+      expect(content[1]?.data).toBe('')
+      expect(content[1]?.previewPath).toBeUndefined()
+    }
+    expect(messageImageSrc({ data: PNG.toString('base64'), mimeType: 'image/png' })).toMatch(/^data:image\/png;base64,/)
+    expect(messageImageSrc({ mimeType: 'image/png' })).toBeUndefined()
   })
 })

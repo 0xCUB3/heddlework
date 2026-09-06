@@ -1,3 +1,4 @@
+import { formatMessageUsage } from './telemetry.ts'
 import type { PiForkMessage, PiImageContent, PiMessage } from '../pi/types.ts'
 import { asRecord, contentText, type LiveAssistant, type Notice, type ToolRun } from './state.ts'
 
@@ -7,7 +8,7 @@ interface RevertibleItem {
 
 export type TimelineItem =
   | ({ id: string; kind: 'user'; text: string; images: PiImageContent[]; timestamp?: number | undefined } & RevertibleItem)
-  | ({ id: string; kind: 'assistant'; text: string; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
+  | ({ id: string; kind: 'assistant'; text: string; metrics?: string | undefined; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'thinking'; text: string; streaming?: boolean; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'context-injection'; text: string; images: PiImageContent[]; source?: string | undefined; timestamp?: number | undefined } & RevertibleItem)
   | ({ id: string; kind: 'tool'; tool: ToolRun; timestamp?: number | undefined } & RevertibleItem)
@@ -24,6 +25,7 @@ export function buildTimeline(
   notices: Notice[] = [],
 ): TimelineItem[] {
   const items: TimelineItem[] = []
+  const hasTurnTelemetry = messages.some(message => message.role === 'telemetry')
   const toolIndexes = new Map<string, number>()
   let userMessageIndex = 0
   let revertEntryId: string | undefined
@@ -56,13 +58,13 @@ export function buildTimeline(
     }
     if (message.role === 'assistant') {
       if (typeof message.content === 'string') {
-        if (message.content) items.push({ id: `${base}-assistant`, kind: 'assistant', text: message.content, timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
+        if (message.content) items.push({ id: `${base}-assistant`, kind: 'assistant', text: message.content, metrics: hasTurnTelemetry ? undefined : formatMessageUsage(message.usage), timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
         return
       }
       for (const [blockIndex, candidate] of (message.content ?? []).entries()) {
         const block = asRecord(candidate)
         if (block.type === 'text' && typeof block.text === 'string' && block.text) {
-          items.push({ id: `${base}-text-${blockIndex}`, kind: 'assistant', text: block.text, timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
+          items.push({ id: `${base}-text-${blockIndex}`, kind: 'assistant', text: block.text, metrics: !hasTurnTelemetry && blockIndex === (message.content?.length ?? 0) - 1 ? formatMessageUsage(message.usage) : undefined, timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
         } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
           items.push({ id: `${base}-thinking-${blockIndex}`, kind: 'thinking', text: block.thinking, timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
         } else if (block.type === 'toolCall') {
@@ -131,6 +133,10 @@ export function buildTimeline(
       return
     }
     const text = messageText(message)
+    if (text && message.role === 'telemetry') {
+      items.push({ id: `${base}-telemetry`, kind: 'context-injection', source: 'turn metrics', text, images: [], timestamp: message.timestamp })
+      return
+    }
     if (text) items.push({ id: `${base}-status`, kind: 'status', text, timestamp: message.timestamp, ...(revertEntryId ? { revertEntryId } : {}) })
   })
 

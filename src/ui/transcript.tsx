@@ -1,14 +1,18 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PiImageContent } from '../pi/types.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
+import { workspaceDisplayName } from '../workbench/workspace-name.ts'
 import { buildTimeline, type TimelineItem } from '../workbench/timeline.ts'
 import { Icon } from './icons.tsx'
-import { colors, nativeTheme, type ResolvedTheme } from './theme.ts'
+import { colors, nativeTheme, useNativeTheme, type ResolvedTheme } from './theme.ts'
 import { MathMarkdown } from './math-markdown.tsx'
+import { AnsiText } from './ansi-text.tsx'
 import { openExternal } from './open-external.ts'
-import { formatElapsedSeconds } from './duration.ts'
-import { copyTextToClipboard, hydrateMessageImages } from './clipboard-media.ts'
+
+import { copyTextToClipboard, hydrateMessageImages, messageImageSrc } from './clipboard-media.ts'
 import { NativeVirtualList, type NativeScrollEvent, type NativeVisibleRangeEvent } from './primitives.tsx'
+import { TRANSCRIPT_VIRTUAL_WINDOW_SIZE, useNativeVirtualWindow, usePrependCount } from './virtual-list.tsx'
+import { reuseRowsById, virtualWindowForTail } from './virtual-window.ts'
 import { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeight } from './composer-surfaces.tsx'
 import { queueDockReserveHeight } from './queue-dock.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv, SPRING_SETTLE_MS, TextShimmer, useEaseProgress } from './motion.ts'
@@ -19,15 +23,16 @@ import { TranscriptInlineAction } from './transcript-actions.tsx'
 import { FabricCollapsedCalls, ToolRow, toolIcon, toolSummary } from './transcript-tools.tsx'
 
 export { fabricSummaryPalette } from './transcript-tools.tsx'
+import { useThrottledMarkdownSource } from './streaming-markdown.ts'
 import {
   currentWorkWave,
   emptyWorkTrace,
   groupWorkItems,
-  isActiveTraceEntry,
-  isCompactionWorkTrace,
   liveWorkTraceId,
   pendingWorkTraceId,
   projectTranscriptRows,
+  transcriptProjectionRowsEqual,
+  workTraceLabel,
   type DisplayTimelineItem,
   type TraceTimelineItem,
   type TranscriptProjectionRow,
@@ -77,6 +82,25 @@ interface TranscriptDisclosureState {
 const EMPTY_IDS: ReadonlySet<string> = new Set()
 const EMPTY_LIMITS: ReadonlyMap<string, number> = new Map()
 
+function transcriptRenderRowsEqual(left: TranscriptRenderRow, right: TranscriptRenderRow): boolean {
+  if (left === right) return true
+  if (left.id !== right.id || left.kind !== right.kind) return false
+  if (left.kind === 'retiring-assistant' && right.kind === 'retiring-assistant') return left.item.id === right.item.id && left.item.text === right.item.text
+  if (left.kind === 'empty-conversation' || left.kind === 'working' || left.kind === 'composer-spacer') return true
+  return transcriptProjectionRowsEqual(left as TranscriptProjectionRow, right as TranscriptProjectionRow)
+}
+
+function useStableTranscriptRows(rows: TranscriptRenderRow[], identity: string): TranscriptRenderRow[] {
+  const previous = useRef({ identity, rows: [] as TranscriptRenderRow[] })
+  if (previous.current.identity !== identity) {
+    previous.current = { identity, rows }
+    return rows
+  }
+  const next = reuseRowsById(previous.current.rows, rows, transcriptRenderRowsEqual)
+  previous.current = { identity, rows: next }
+  return next
+}
+
 export const Transcript = memo(function Transcript({
   state,
   presenters,
@@ -96,12 +120,13 @@ export const Transcript = memo(function Transcript({
   appearance?: ResolvedTheme
   interactionDisabled?: boolean
 }) {
+  useNativeTheme()
   const sessionKey = state.session.sessionFile ?? state.session.sessionId ?? state.workspacePath
   const paging = useRef(false)
   const previewLeases = useRef(new Map<string, number>())
   const previewLeaseSession = useRef(sessionKey)
   const visibleStartIndex = useRef<number | undefined>(undefined)
-  const historyDemandDirection = useRef<'older' | 'newer'>('older')
+  const historyDemandDirection = useRef<'older' | 'newer' | 'idle'>('idle')
   const pendingHistoryPage = useRef<{ anchorId: string | undefined; continuation: number } | undefined>(undefined)
   if (previewLeaseSession.current !== sessionKey) {
     previewLeaseSession.current = sessionKey
@@ -110,6 +135,8 @@ export const Transcript = memo(function Transcript({
   const [disclosures, setDisclosures] = useState<TranscriptDisclosureState>(() => ({ sessionKey, traces: new Set(), entries: new Set(), traceLimits: new Map() }))
   const [retiringAssistants, setRetiringAssistants] = useState<AssistantTimelineItem[]>([])
   const [followTail, setFollowTail] = useState(() => state.session.isStreaming)
+  const followTailRef = useRef(followTail)
+  followTailRef.current = followTail
   const previousAssistants = useRef<AssistantTimelineItem[]>([])
   const wasStreaming = useRef(state.session.isStreaming)
   const stickyHeaderIds = useRef(new Set<string>())
@@ -124,7 +151,7 @@ export const Transcript = memo(function Transcript({
     paging.current = false
     pendingHistoryPage.current = undefined
     visibleStartIndex.current = undefined
-    historyDemandDirection.current = 'older'
+    historyDemandDirection.current = 'idle'
     previousAssistants.current = []
     wasStreaming.current = state.session.isStreaming
     stickyHeaderIds.current = new Set()
@@ -184,7 +211,18 @@ export const Transcript = memo(function Transcript({
     next.push({ id: 'composer-spacer', kind: 'composer-spacer' })
     return next
   }, [items, liveTraceId, projectedRows, retiringAssistants, state.session.isStreaming, traceLengths])
-  const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [row.id, index])), [rows])
+  const stableRows = useStableTranscriptRows(rows, sessionKey)
+  const rowIds = useMemo(() => stableRows.map((row) => row.id), [stableRows])
+  const prepended = usePrependCount(rowIds, sessionKey)
+  const virtualWindow = useNativeVirtualWindow(
+    stableRows.length,
+    sessionKey,
+    virtualWindowForTail(stableRows.length, TRANSCRIPT_VIRTUAL_WINDOW_SIZE),
+    TRANSCRIPT_VIRTUAL_WINDOW_SIZE,
+    { pinToEnd: followTail, prepended },
+  )
+  const visibleRows = stableRows.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
+  const rowIndexById = useMemo(() => new Map(stableRows.map((row, index) => [row.id, index])), [stableRows])
   // Spread retained-tree growth across frames; native virtualization handles layout and paint per direct row.
   useEffect(() => {
     if (disclosures.sessionKey !== sessionKey) return
@@ -211,7 +249,7 @@ export const Transcript = memo(function Transcript({
   const loadEarlier = (continuation = 0) => {
     if (historyDemandDirection.current !== 'older' || !onLoadEarlier || !state.messagesHasOlder || state.messagesLoadingEarlier || paging.current) return
     paging.current = true
-    pendingHistoryPage.current = { anchorId: rows[0]?.id, continuation }
+    pendingHistoryPage.current = { anchorId: stableRows[0]?.id, continuation }
     try {
       const request = onLoadEarlier()
       if (request) {
@@ -228,15 +266,30 @@ export const Transcript = memo(function Transcript({
     }
   }
   const handleVisibleRange = (event: NativeVisibleRangeEvent) => {
+    virtualWindow.onVisibleRange(event)
     if (typeof event.startIndex !== 'number') return
     const firstVisible = Math.max(0, Math.floor(event.startIndex))
+    const previousFirst = visibleStartIndex.current
     visibleStartIndex.current = firstVisible
+    // Opening a session lands pinned to the tail and must not page on its own. Travel toward older rows counts as
+    // upward intent even without a wheel delta: a shrinking first index, or a viewport parked at the top of a list
+    // whose tail is out of view (keyboard or programmatic scroll-to-top).
+    if (historyDemandDirection.current === 'idle') {
+      const lastVisible = typeof event.endIndex === 'number' ? Math.floor(event.endIndex) : stableRows.length - 1
+      const tailOutOfView = lastVisible < stableRows.length - 1 - HISTORY_PREFETCH_ROWS
+      if ((previousFirst !== undefined && firstVisible < previousFirst) || (firstVisible === 0 && tailOutOfView && !followTailRef.current)) {
+        historyDemandDirection.current = 'older'
+      }
+    }
     if (firstVisible <= HISTORY_PREFETCH_ROWS) loadEarlier()
   }
   // Downward intent owns the viewport and cancels every queued hidden-page continuation.
   const handleHistoryScroll = (event: NativeScrollEvent) => {
     if (typeof event.deltaY !== 'number' || event.deltaY === 0) return
-    setFollowTail(false)
+    if (followTailRef.current && Math.abs(event.deltaY) >= 4) {
+      followTailRef.current = false
+      setFollowTail(false)
+    }
     if (event.deltaY < 0) {
       historyDemandDirection.current = 'newer'
       pendingHistoryPage.current = undefined
@@ -263,7 +316,7 @@ export const Transcript = memo(function Transcript({
     }
   }, [rowIndexById, state.messagesHasOlder, state.messagesLoadingEarlier])
 
-  const toggleTrace = (traceId: string) => {
+  const toggleTrace = useCallback((traceId: string) => {
     setDisclosures((current) => {
       const traces = new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS)
       if (traces.has(traceId)) traces.delete(traceId)
@@ -273,17 +326,28 @@ export const Transcript = memo(function Transcript({
       else traceLimits.delete(traceId)
       return { sessionKey, traces, entries: new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS), traceLimits }
     })
-  }
-  const toggleEntry = (rowId: string) => {
+  }, [sessionKey, traceLengths])
+  const toggleEntry = useCallback((rowId: string) => {
     setDisclosures((current) => {
       const entries = new Set(current.sessionKey === sessionKey ? current.entries : EMPTY_IDS)
       if (entries.has(rowId)) entries.delete(rowId)
       else entries.add(rowId)
       return { sessionKey, traces: new Set(current.sessionKey === sessionKey ? current.traces : EMPTY_IDS), entries, traceLimits: new Map(current.sessionKey === sessionKey ? current.traceLimits : EMPTY_LIMITS) }
     })
-  }
+  }, [sessionKey])
+  const leasePreviewHeight = useCallback((key: string, natural: number, hold: boolean) => {
+    if (!hold) {
+      previewLeases.current.delete(key)
+      return natural
+    }
+    const next = Math.max(previewLeases.current.get(key) ?? 0, natural)
+    previewLeases.current.set(key, next)
+    return next
+  }, [])
+  const finishRetire = useCallback((id: string) => {
+    setRetiringAssistants((current) => current.filter((item) => item.id !== id))
+  }, [])
 
-  // Direct keyed children preserve measured prepend anchors; each expanded entry is its own native virtual row.
   return (
     <div testId="transcript-scroll-surface" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column', pointerEvents: interactionDisabled ? 'none' : 'auto' }} onScroll={handleHistoryScroll}>
       <NativeVirtualList
@@ -295,9 +359,11 @@ export const Transcript = memo(function Transcript({
         onVisibleRange={handleVisibleRange}
         overdraw={240}
         estimatedItemHeight={TRANSCRIPT_ESTIMATED_ROW_HEIGHT}
+        itemCount={stableRows.length}
+        windowStart={virtualWindow.windowStart}
         style={{ flexGrow: 1, minHeight: 0, width: '100%' }}
       >
-        {rows.map((row) => (
+        {visibleRows.map((row) => (
           <TranscriptRowTransition key={row.id} row={row} live={row.kind === 'trace-header' && row.id === liveTraceId} persist={row.kind === 'trace-header' && stickyHeaderIds.current.has(row.id)}>
           <ProjectedTranscriptRow
             row={row}
@@ -306,15 +372,7 @@ export const Transcript = memo(function Transcript({
             historyHasOlder={state.messagesHasOlder}
             activity={state.activity}
             live={row.kind === 'trace-header' && row.id === liveTraceId}
-            leasePreviewHeight={(key, natural, hold) => {
-              if (!hold) {
-                previewLeases.current.delete(key)
-                return natural
-              }
-              const next = Math.max(previewLeases.current.get(key) ?? 0, natural)
-              previewLeases.current.set(key, next)
-              return next
-            }}
+            leasePreviewHeight={leasePreviewHeight}
             questionnaireCollapsed={state.questionnaireCollapsed !== undefined}
             queue={state.queue}
             statusItems={state.statusItems}
@@ -330,7 +388,7 @@ export const Transcript = memo(function Transcript({
             onOpenDiff={onOpenDiff}
             onRevert={onRevert}
             onDismissNotice={onDismissNotice}
-            onFinishRetire={(id) => setRetiringAssistants((current) => current.filter((item) => item.id !== id))}
+            onFinishRetire={finishRetire}
           />
           </TranscriptRowTransition>
         ))}
@@ -378,7 +436,7 @@ function TranscriptRowTransition({ row, live, persist, children }: { row: Transc
   )
 }
 
-function ProjectedTranscriptRow({
+const ProjectedTranscriptRow = memo(function ProjectedTranscriptRow({
   row,
   presenters,
   workspacePath,
@@ -419,6 +477,7 @@ function ProjectedTranscriptRow({
   onDismissNotice(id: number): void
   onFinishRetire(id: string): void
 }) {
+  useNativeTheme()
   if (row.kind === 'empty-conversation') return <EmptyConversation workspacePath={workspacePath} />
   if (row.kind === 'working') return <WorkingRow activity={activity} />
   if (row.kind === 'composer-spacer') return <ComposerSpacer questionnaireCollapsed={questionnaireCollapsed} queue={queue} statusItems={statusItems} widgets={widgets} />
@@ -494,7 +553,25 @@ function ProjectedTranscriptRow({
       </div>
     </TranscriptRowShell>
   )
-}
+}, (previous, next) => previous.row === next.row
+  && previous.presenters === next.presenters
+  && previous.workspacePath === next.workspacePath
+  && previous.historyHasOlder === next.historyHasOlder
+  && previous.activity === next.activity
+  && previous.live === next.live
+  && previous.leasePreviewHeight === next.leasePreviewHeight
+  && previous.questionnaireCollapsed === next.questionnaireCollapsed
+  && previous.queue === next.queue
+  && previous.statusItems === next.statusItems
+  && previous.widgets === next.widgets
+  && previous.expanded === next.expanded
+  && previous.expandedEntryIds === next.expandedEntryIds
+  && previous.onToggleTrace === next.onToggleTrace
+  && previous.onToggleEntry === next.onToggleEntry
+  && previous.onOpenDiff === next.onOpenDiff
+  && previous.onRevert === next.onRevert
+  && previous.onDismissNotice === next.onDismissNotice
+  && previous.onFinishRetire === next.onFinishRetire)
 
 function TraceNotificationGroup({ items, onDismiss }: { items: Array<Extract<TraceTimelineItem, { kind: 'notice' }>>; onDismiss(id: number): void }) {
   return (
@@ -553,15 +630,17 @@ function UserMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { 
 }
 
 function AssistantMessage({ item, onRevert }: { item: Extract<DisplayTimelineItem, { kind: 'assistant' }>; onRevert(entryId: string): void }) {
+  const markdownSource = useThrottledMarkdownSource(item.text || '…', Boolean(item.streaming))
   return (
     <div testId="assistant-message" style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, gap: 5, paddingLeft: 4, paddingRight: 4 }}>
       <MathMarkdown
         testId="assistant-message-markdown"
-        source={item.text || '…'}
+        source={markdownSource}
         theme={nativeTheme}
         style={{ width: '100%', minWidth: 0 }}
         onLinkClick={(event) => openExternal(String(event.value ?? ''))}
       />
+      {!item.streaming && item.metrics && <AnsiText testId="response-usage" text={item.metrics} />}
       {!item.streaming && <MessageFooter timestamp={item.timestamp} copyText={item.text} revertEntryId={item.revertEntryId} align="start" onRevert={onRevert} />}
     </div>
   )
@@ -596,8 +675,7 @@ function ExecutionTraceHeader({
   onToggle(): void
   body?: React.ReactNode
 }) {
-  const compaction = compactionTraceLabel(trace)
-  const duration = durationKnown ? traceDuration(trace.items) : undefined
+  const label = workTraceLabel(trace, running, durationKnown)
   const wave = currentWorkWave(trace.items)
   const collapsedTools = running && !expanded ? wave.tools.slice(-COLLAPSED_TRACE_TOOL_LIMIT) : []
   const preview = wave.preview && wave.preview.kind !== 'tool' ? wave.preview : undefined
@@ -615,7 +693,7 @@ function ExecutionTraceHeader({
       >
         {running
           ? <TextShimmer testId="execution-trace-label" text="Working" fontSize={13} baseColor={colors.textMuted} highlightColor={colors.text} />
-          : <text testId="execution-trace-label" style={{ color: colors.textMuted, fontSize: 13, userSelect: 'none', pointerEvents: 'none' }}>{compaction ?? (duration ? `Worked for ${duration}` : 'Worked')}</text>}
+          : <text testId="execution-trace-label" style={{ color: colors.textMuted, fontSize: 13, userSelect: 'none', pointerEvents: 'none' }}>{label}</text>}
         <TraceChevron expanded={expanded} />
       </div>
       {!expanded && (
@@ -744,6 +822,7 @@ function TraceAssistant({ item, expanded, onToggle }: { item: AssistantTimelineI
 }
 
 function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<TimelineItem, { kind: 'context-injection' }>; expanded: boolean; onToggle(): void }) {
+  if (item.source === 'turn metrics') return <AnsiText testId="response-telemetry" text={item.text} />
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
       <TraceDisclosure label={contextInjectionLabel(item)} text={item.text || `${item.images.length} image${item.images.length === 1 ? '' : 's'}`} testId="trace-context-injection" expanded={expanded} onToggle={onToggle} />
@@ -751,7 +830,7 @@ function TraceContextInjection({ item, expanded, onToggle }: { item: Extract<Tim
         <div testId="context-injection-images" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {item.images.map((image, index) => React.createElement('img', {
             key: `${item.id}-image-${index}`,
-            src: image.previewPath ?? `data:${image.mimeType};base64,${image.data}`,
+            src: messageImageSrc(image),
             alt: `${item.source ?? 'Extension'} image ${index + 1}`,
             objectFit: 'contain',
             style: { maxWidth: '100%', maxHeight: 220, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background },
@@ -809,13 +888,6 @@ function TracePreview({ item }: { item: TraceTimelineItem }) {
 
 function contextInjectionLabel(item: Extract<TimelineItem, { kind: 'context-injection' }>): string {
   return item.source ? item.source.replace(/\[|\]/g, '').toUpperCase() : 'CONTEXT INJECTION'
-}
-
-function compactionTraceLabel(trace: Extract<DisplayTimelineItem, { kind: 'work-trace' }>): string | undefined {
-  if (!isCompactionWorkTrace(trace)) return undefined
-  const compaction = trace.items.find((item): item is Extract<TraceTimelineItem, { kind: 'compaction' }> => item.kind === 'compaction')
-  if (!compaction) return undefined
-  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${compaction.tokensBefore.toLocaleString()} tokens` : 'Compacted'
 }
 
 function CollapsedTraceTools({ items, hidden, presenters }: { items: Array<Extract<TraceTimelineItem, { kind: 'tool' }>>; hidden: number; presenters: ReadonlyMap<string, ToolPresenter> }) {
@@ -912,10 +984,11 @@ function formatDuration(durationMs: number): string {
 }
 
 function MessageImage({ image }: { image: PiImageContent }) {
+  const src = messageImageSrc(image)
   return (
     <div style={{ width: 156, height: 104, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, overflow: 'hidden' }}>
-      {image.previewPath
-        ? React.createElement('img', { src: image.previewPath, alt: 'Attached image', objectFit: 'cover', style: { width: 156, height: 104 } } as never)
+      {src
+        ? React.createElement('img', { src, alt: 'Attached image', objectFit: 'cover', style: { width: 156, height: 104 } } as never)
         : <text style={{ color: colors.textFaint, fontSize: 11 }}>Attached image</text>}
     </div>
   )
@@ -985,7 +1058,7 @@ function StatusMessage({ text, error, timestamp }: { text: string; error: boolea
 
 function EmptyConversation({ workspacePath }: { workspacePath: string }) {
   const { contentGutter } = useResponsiveLayout()
-  const project = workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? workspacePath
+  const project = workspaceDisplayName(workspacePath)
   return (
     <div style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', width: '100%', paddingLeft: contentGutter, paddingRight: contentGutter, paddingBottom: 190 }}>
       <div style={{ width: '100%', maxWidth: 768, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
@@ -1028,18 +1101,6 @@ export function ChangedFilesCard({ paths, onOpenDiff }: { paths: string[]; onOpe
   )
 }
 
-function traceDuration(items: Array<Pick<TimelineItem, 'timestamp'>>): string | undefined {
-  let earliest = Number.POSITIVE_INFINITY
-  let latest = Number.NEGATIVE_INFINITY
-  let timestampCount = 0
-  for (const item of items) {
-    if (typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp)) continue
-    earliest = Math.min(earliest, item.timestamp)
-    latest = Math.max(latest, item.timestamp)
-    timestampCount += 1
-  }
-  return timestampCount > 1 ? formatElapsedSeconds((latest - earliest) / 1_000) : undefined
-}
 
 function formatTimestamp(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })

@@ -549,7 +549,7 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('sidebar-settings').click()
     expect(root.renderer.getPaintedText()).toContain('Pi executable')
     expect(await automation.getByTestId('settings-global').count()).toBe(1)
-    expect(root.renderer.getPaintedText()).toContain('Interleaved with work traces')
+    expect(root.renderer.getPaintedText().join('\n')).toContain('Copy confirmations stay as toasts')
     expect(await automation.getByTestId('theme-mode-system').count()).toBe(1)
     await automation.getByTestId('theme-mode-light').click()
     root.renderer.flush()
@@ -581,7 +581,7 @@ describeNative('WorkbenchApp', () => {
       expect(statSync(screenshot).size).toBeGreaterThan(10_000)
     }
     await automation.getByTestId('sidebar-session-active').click()
-    await Bun.sleep(30)
+    await Bun.sleep(80)
     root.renderer.flush()
     expect(await automation.getByTestId('settings-view').count()).toBe(0)
     expect(await automation.getByTestId('composer-surface').count()).toBe(1)

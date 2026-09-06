@@ -1,4 +1,5 @@
 import type { TimelineItem } from '../workbench/timeline.ts'
+import { formatElapsedSeconds } from './duration.ts'
 
 export type TraceTimelineItem = Extract<TimelineItem, { kind: 'thinking' | 'context-injection' | 'tool' | 'notice' | 'assistant' | 'compaction' }>
 
@@ -35,6 +36,20 @@ export function groupWorkItems(items: TimelineItem[], isStreaming = false): Disp
   const grouped: DisplayTimelineItem[] = []
   let boundaryId: string | undefined
   for (const item of items) {
+    // Turn metrics may be persisted after the final answer. Keep them with that turn's work.
+    if (item.kind === 'context-injection' && item.source === 'turn metrics') {
+      let attached = false
+      for (let index = grouped.length - 1; index >= 0; index--) {
+        const candidate = grouped[index]!
+        if (candidate.kind === 'user') break
+        if (candidate.kind === 'work-trace' && !isCompactionWorkTrace(candidate)) {
+          candidate.items.push(item)
+          attached = true
+          break
+        }
+      }
+      if (attached) continue
+    }
     if (item.kind === 'compaction') {
       grouped.push({
         id: `work-trace-${item.id}`,
@@ -200,4 +215,104 @@ function changedPath(item: TraceTimelineItem): string | undefined {
   if (item.kind !== 'tool' || (item.tool.name !== 'edit' && item.tool.name !== 'write')) return undefined
   const args = item.tool.args && typeof item.tool.args === 'object' ? item.tool.args as Record<string, unknown> : {}
   return typeof args.path === 'string' ? args.path : undefined
+}
+
+export function traceDuration(items: Array<Pick<TimelineItem, 'timestamp'>>): string | undefined {
+  let earliest = Number.POSITIVE_INFINITY
+  let latest = Number.NEGATIVE_INFINITY
+  let timestampCount = 0
+  for (const item of items) {
+    if (typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp)) continue
+    earliest = Math.min(earliest, item.timestamp)
+    latest = Math.max(latest, item.timestamp)
+    timestampCount += 1
+  }
+  return timestampCount > 1 ? formatElapsedSeconds((latest - earliest) / 1_000) : undefined
+}
+
+export function compactionTraceLabel(trace: Extract<DisplayTimelineItem, { kind: 'work-trace' }>): string | undefined {
+  if (!isCompactionWorkTrace(trace)) return undefined
+  const compaction = trace.items.find((item): item is Extract<TraceTimelineItem, { kind: 'compaction' }> => item.kind === 'compaction')
+  if (!compaction) return undefined
+  return typeof compaction.tokensBefore === 'number' ? `Compacted from ${compaction.tokensBefore.toLocaleString('en-US')} tokens` : 'Compacted'
+}
+
+export function workTraceLabel(
+  trace: Extract<DisplayTimelineItem, { kind: 'work-trace' }>,
+  running: boolean,
+  durationKnown: boolean,
+): string {
+  if (running) return 'Working'
+  const compaction = compactionTraceLabel(trace)
+  if (compaction) return compaction
+  const duration = durationKnown ? traceDuration(trace.items) : undefined
+  return duration ? `Worked for ${duration}` : 'Worked'
+}
+
+export function serializeProjectionRows(rows: readonly TranscriptProjectionRow[]): Array<{ id: string; kind: TranscriptProjectionRow['kind'] }> {
+  return rows.map((row) => ({ id: row.id, kind: row.kind }))
+}
+
+export function transcriptProjectionRowsEqual(left: TranscriptProjectionRow, right: TranscriptProjectionRow): boolean {
+  if (left === right) return true
+  if (left.id !== right.id || left.kind !== right.kind) return false
+  if (left.kind === 'timeline-item' && right.kind === 'timeline-item') return timelineItemsEqual(left.item, right.item)
+  if (left.kind === 'trace-header' && right.kind === 'trace-header') return workTracesEqual(left.trace, right.trace)
+  if (left.kind === 'trace-entry' && right.kind === 'trace-entry') return left.traceId === right.traceId && timelineItemsEqual(left.item, right.item)
+  if (left.kind === 'trace-notices' && right.kind === 'trace-notices') {
+    return left.traceId === right.traceId && left.notices.length === right.notices.length && left.notices.every((notice, index) => timelineItemsEqual(notice, right.notices[index]!))
+  }
+  if (left.kind === 'trace-files' && right.kind === 'trace-files') {
+    return left.traceId === right.traceId && left.paths.length === right.paths.length && left.paths.every((path, index) => path === right.paths[index])
+  }
+  if (left.kind === 'trace-continuation' && right.kind === 'trace-continuation') return left.traceId === right.traceId && left.remaining === right.remaining
+  return false
+}
+
+function workTracesEqual(
+  left: Extract<DisplayTimelineItem, { kind: 'work-trace' }>,
+  right: Extract<DisplayTimelineItem, { kind: 'work-trace' }>,
+): boolean {
+  return left.id === right.id
+    && left.identity === right.identity
+    && left.boundaryId === right.boundaryId
+    && left.revertEntryId === right.revertEntryId
+    && left.changedPaths.length === right.changedPaths.length
+    && left.changedPaths.every((path, index) => path === right.changedPaths[index])
+    && left.items.length === right.items.length
+    && left.items.every((item, index) => timelineItemsEqual(item, right.items[index]!))
+}
+
+function timelineItemsEqual(left: TimelineItem, right: TimelineItem | undefined): boolean {
+  if (!right) return false
+  if (left === right) return true
+  if (left.id !== right.id || left.kind !== right.kind) return false
+  if ('text' in left || 'text' in right) {
+    if (('text' in left ? left.text : undefined) !== ('text' in right ? right.text : undefined)) return false
+  }
+  if ('streaming' in left || 'streaming' in right) {
+    if (Boolean('streaming' in left && left.streaming) !== Boolean('streaming' in right && right.streaming)) return false
+  }
+  if ('timestamp' in left || 'timestamp' in right) {
+    if (('timestamp' in left ? left.timestamp : undefined) !== ('timestamp' in right ? right.timestamp : undefined)) return false
+  }
+  if ('revertEntryId' in left || 'revertEntryId' in right) {
+    if (('revertEntryId' in left ? left.revertEntryId : undefined) !== ('revertEntryId' in right ? right.revertEntryId : undefined)) return false
+  }
+  if (left.kind === 'user' && right.kind === 'user') return left.images.length === right.images.length
+  if (left.kind === 'status' && right.kind === 'status') return left.tone === right.tone
+  if (left.kind === 'notice' && right.kind === 'notice') return left.notice.id === right.notice.id && left.notice.message === right.notice.message
+  if (left.kind === 'tool' && right.kind === 'tool') {
+    return left.tool.id === right.tool.id
+      && left.tool.name === right.tool.name
+      && left.tool.status === right.tool.status
+      && left.tool.isError === right.tool.isError
+      && left.tool.output === right.tool.output
+      && left.tool.argsText === right.tool.argsText
+  }
+  if (left.kind === 'compaction' && right.kind === 'compaction') return left.tokensBefore === right.tokensBefore
+  if (left.kind === 'context-injection' && right.kind === 'context-injection') {
+    return left.source === right.source && left.images.length === right.images.length
+  }
+  return true
 }

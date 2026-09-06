@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
-import { phonePairingLink } from '../src/host/server.ts'
+import { phonePairingLink, preferredPairingLink } from '../src/host/server.ts'
 import { PhonePairingQr } from '../src/ui/phone-pairing.tsx'
 import { encodeQrMatrix, qrPng, tryQrSvg } from '../src/web/qr.ts'
 
@@ -25,6 +25,7 @@ describe('phone pairing QR', () => {
   it('does not advertise a loopback host as a scannable phone link', () => {
     expect(phonePairingLink({ hostname: '127.0.0.1', port: 4817, token: 'abc', url: 'http://127.0.0.1:4817' })).toBeUndefined()
     expect(phonePairingLink({ hostname: 'localhost', port: 4817, token: 'abc', url: 'http://127.0.0.1:4817' })).toBeUndefined()
+    expect(preferredPairingLink({ hostname: '127.0.0.1', port: 4817, token: 'abc', url: 'http://127.0.0.1:4817' }, 'https://mac.tailnet.ts.net:8443')).toBe('https://mac.tailnet.ts.net:8443/?token=abc')
   })
 
   it('round-trips a Tailscale connect URL through the offline encoder', () => {

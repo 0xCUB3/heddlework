@@ -1,8 +1,13 @@
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
-import { serviceToken, type WorkbenchPlugin } from '../core/kernel.ts'
+import { serviceToken, type PluginContext, type WorkbenchPlugin } from '../core/kernel.ts'
 import { flowRuntimeToken } from '../flows/plugin.ts'
+import { sleepPreventionToken } from '../power/plugin.ts'
+import { terminalSessionToken } from '../terminal/plugin.ts'
+import type { TerminalSessionService } from '../terminal/service.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { createWorkspaceHost, DEFAULT_HOST_BIND, DEFAULT_HOST_PORT, type WorkspaceHost } from './server.ts'
+import { TailnetServeService } from './tailnet-serve.ts'
+import type { TailscaleCli } from './tailscale-cli.ts'
 import { loadOrCreateHostToken } from './token.ts'
 import { readRemoteAccessMode, RemoteAccessService, type RemoteAccessMode } from './remote-access.ts'
 
@@ -19,27 +24,34 @@ export interface WorkspaceHostPluginOptions {
   tokenPath?: string | false | undefined
   token?: string | undefined
   staticRoot?: string | undefined
+  tailscaleCli?: TailscaleCli | undefined
 }
 
 export const workspaceHostToken = serviceToken<WorkspaceHost | undefined>('workspace-host')
 export const remoteAccessToken = serviceToken<RemoteAccessService>('remote-access')
+export const tailnetServeToken = serviceToken<TailnetServeService>('tailnet-serve')
 
 export function createWorkspaceHostPlugin(options: WorkspaceHostPluginOptions): WorkbenchPlugin {
   return {
     id: 'workspace-host',
-    requires: [workbenchControllerToken, flowRuntimeToken],
+    requires: [workbenchControllerToken, flowRuntimeToken, sleepPreventionToken],
     activate(ctx) {
       const controller = ctx.get(workbenchControllerToken)
       const flows = ctx.get(flowRuntimeToken)
+      const sleepPrevention = ctx.get(sleepPreventionToken)
       const port = options.port ?? DEFAULT_HOST_PORT
       const hostname = options.hostname ?? DEFAULT_HOST_BIND
       const initialMode: RemoteAccessMode = options.enabled ? (hostname === '0.0.0.0' || hostname === '::' ? 'network' : 'local') : 'off'
+      const preferencePath = options.preferencePath ?? false
+      let tailnet: TailnetServeService | undefined
       const service = new RemoteAccessService({
         initialMode,
-        preferencePath: options.preferencePath ?? false,
+        preferencePath,
         lockedBy: options.lockedBy,
         start: (mode) => createWorkspaceHost({
           browserIntegrations: options.browserIntegrations,
+          sleepPrevention,
+          terminals: optionalService(ctx, terminalSessionToken),
           controller,
           flows,
           workspacePath: options.workspacePath,
@@ -47,12 +59,35 @@ export function createWorkspaceHostPlugin(options: WorkspaceHostPluginOptions): 
           hostname: mode === 'network' ? '0.0.0.0' : DEFAULT_HOST_BIND,
           token: options.token ?? loadOrCreateHostToken(options.tokenPath ?? false),
           staticRoot: options.staticRoot,
+          extraHostUrls: () => tailnet?.advertisedHostUrls() ?? [],
         }),
       })
+      tailnet = new TailnetServeService({
+        preferencePath,
+        getHost: () => service.host,
+        ...(options.tailscaleCli ? { cli: options.tailscaleCli } : {}),
+      })
+      const unsubscribe = service.subscribe(() => {
+        if (service.getSnapshot().busy) return
+        void tailnet?.reconcile()
+      })
       ctx.provide(remoteAccessToken, service)
+      ctx.provide(tailnetServeToken, tailnet)
       ctx.provide(workspaceHostToken, service.host)
-      ctx.effect(() => () => void service.close())
+      ctx.effect(() => () => {
+        unsubscribe()
+        void tailnet?.dispose()
+        void service.close()
+      })
     },
+  }
+}
+
+function optionalService<T>(ctx: PluginContext, token: { key: symbol; name: string; _type?: T }): T | undefined {
+  try {
+    return ctx.get(token)
+  } catch {
+    return undefined
   }
 }
 

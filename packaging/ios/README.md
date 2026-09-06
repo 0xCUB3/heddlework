@@ -22,7 +22,7 @@ On the Mac:
 HEDDLEWORK_HOST_BIND=0.0.0.0 bun run host
 ```
 
-If the Mac is on Tailscale, the printed link and QR code use the tailnet address so the phone can connect from anywhere. Otherwise they use the LAN address. On the phone, paste the connect link, scan the QR code, or open `heddlework://connect?url=<percent-encoded connect link>`. The app stores the link and reopens into the workspace. Settings → Disconnect clears it.
+If Tailnet HTTPS is set up on the Mac, the printed link and QR code use `https://<magicdns>/` (or `:8443` / `:10000` when 443 is already taken). Otherwise they use the Tailscale IP or LAN address. The phone must be on the same tailnet. On the phone, paste the connect link, scan the QR code, or open `heddlework://connect?url=<percent-encoded connect link>`. The app stores the link and reopens into the workspace. Settings → Disconnect clears it. Serve itself is configured only on the Mac.
 
 ## TestFlight via Xcode Cloud
 

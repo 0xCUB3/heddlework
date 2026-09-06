@@ -1,11 +1,13 @@
 import type { BrowserIntegrationSnapshot } from '../browser/integration-types.ts'
-import { applySnapshotPatch, FrameAssembler, parseServerMessage, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
+import { applySnapshotPatch, FrameAssembler, parseServerMessage, type AttentionEvent, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
 import type { FlowRuntimeSnapshot } from '../flows/types.ts'
+import type { SleepPreventionSnapshot } from '../power/types.ts'
 
 export type WorkspaceClientStatus = 'connecting' | 'open' | 'closed'
 
 export interface WorkspaceClientView {
   browserIntegrations?: BrowserIntegrationSnapshot | undefined
+  sleepPrevention?: SleepPreventionSnapshot | undefined
   status: WorkspaceClientStatus
   workspacePath: string
   state: WorkbenchSnapshot | undefined
@@ -30,6 +32,7 @@ export class WorkspaceClient {
   #commandId = 0
   #pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>()
   #listeners = new Set<() => void>()
+  #attentionListeners = new Set<(event: AttentionEvent) => void>()
   #frames = new FrameAssembler()
   #view: WorkspaceClientView = { status: 'closed', workspacePath: '', state: undefined, flows: undefined }
 
@@ -51,12 +54,17 @@ export class WorkspaceClient {
     this.#socket?.close()
     this.#socket = undefined
     this.#failPending(new Error('Disconnected'))
-    this.#set({ status: 'closed', browserIntegrations: undefined })
+    this.#set({ status: 'closed', browserIntegrations: undefined, sleepPrevention: undefined })
   }
 
   subscribe(listener: () => void): () => void {
     this.#listeners.add(listener)
     return () => { this.#listeners.delete(listener) }
+  }
+
+  onAttention(listener: (event: AttentionEvent) => void): () => void {
+    this.#attentionListeners.add(listener)
+    return () => { this.#attentionListeners.delete(listener) }
   }
 
   getSnapshot(): WorkspaceClientView {
@@ -118,7 +126,9 @@ export class WorkspaceClient {
       if (!message) return
       if (message.kind === 'welcome') {
         this.#candidates = mergeCandidates(this.#url, message.hostUrls)
-        this.#set({ status: 'open', workspacePath: message.workspacePath, state: normalizeSettledSnapshot(message.snapshot), flows: message.flows, browserIntegrations: message.browserIntegrations })
+        // A fresh welcome supersedes any error from the previous socket (rejected sends, socket errors), otherwise the
+        // red status line outlives the outage it described.
+        this.#set({ status: 'open', lastError: undefined, workspacePath: message.workspacePath, state: normalizeSettledSnapshot(message.snapshot), flows: message.flows, browserIntegrations: message.browserIntegrations, sleepPrevention: message.sleepPrevention })
         return
       }
       if (message.kind === 'patch' && this.#view.state) {
@@ -129,14 +139,23 @@ export class WorkspaceClient {
         this.#set({ browserIntegrations: message.browserIntegrations })
         return
       }
+      if (message.kind === 'sleepPrevention') {
+        this.#set({ sleepPrevention: message.sleepPrevention })
+        return
+      }
       if (message.kind === 'flows') {
         this.#set({ flows: message.snapshot })
+        return
+      }
+      if (message.kind === 'attention') {
+        for (const listener of this.#attentionListeners) listener(message.event)
         return
       }
       if (message.kind === 'result') {
         const pending = this.#pending.get(message.id)
         if (!pending) return
         this.#pending.delete(message.id)
+        if (message.ok && this.#view.lastError) this.#set({ lastError: undefined })
         if (message.ok) pending.resolve()
         else pending.reject(new Error(message.error))
         return
@@ -147,7 +166,7 @@ export class WorkspaceClient {
       if (this.#socket !== socket) return
       this.#socket = undefined
       this.#failPending(new Error('Socket closed'))
-      this.#set({ status: 'closed', browserIntegrations: undefined })
+      this.#set({ status: 'closed', browserIntegrations: undefined, sleepPrevention: undefined })
       this.#failures += 1
       this.#rotateIfStuck()
       this.#scheduleReconnect()

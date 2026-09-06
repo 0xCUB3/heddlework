@@ -130,6 +130,12 @@ HEDDLEWORK_DEMO=1 bun run dev:web -- /path/to/repository
 
 The host prints a connect link carrying a bearer token. The token is stored with owner-only permissions under the Heddlework state directory (`host-token`) and the Settings surface has a Copy connect link action. The host binds to `127.0.0.1` unless `HEDDLEWORK_HOST_BIND` says otherwise. Every remote command goes through the same controller as the desktop UI, so Pi stays the single execution authority. The wire contract is documented in [Harness adapter protocol](docs/harness-adapter-protocol.md).
 
+Settings can also start **Tailscale Serve** so phones use a private HTTPS MagicDNS URL instead of a CGNAT IP. Setup never replaces another Serve endpoint and never turns on Funnel. See [Tailnet HTTPS](docs/tailnet-serve.md).
+
+### Power and idle sleep
+
+Settings → Power can keep the **host computer** from idle-sleeping while work is running, or while Heddlework stays open. macOS uses `caffeinate`, Windows uses `SetThreadExecutionState`, and Linux uses `systemd-inhibit` when a logind session exists. Display stay-awake is optional on macOS and Windows and is not claimed on Linux. Lid close, an explicit Sleep, and low battery still win. Web and iOS settings change the connected host, not the phone. See [Host sleep prevention](docs/power.md).
+
 ### Dependency graphs and checkout lanes
 
 A sequential flow is a task graph. Each step can name the step it waits on, so independent steps run as soon as their prerequisites succeed and a failed prerequisite blocks its dependents instead of running them against a broken tree. Steps can set a retry count; a failed attempt is re-queued as a fresh session until retries run out. A step can also run in a worktree lane: Heddlework creates a git worktree on a `heddlework/<task-id>` branch under the state directory and instructs Pi to work only there. The primary tree is never reset or cleaned. When the task succeeds, the task page offers Merge lane (`git merge --no-ff`) and Discard lane; a conflict leaves the lane in place with git's message. Graph state is durable in `flows.json` and survives restarts.

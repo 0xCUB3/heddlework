@@ -8,6 +8,23 @@ const directories: string[] = []
 afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))) })
 
 describe('PiSessionHistoryPager', () => {
+  it('projects structured turn telemetry but keeps unknown custom state private', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'heddlework-telemetry-'))
+    directories.push(directory)
+    const path = join(directory, 'session.jsonl')
+    const entries = [
+      { type: 'message', id: 'a', parentId: null, message: { role: 'assistant', content: 'Done' } },
+      { type: 'custom', id: 'private', parentId: 'a', customType: 'private-state', data: { secret: 'do not render' } },
+      { type: 'custom', id: 'metrics', parentId: 'private', customType: 'tps', data: { tps: 50, timing: { totalMs: 1000 }, tokens: { output: 50 } } },
+      { type: 'custom_message', id: 'visible', parentId: 'metrics', content: 'Public result', display: true, details: { version: 1 } },
+    ]
+    await writeFile(path, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n')
+    const result = await new PiSessionHistoryPager(path).loadEarlier(10)
+    expect(result.messages).toHaveLength(3)
+    expect(result.messages[1]).toMatchObject({ role: 'telemetry', content: 'TPS 50.0 · 1.0s · out 50', workbenchEntryId: 'metrics' })
+    expect(result.messages[2]).toMatchObject({ role: 'custom', details: { version: 1 } })
+    expect(JSON.stringify(result)).not.toContain('do not render')
+  })
   it('pages backward through only the active branch across compaction and custom entries', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'heddlework-history-'))
     directories.push(directory)

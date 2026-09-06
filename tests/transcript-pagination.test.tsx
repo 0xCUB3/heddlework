@@ -5,6 +5,7 @@ import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import type { PiForkMessage, PiMessage } from '../src/pi/types.ts'
 import { Transcript } from '../src/ui/transcript.tsx'
+import { TRANSCRIPT_VIRTUAL_WINDOW_SIZE } from '../src/ui/virtual-window.ts'
 import { createInitialState } from '../src/workbench/state.ts'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from '../src/ui/tool-presenters.ts'
@@ -930,7 +931,6 @@ describeNative('reverse-infinite transcript', () => {
 
     const list = root.renderer.findByTestId('transcript-list')!
     const mountedTools = await automation.getByTestId('tool-detail-row').count()
-    expect(list.customProps?.itemCount).toBeUndefined()
     expect(list.children.length).toBeLessThan(128)
     expect(mountedTools).toBeGreaterThan(0)
     expect(mountedTools).toBeLessThan(128)
@@ -944,12 +944,20 @@ describeNative('reverse-infinite transcript', () => {
     }
     expect(performance.now() - wheelStarted).toBeLessThan(400)
 
-    for (let attempt = 0; attempt < 20 && await automation.getByTestId('tool-detail-row').count() < 256; attempt += 1) {
+    for (let attempt = 0; attempt < 20 && await automation.getByTestId('trace-projection-continuation').count() > 0; attempt += 1) {
       await Bun.sleep(20)
       root.renderer.flush()
     }
-    expect(await automation.getByTestId('tool-detail-row').count()).toBe(256)
     expect(await automation.getByTestId('trace-projection-continuation').count()).toBe(0)
+    const settledList = root.renderer.findByTestId('transcript-list')!
+    expect(Number(settledList.customProps?.itemCount ?? settledList.children.length)).toBeGreaterThan(160)
+    expect(settledList.children.length).toBeLessThanOrEqual(TRANSCRIPT_VIRTUAL_WINDOW_SIZE + 8)
+    expect(await automation.getByTestId('tool-detail-row').count()).toBeLessThanOrEqual(TRANSCRIPT_VIRTUAL_WINDOW_SIZE)
+    root.renderer.scrollToItem(settledList.id, Number(settledList.customProps?.itemCount ?? settledList.children.length) - 3)
+    root.renderer.flush()
+    await Bun.sleep(25)
+    root.renderer.flush()
+    expect(await automation.getByTestId('tool-detail-row').count()).toBeGreaterThan(0)
     expect(root.renderer.getPaintedText().length).toBeLessThan(100)
 
     await automation.close()

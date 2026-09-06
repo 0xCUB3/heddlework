@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { TimelineItem } from '../src/workbench/timeline.ts'
-import { currentWorkWave, groupWorkItems, liveWorkTraceId, pendingWorkTraceId, projectTranscriptRows } from '../src/ui/transcript-projection.ts'
+import { reuseRowsById } from '../src/ui/virtual-window.ts'
+import { currentWorkWave, groupWorkItems, liveWorkTraceId, pendingWorkTraceId, projectTranscriptRows, transcriptProjectionRowsEqual, workTraceLabel } from '../src/ui/transcript-projection.ts'
 
 describe('transcript projection', () => {
   const items: TimelineItem[] = [
@@ -227,5 +228,88 @@ describe('transcript projection', () => {
     const trace = grouped.find((item) => item.kind === 'work-trace')!
     expect(trace.items.map((item) => item.kind)).toEqual(['context-injection', 'tool'])
     expect(trace.items[0]).toMatchObject({ source: 'pi-fabric-capability' })
+  })
+
+  it('groups a tool-only turn without duplicating the tool as a leaf', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+    ])
+    expect(grouped.map((item) => item.kind)).toEqual(['user', 'work-trace'])
+    const rows = projectTranscriptRows(grouped, new Set(), new Map())
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length)
+  })
+
+  it('keeps thinking-only work inside the trace and the answer outside', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'thinking', kind: 'thinking', text: 'Plan' },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+    ])
+    expect(grouped.map((item) => item.kind)).toEqual(['user', 'work-trace', 'assistant'])
+  })
+
+  it('keeps an errored tool inside the work trace', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: true } },
+      { id: 'answer', kind: 'assistant', text: 'The read failed.' },
+    ])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    expect(trace.items[0]).toMatchObject({ kind: 'tool', tool: { isError: true } })
+    expect(grouped.at(-1)).toMatchObject({ kind: 'assistant', text: 'The read failed.' })
+  })
+
+  it('leaves an abort status outside the work trace', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'abort', kind: 'status', text: 'Interrupted', tone: 'error' },
+    ])
+    expect(grouped.map((item) => item.kind)).toEqual(['user', 'work-trace', 'status'])
+  })
+
+  it('hands a live boundary id over to the terminal id when the stream settles', () => {
+    const live = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'thinking', kind: 'thinking', text: 'Plan', streaming: true },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'running', isError: false } },
+    ], true)
+    const settled = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'thinking', kind: 'thinking', text: 'Plan' },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false } },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+    ])
+    expect(live.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-after-user')
+    expect(settled.find((item) => item.kind === 'work-trace')?.id).toBe('work-trace-read')
+    const liveRows = projectTranscriptRows(live, new Set(), new Map())
+    const settledRows = projectTranscriptRows(settled, new Set(), new Map())
+    expect(new Set(liveRows.map((row) => row.id)).size).toBe(liveRows.length)
+    expect(new Set(settledRows.map((row) => row.id)).size).toBe(settledRows.length)
+  })
+
+  it('labels settled work with duration when timestamps exist', () => {
+    const grouped = groupWorkItems([
+      { id: 'user', kind: 'user', text: 'Prompt', images: [] },
+      { id: 'thinking', kind: 'thinking', text: 'Plan', timestamp: 0 },
+      { id: 'read', kind: 'tool', tool: { id: 'read', name: 'read', status: 'complete', isError: false }, timestamp: 2_000 },
+      { id: 'answer', kind: 'assistant', text: 'Done' },
+    ])
+    const trace = grouped.find((item) => item.kind === 'work-trace')!
+    expect(workTraceLabel(trace, true, true)).toBe('Working')
+    expect(workTraceLabel(trace, false, true)).toBe('Worked for 2s')
+  })
+
+  it('reuses unchanged projection rows when only the live assistant grows', () => {
+    const settled = projectTranscriptRows(groupWorkItems(items), new Set(), new Map())
+    const live = projectTranscriptRows(groupWorkItems([
+      ...items,
+      { id: 'live', kind: 'assistant', text: 'Streaming', streaming: true },
+    ]), new Set(), new Map())
+    const reused = reuseRowsById(settled, live, transcriptProjectionRowsEqual)
+    expect(reused[0]).toBe(settled[0])
+    expect(reused.some((row) => row.id === 'live')).toBe(true)
+    expect(reused.find((row) => row.id === 'live')).not.toBe(settled.find((row) => row.id === 'live'))
   })
 })

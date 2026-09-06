@@ -9,16 +9,21 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
-import { colors, nativeTheme } from './theme.ts'
+import { colors, nativeTheme, type InterfaceFonts } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 import { useResponsiveLayout } from './responsive.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
-import { hostConnectUrl, phonePairingLink, remoteConnectUrls } from '../host/server.ts'
+import { hostConnectUrl, preferredPairingLink, remoteConnectUrls } from '../host/server.ts'
 import { PhonePairingQr } from './phone-pairing.tsx'
 import type { RemoteAccessMode, RemoteAccessService } from '../host/remote-access.ts'
+import type { TailnetServeService } from '../host/tailnet-serve.ts'
+import { TAILSCALE_HTTPS_PORTS, type TailscaleHttpsPort } from '../host/tailscale-cli.ts'
 import type { PluginHost } from '../plugins/host.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
+import type { SleepPreventionService } from '../power/service.ts'
+import type { SleepPreventionWhen } from '../power/types.ts'
 import type { UpdateService, UpdateState } from '../updates/service.ts'
+import { osNotificationCapability, requestOsNotifications } from './os-notifications.ts'
 import type { UpdateChannel } from '../updates/feed.ts'
 import { openExternal } from './open-external.ts'
 
@@ -30,10 +35,14 @@ export function SettingsView({
   theme,
   titlebarInset,
   onThemeModeChange,
+  onFontsChange,
+  onFontsReset,
   terminals,
   browsers,
   browserIntegrations,
+  sleepPrevention,
   remoteAccess,
+  tailnetServe,
   pluginHost,
   updates,
   onClose,
@@ -42,13 +51,17 @@ export function SettingsView({
   controller: WorkbenchController
   theme: ThemeSnapshot
   remoteAccess?: RemoteAccessService | undefined
+  tailnetServe?: TailnetServeService | undefined
   pluginHost?: PluginHost | undefined
   updates?: UpdateService | undefined
   titlebarInset?: number | undefined
   onThemeModeChange(mode: ThemeMode): void
+  onFontsChange?(fonts: Partial<InterfaceFonts>): void
+  onFontsReset?(): void
   terminals?: TerminalSessionService | undefined
   browserIntegrations?: BrowserIntegrationService | undefined
   browsers?: BrowserSessionService | undefined
+  sleepPrevention?: SleepPreventionService | undefined
   onClose(): void
 }) {
   const { mobile, compact, contentGutter } = useResponsiveLayout()
@@ -71,16 +84,28 @@ export function SettingsView({
             </SettingsActions>
           </SettingsSection>
 
+          {sleepPrevention ? <PowerSettings service={sleepPrevention} controller={controller} /> : null}
+
           <SettingsSection title="Interface" description="Application-wide presentation and navigation defaults.">
             <SettingsControlRow label="Appearance">
               <ThemeModePicker theme={theme} onChange={onThemeModeChange} />
             </SettingsControlRow>
-            <SettingsRow icon="terminal" label="Code font" value={nativeTheme.fontMono} />
-            <SettingsRow icon="bell" label="Notifications" value="Interleaved with work traces" />
+            {onFontsChange ? <>
+              <SettingsControlRow label="Interface font" description="Installed font family for menus and chat text. Changes apply immediately on this desktop.">
+                <FontFamilyControl value={theme.fonts.fontSans} testId="interface-font-family" onApply={(fontSans) => onFontsChange({ fontSans })} />
+              </SettingsControlRow>
+              <SettingsControlRow label="Code font" description="Installed monospaced font family for code and diffs. Terminal fonts are configured separately.">
+                <FontFamilyControl value={theme.fonts.fontMono} testId="interface-code-font-family" onApply={(fontMono) => onFontsChange({ fontMono })} />
+              </SettingsControlRow>
+              {onFontsReset ? <SettingsActions><Button testId="interface-fonts-reset" label="Reset interface fonts" compact onClick={onFontsReset} /></SettingsActions> : null}
+            </> : <SettingsRow icon="terminal" label="Code font" value={nativeTheme.fontMono} />}
+            <SettingsControlRow label="Notifications" description="Completions, failures, and input requests. Copy confirmations stay as toasts. Background alerts while this Mac is offline need a hosted push relay, which is not configured." >
+              <Button label={osNotificationCapability().permission === 'granted' ? 'Alerts on' : 'Enable alerts'} compact onClick={() => void requestOsNotifications()} />
+            </SettingsControlRow>
             <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
           </SettingsSection>
 
-          {remoteAccess ? <RemoteAccessSection service={remoteAccess} controller={controller} /> : null}
+          {remoteAccess ? <RemoteAccessSection service={remoteAccess} tailnetServe={tailnetServe} controller={controller} /> : null}
           {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
           {pluginHost ? <PluginsSection pluginHost={pluginHost} /> : null}
           {terminals ? <TerminalSettings service={terminals} /> : null}
@@ -173,6 +198,53 @@ function ChannelPicker({ channel, onChange, disabled }: { channel: UpdateChannel
   )
 }
 
+function PowerSettings({ service, controller }: { service: SleepPreventionService; controller: WorkbenchController }) {
+  const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const setWhen = (when: SleepPreventionWhen) => {
+    try {
+      service.setPolicy({ when, keepDisplayAwake: snapshot.policy.keepDisplayAwake })
+    } catch (error) {
+      controller.notify('warning', error instanceof Error ? error.message : String(error))
+    }
+  }
+  const setDisplay = (keepDisplayAwake: boolean) => {
+    try {
+      service.setPolicy({ when: snapshot.policy.when, keepDisplayAwake })
+    } catch (error) {
+      controller.notify('warning', error instanceof Error ? error.message : String(error))
+    }
+  }
+  const statusTone = snapshot.status === 'active' ? 'success' : 'normal'
+  const statusLabel = snapshot.status === 'active' ? 'Holding idle sleep'
+    : snapshot.status === 'error' ? `Failed: ${snapshot.error ?? snapshot.reason}`
+      : snapshot.status === 'unsupported' ? 'Unavailable on this computer'
+        : 'Not holding'
+  return (
+    <SettingsSection title="Power" description="Keeps this computer from idle-sleeping while Heddlework is working. Phones and browsers change the host, not their own battery.">
+      <SettingsControlRow label="Stay awake" description={whenDescription(snapshot.policy.when)}>
+        <SegmentedPicker
+          testIdPrefix="sleep-when"
+          value={snapshot.policy.when}
+          options={[{ value: 'off', label: 'Off' }, { value: 'whileWorking', label: 'While working' }, { value: 'whileAppOpen', label: 'While open' }]}
+          onChange={setWhen}
+        />
+      </SettingsControlRow>
+      <SettingsControlRow label="Keep display awake" description={snapshot.displaySupported ? 'Also block display sleep. Lid close and Sleep still win.' : 'Display stay-awake is not available on this system.'}>
+        <SettingsToggle testId="sleep-display" enabled={snapshot.policy.keepDisplayAwake} onChange={setDisplay} />
+      </SettingsControlRow>
+      <SettingsRow testId="settings-sleep-status" icon="circle" label="Status" value={statusLabel} tone={statusTone} />
+      <SettingsRow testId="settings-sleep-reason" icon="panel" label="Now" value={snapshot.reason} />
+      <SettingsRow testId="settings-sleep-limits" icon="panel" label="Limits" value={snapshot.limits} />
+    </SettingsSection>
+  )
+}
+
+function whenDescription(when: SleepPreventionWhen): string {
+  if (when === 'off') return 'The computer may idle-sleep even during agent work.'
+  if (when === 'whileAppOpen') return 'Block idle sleep until this app or host process exits.'
+  return 'Block idle sleep only while an agent, tool, flow, or browser task is actually running.'
+}
+
 function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
   const report = React.useSyncExternalStore(pluginHost.subscribe, pluginHost.getReport)
   return (
@@ -191,20 +263,26 @@ function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
 }
 
 
-function RemoteAccessSection({ service, controller }: { service: RemoteAccessService; controller: WorkbenchController }) {
+function RemoteAccessSection({ service, tailnetServe, controller }: { service: RemoteAccessService; tailnetServe?: TailnetServeService | undefined; controller: WorkbenchController }) {
   const state = React.useSyncExternalStore(service.subscribe, service.getSnapshot)
+  const tailnet = React.useSyncExternalStore(tailnetServe?.subscribe ?? emptySubscribe, tailnetServe?.getSnapshot ?? emptyTailnetSnapshot)
+  React.useEffect(() => { void tailnetServe?.refresh().catch(() => undefined) }, [tailnetServe])
   const host = state.host
   const setMode = (mode: RemoteAccessMode) => {
     void service.setMode(mode).catch((error: unknown) => controller.notify('warning', error instanceof Error ? error.message : String(error)))
   }
   const remotes = host ? remoteConnectUrls(host).filter((remote) => remote.kind !== 'loopback') : []
-  const pairingLink = host ? phonePairingLink(host) : undefined
+  const serveUrl = tailnet.status === 'ready' ? tailnet.url : undefined
+  const pairingLink = host ? preferredPairingLink(host, serveUrl) : undefined
   const bestLink = pairingLink ?? (host ? hostConnectUrl(host) : undefined)
   const modeDescription = state.lockedBy
     ? `Pinned by ${state.lockedBy} in this app's environment.`
     : state.mode === 'network' ? 'Phones and other computers can open the workspace over Tailscale or your LAN.'
-    : state.mode === 'local' ? 'Only browsers on this computer can connect.'
+    : state.mode === 'local' ? 'Only browsers on this computer can connect, unless Tailnet HTTPS is on.'
     : 'The web client and the iOS app cannot connect until this is on.'
+  const run = (action: Promise<void>, failure: string) => {
+    void action.catch((error: unknown) => controller.notify('warning', error instanceof Error ? error.message : failure))
+  }
   return (
     <SettingsSection title="Remote access" description="Runs the workspace host that the web client and the iOS app connect to. Links carry a token, so share them only with your own devices.">
       <SettingsControlRow label="Mode" description={modeDescription}>
@@ -221,15 +299,55 @@ function RemoteAccessSection({ service, controller }: { service: RemoteAccessSer
       {remotes.map((remote) => (
         <SettingsRow key={remote.url} icon="circle" label={remoteLabel(remote.kind)} value={remote.url} tone={remote.kind === 'tailscale' ? 'success' : 'normal'} />
       ))}
-      {state.mode === 'network' && !remotes.some((remote) => remote.kind === 'tailscale') ? (
-        <SettingsRow icon="panel" label="Tailscale" value="Not detected. Install and sign in to Tailscale on this Mac and your phone for a link that works anywhere." />
+      {tailnetServe ? (
+        <>
+          <SettingsRow testId="settings-tailnet-status" icon="circle" label="Tailnet HTTPS" value={tailnet.message} tone={tailnet.status === 'ready' ? 'success' : 'normal'} />
+          {serveUrl ? <SettingsRow testId="settings-tailnet-url" icon="circle" label="Tailnet link" value={host ? preferredPairingLink(host, serveUrl) ?? serveUrl : serveUrl} tone="success" /> : null}
+          {tailnet.status === 'idle' || tailnet.status === 'conflict' ? (
+            <SettingsControlRow label="HTTPS port" description="443 is the default MagicDNS URL. 8443 and 10000 are used when 443 already serves something else. Heddlework never replaces another endpoint.">
+              <SegmentedPicker
+                testIdPrefix="tailnet-port"
+                value={String(tailnet.httpsPort ?? tailnet.availablePorts[0] ?? 8443)}
+                disabled={tailnet.busy}
+                options={TAILSCALE_HTTPS_PORTS.map((port) => ({
+                  value: String(port),
+                  label: tailnet.availablePorts.includes(port) || tailnet.httpsPort === port ? String(port) : `${port} taken`,
+                }))}
+                onChange={(value) => {
+                  const port = Number(value) as TailscaleHttpsPort
+                  if (tailnet.availablePorts.includes(port) || tailnet.httpsPort === port) run(tailnetServe.setHttpsPort(port), 'Could not set the Tailnet HTTPS port')
+                }}
+              />
+            </SettingsControlRow>
+          ) : null}
+          {tailnet.status === 'needsLogin' && tailnet.approvalUrl ? (
+            <SettingsActions>
+              <Button label="Sign in to Tailscale" compact icon="globe" onClick={() => openExternal(tailnet.approvalUrl!)} />
+            </SettingsActions>
+          ) : null}
+          {tailnet.status === 'needsHttps' ? (
+            <SettingsActions>
+              <Button label="Open Tailscale DNS settings" compact icon="globe" onClick={() => openExternal('https://login.tailscale.com/admin/dns')} />
+            </SettingsActions>
+          ) : null}
+          <SettingsActions>
+            {tailnet.status === 'ready' || tailnet.enabled ? (
+              <Button testId="settings-tailnet-stop" label="Stop tailnet HTTPS" compact disabled={tailnet.busy} onClick={() => run(tailnetServe.setEnabled(false), 'Could not stop Tailnet HTTPS')} />
+            ) : (
+              <Button testId="settings-tailnet-setup" label="Set up tailnet HTTPS" compact disabled={tailnet.busy || tailnet.status === 'notInstalled' || tailnet.status === 'stopped' || tailnet.status === 'needsLogin' || (tailnet.status === 'conflict' && tailnet.availablePorts.length === 0)} onClick={() => run(tailnetServe.setEnabled(true), 'Could not start Tailnet HTTPS')} />
+            )}
+            {host && serveUrl ? (
+              <Button label="Copy tailnet link" compact onClick={() => void copyTextToClipboard(preferredPairingLink(host, serveUrl) ?? serveUrl).then(() => controller.notify('info', 'Link copied'))} />
+            ) : null}
+          </SettingsActions>
+        </>
       ) : null}
       {pairingLink ? <PhonePairingQr url={pairingLink} /> : null}
       {!pairingLink && state.mode === 'local' ? (
-        <SettingsRow testId="settings-phone-qr-local" icon="panel" label="Phone QR" value="Switch to Tailscale & LAN so a phone can scan a link. This Mac-only mode is loopback, which a phone cannot reach." />
+        <SettingsRow testId="settings-phone-qr-local" icon="panel" label="Phone QR" value="This Mac-only mode is loopback. Set up Tailnet HTTPS above, or switch to Tailscale & LAN, so a phone can reach the host." />
       ) : null}
       {!pairingLink && state.mode === 'network' ? (
-        <SettingsRow testId="settings-phone-qr-unavailable" icon="panel" label="Phone QR" value="No reachable Tailscale or LAN address yet. The QR code appears when the host has a network address." />
+        <SettingsRow testId="settings-phone-qr-unavailable" icon="panel" label="Phone QR" value="No reachable Tailscale or LAN address yet. The QR code appears when Tailnet HTTPS is ready or the host has a network address." />
       ) : null}
       {host && bestLink ? (
         <SettingsActions>
@@ -239,6 +357,14 @@ function RemoteAccessSection({ service, controller }: { service: RemoteAccessSer
       ) : null}
     </SettingsSection>
   )
+}
+
+function emptySubscribe(): () => void {
+  return () => undefined
+}
+
+function emptyTailnetSnapshot() {
+  return { status: 'idle' as const, enabled: false, busy: false, availablePorts: [], conflicts: [], message: 'Tailnet HTTPS is off.', magicDnsEnabled: false }
 }
 
 function SegmentedPicker<T extends string>({ value, options, disabled, testIdPrefix, onChange }: { value: T; options: Array<{ value: T; label: string }>; disabled?: boolean; testIdPrefix: string; onChange(value: T): void }) {
@@ -339,7 +465,7 @@ function TerminalSettings({ service }: { service: TerminalSessionService }) {
   return (
     <SettingsSection title="Terminal" description="Native GPUI text shaping and renderer controls. Font changes apply to every live terminal without restarting its PTY.">
       <SettingsControlRow label="Primary font" description="Use the exact family name of an installed monospaced font.">
-        <TerminalFontControl value={appearance.fontFamily} testId="terminal-font-family" onApply={(fontFamily) => service.setAppearance({ fontFamily })} />
+        <FontFamilyControl value={appearance.fontFamily} testId="terminal-font-family" onApply={(fontFamily) => service.setAppearance({ fontFamily })} />
       </SettingsControlRow>
       <SettingsControlRow label="Programming ligatures" description="Shape same-style cells together with the selected font's native OpenType features.">
         <SettingsToggle testId="terminal-ligatures" enabled={appearance.ligaturesEnabled} onChange={(ligaturesEnabled) => service.setAppearance({ ligaturesEnabled })} />
@@ -348,7 +474,7 @@ function TerminalSettings({ service }: { service: TerminalSessionService }) {
         <SettingsToggle testId="terminal-nerd-font" enabled={appearance.nerdFontEnabled} onChange={(nerdFontEnabled) => service.setAppearance({ nerdFontEnabled })} />
       </SettingsControlRow>
       <SettingsControlRow label="Nerd Font family" description="Usually Symbols Nerd Font Mono, or the family name supplied by your Nerd Font package.">
-        <TerminalFontControl value={appearance.nerdFontFamily} testId="terminal-nerd-font-family" onApply={(nerdFontFamily) => service.setAppearance({ nerdFontFamily })} />
+        <FontFamilyControl value={appearance.nerdFontFamily} testId="terminal-nerd-font-family" onApply={(nerdFontFamily) => service.setAppearance({ nerdFontFamily })} />
       </SettingsControlRow>
       <SettingsControlRow label="Muted emoji" description="Prefer monochrome text-presentation glyphs so emoji follows terminal foreground colors.">
         <SettingsToggle testId="terminal-muted-emoji" enabled={appearance.muteEmojiColors} onChange={(muteEmojiColors) => service.setAppearance({ muteEmojiColors })} />
@@ -360,7 +486,7 @@ function TerminalSettings({ service }: { service: TerminalSessionService }) {
   )
 }
 
-function TerminalFontControl({ value, testId, onApply }: { value: string; testId: string; onApply(value: string): void }) {
+function FontFamilyControl({ value, testId, onApply }: { value: string; testId: string; onApply(value: string): void }) {
   const [draft, setDraft] = useState(value)
   useEffect(() => setDraft(value), [value])
   const next = draft.trim()

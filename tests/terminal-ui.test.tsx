@@ -192,9 +192,23 @@ describeNative('terminal panels', () => {
       expect(await automation.getByTestId('terminal-nerd-font').count()).toBe(1)
       expect(await automation.getByTestId('terminal-muted-emoji').count()).toBe(1)
 
+      const scrollToControl = async (testId: string) => {
+        const scroller = root.renderer.findByTestId('settings-scroll')!
+        const viewport = await automation.getByTestId('settings-scroll').bounds()
+        const control = await automation.getByTestId(testId).bounds()
+        const overflow = control.y + control.height - viewport.y - viewport.height
+        if (overflow > 0) {
+          const offset = root.renderer.getScrollOffset(scroller.id)?.[1] ?? 0
+          root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(overflow) - 48)
+          root.renderer.flush()
+        }
+      }
+      await scrollToControl('terminal-font-family-apply')
       await automation.getByTestId('terminal-font-family').fill('Fira Code')
       await automation.getByTestId('terminal-font-family-apply').click()
+      await scrollToControl('terminal-ligatures-off')
       await automation.getByTestId('terminal-ligatures-off').click()
+      await scrollToControl('terminal-nerd-font-on')
       await automation.getByTestId('terminal-nerd-font-on').click()
       const settingsScroll = root.renderer.findByTestId('settings-scroll')!
       const settingsBounds = await automation.getByTestId('settings-scroll').bounds()

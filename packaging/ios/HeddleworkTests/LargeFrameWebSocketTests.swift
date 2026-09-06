@@ -85,7 +85,7 @@ final class LargeFrameWebSocketTests: XCTestCase {
         let decoded = expectation(description: "framed welcome")
         var onMain = true
         await engine.setPublisher { event in
-            if case .welcome(_, let snapshot, _, _, _, _) = event {
+            if case .welcome(_, let snapshot, _, _, _, _, _, _) = event {
                 onMain = Thread.isMainThread
                 XCTAssertEqual(snapshot.editorText, payload)
                 decoded.fulfill()

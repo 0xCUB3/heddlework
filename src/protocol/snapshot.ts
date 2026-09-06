@@ -1,4 +1,5 @@
 import type { ComposerImage } from '../pi/types.ts'
+import { ledgerNotices } from '../workbench/notices.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 
 // Images above this size travel as a placeholder so a snapshot stays cheap to send over a socket.
@@ -25,6 +26,7 @@ export interface SnapshotPatch {
 export function serializeSnapshot(state: WorkbenchState): WorkbenchSnapshot {
   return {
     ...state,
+    notices: ledgerNotices(state.notices),
     editorImages: state.editorImages.map(serializeImage),
   }
 }

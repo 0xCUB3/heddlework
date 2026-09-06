@@ -92,7 +92,7 @@ export function hydrateMessageImages(messages: PiMessage[]): PiMessage[] {
       const previewPath = materializeImagePreview(block.data, block.mimeType)
       if (!previewPath) return block
       changed = true
-      return { ...block, previewPath }
+      return { ...block, previewPath, data: '' }
     })
     return changed ? { ...message, content } : message
   })
@@ -101,8 +101,14 @@ export function hydrateMessageImages(messages: PiMessage[]): PiMessage[] {
 export function imageBlocks(message: PiMessage): Array<PiContentBlock & { type: 'image'; data: string; mimeType: string }> {
   if (!Array.isArray(message.content)) return []
   return message.content.filter((block): block is PiContentBlock & { type: 'image'; data: string; mimeType: string } => (
-    block.type === 'image' && typeof block.data === 'string' && typeof block.mimeType === 'string'
+    block.type === 'image' && typeof block.data === 'string' && block.data.length > 0 && typeof block.mimeType === 'string'
   ))
+}
+
+export function messageImageSrc(image: { data?: string; mimeType?: string; previewPath?: string }): string | undefined {
+  if (image.previewPath) return image.previewPath
+  if (image.data && image.mimeType) return `data:${image.mimeType};base64,${image.data}`
+  return undefined
 }
 
 function materializeImagePreview(data: string, mimeType: string): string | undefined {

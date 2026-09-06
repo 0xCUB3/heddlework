@@ -43,7 +43,7 @@ describe('workbench command protocol', () => {
   })
 
   it('recognises every declared command type and rejects unknown ones', () => {
-    for (const type of WORKBENCH_COMMAND_TYPES) expect(isWorkbenchCommand({ type, integrationId: 'aside', profile: 'u0', prompt: 'Read example.com', id: 'review-id' })).toBe(true)
+    for (const type of WORKBENCH_COMMAND_TYPES) expect(isWorkbenchCommand({ type, integrationId: 'aside', profile: 'u0', prompt: 'Read example.com', id: 'review-id', when: 'whileWorking', keepDisplayAwake: false })).toBe(true)
     expect(isWorkbenchCommand({ type: 'explode' })).toBe(false)
     expect(isWorkbenchCommand(null)).toBe(false)
   })

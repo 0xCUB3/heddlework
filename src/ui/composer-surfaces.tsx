@@ -8,6 +8,7 @@ import { NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { plainExtensionText } from './extension-ui.ts'
+import { AnsiText } from './ansi-text.tsx'
 
 const EXTENSION_SURFACE_GAP = 6
 const EXTENSION_SURFACE_BASE_RESERVE_HEIGHT = 35
@@ -79,7 +80,7 @@ export function CommandPalette({ commands, activeIndex, onChoose }: { commands: 
 
 export function ExtensionSurfaceRail({ above, below, statuses }: { above: ExtensionWidget[]; below: ExtensionWidget[]; statuses: Record<string, string> }) {
   const statusEntries = Object.entries(statuses)
-    .map(([key, value]) => [plainExtensionText(key), plainExtensionText(value)] as const)
+    .map(([key, value]) => [plainExtensionText(key), value] as const)
     .filter(([, value]) => value.trim().length > 0)
   if (above.length + below.length + statusEntries.length === 0) return null
 
@@ -97,7 +98,7 @@ export function ExtensionSurfaceRail({ above, below, statuses }: { above: Extens
           style={{ position: 'relative', maxWidth: 360, minHeight: 29, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, paddingRight: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}
         >
           <text style={{ color: colors.info, fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap' }}>{key}</text>
-          <text style={{ minWidth: 0, color: colors.textMuted, fontSize: 10, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{value}</text>
+          <AnsiText text={value} />
         </MotionDiv>
       ))}
     </div>
@@ -119,5 +120,5 @@ function ExtensionWidgetItem({ widget, placement, order }: { widget: ExtensionWi
 }
 
 function WidgetLine({ line }: { line: string }) {
-  return <text style={{ minWidth: 0, width: '100%', color: colors.textMuted, fontSize: 10, lineHeight: 15, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{plainExtensionText(line)}</text>
+  return <AnsiText text={line} />
 }

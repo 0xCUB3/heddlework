@@ -3,7 +3,7 @@ import type { EventPayload } from '@gpuix/react'
 import { containsPotentialMath, segmentMathMarkdown, type MathSegment } from './math-segment.ts'
 import { formulaFallbackSource, loadFormulaRenderer, type FormulaRenderer } from './math-engine.ts'
 import { markdownSourceWithNewlines } from './markdown-source.ts'
-import { colors } from './theme.ts'
+import { colors, nativeTheme, useNativeTheme } from './theme.ts'
 
 export interface MathMarkdownProps {
   source: string
@@ -48,6 +48,7 @@ const PLACEHOLDER_RE = /\uE000(\d+)\uE001/g
 
 
 export const MathMarkdown = memo(function MathMarkdown(props: MathMarkdownProps) {
+  useNativeTheme()
   const { source } = props
   if (!containsPotentialMath(source)) return <PlainMarkdown {...props} source={markdownSourceWithNewlines(source)} />
   const segments = segmentMathMarkdown(source)
@@ -328,7 +329,7 @@ function inlineTextStyle(run: InlineRunStyle, formula: FormulaPaint): Record<str
     lineHeight: formula.lineHeight,
     flexShrink: 0,
     fontWeight: run.bold ? 700 : formula.fontWeight ?? 400,
-    fontFamily: run.code ? 'Menlo' : run.italic ? italicFace : formula.fontFamily,
+    fontFamily: run.code ? nativeTheme.fontMono : run.italic ? italicFace : formula.fontFamily,
   }
 }
 
@@ -342,6 +343,7 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
   fontFamily: string | undefined
   fontWeight?: number
 }) {
+  useNativeTheme()
   const rendered = renderer ? renderer(latex, display, undefined, fontSizePx) : null
   if (!rendered) {
     if (display) {
@@ -350,7 +352,7 @@ const Formula = memo(function Formula({ latex, display, renderer, ink, fontSizeP
         style: { width: '100%', minWidth: 0 },
       } as never)
     }
-    return <text style={{ color: ink, fontSize: fontSizePx, lineHeight, fontFamily: 'Menlo', flexShrink: 0 }}>{latex}</text>
+    return <text style={{ color: ink, fontSize: fontSizePx, lineHeight, fontFamily: nativeTheme.fontMono, flexShrink: 0 }}>{latex}</text>
   }
   return (
     <div

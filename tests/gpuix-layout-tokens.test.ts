@@ -46,6 +46,7 @@ it('keeps web CSS, iOS metrics, and the GPUix contract on the same layout tokens
   expect(iosWorkspace).toContain('accessibilityIdentifier("composer-surface")')
   expect(iosSettings).toContain('accessibilityIdentifier("settings-view")')
   expect(iosSettings).toContain('accessibilityIdentifier("settings-done")')
+  expect(iosSettings).toContain('Power')
 
   expect(audit).toContain("label: 'desktop-1440x900'")
   expect(audit).toContain("label: 'ipad-1180x820'")

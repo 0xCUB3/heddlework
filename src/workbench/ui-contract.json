@@ -46,6 +46,10 @@
       "label": "Runtime"
     },
     {
+      "id": "power",
+      "label": "Power"
+    },
+    {
       "id": "interface",
       "label": "Interface"
     },

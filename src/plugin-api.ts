@@ -24,11 +24,13 @@ export {
   describePiAdapter,
   diffSnapshots,
   isHarnessAdapter,
+  isSleepPreventionCommand,
   isWorkbenchCommand,
   parseClientMessage,
   parseServerMessage,
   PROTOCOL_VERSION,
   serializeSnapshot,
+  SLEEP_PREVENTION_COMMAND_TYPES,
   WORKBENCH_COMMAND_TYPES,
 } from './protocol/index.ts'
 export type {
@@ -36,6 +38,7 @@ export type {
   HarnessAdapter,
   HarnessCapabilities,
   ServerMessage,
+  SleepPreventionCommand,
   SnapshotPatch,
   WorkbenchCommand,
   WorkbenchCommandType,
@@ -55,6 +58,11 @@ export type {
   TerminalSessionInfo,
   TerminalSpawnRequest,
 } from './terminal/types.ts'
+export { createSleepPreventionPlugin, sleepPreventionToken } from './power/plugin.ts'
+export { SleepPreventionService } from './power/service.ts'
+export { parseSleepPreventionPolicy, DEFAULT_SLEEP_PREVENTION_POLICY } from './power/types.ts'
+export type { SleepPreventionPolicy, SleepPreventionSnapshot, SleepPreventionWhen, SleepPreventionStatus } from './power/types.ts'
+export { hostWorkIsRunning, shouldInhibitSleep } from './power/activity.ts'
 export { createFlowRuntimePlugin, flowRuntimeToken } from './flows/plugin.ts'
 export type { FlowRuntime, FlowRuntimeHost, FlowRuntimeOptions } from './flows/runtime.ts'
 export type { FlowLaunch, FlowMode, FlowRuntimeSnapshot, FlowSchedule, FlowScheduleInput, FlowScheduleTiming, FlowTemplate } from './flows/types.ts'

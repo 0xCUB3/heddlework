@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
-import { basename, resolve } from 'node:path'
+import { resolve } from 'node:path'
+import { workspaceDisplayName } from '../workbench/workspace-name.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Composer } from './composer.tsx'
@@ -18,10 +19,10 @@ interface WorkspaceChoice {
 
 export function workspaceChoices(state: Pick<WorkbenchState, 'workspacePath' | 'sessions'>): WorkspaceChoice[] {
   const currentPath = resolve(state.workspacePath)
-  const paths = new Map<string, string>([[currentPath, basename(currentPath) || currentPath]])
+  const paths = new Map<string, string>([[currentPath, workspaceDisplayName(currentPath)]])
   for (const session of state.sessions) {
     const path = resolve(session.cwd)
-    if (!paths.has(path)) paths.set(path, basename(path) || path)
+    if (!paths.has(path)) paths.set(path, workspaceDisplayName(path))
   }
   return [...paths].map(([path, name]) => ({ path, name, current: path === currentPath })).sort((left, right) => {
     if (left.current !== right.current) return left.current ? -1 : 1

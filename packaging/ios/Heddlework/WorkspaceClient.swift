@@ -9,6 +9,9 @@ final class WorkspaceClient: ObservableObject {
     @Published private(set) var snapshot: WorkbenchSnapshot?
     @Published private(set) var flows: FlowRuntimeSnapshot?
     @Published private(set) var browserIntegrations: BrowserIntegrationSnapshot?
+    @Published private(set) var sleepPrevention: SleepPreventionSnapshot?
+    @Published private(set) var terminal: RemoteTerminalSnapshot?
+    @Published private(set) var terminalFrames: [String: RemoteTerminalFrame] = [:]
     @Published private(set) var lastError: String?
     @Published private(set) var pendingCommands: [Int: String] = [:]
     @Published private(set) var candidates: [String] = []
@@ -35,6 +38,14 @@ final class WorkspaceClient: ObservableObject {
         failures = 0
         backoff = minBackoff
         wantOpen = true
+        if ProcessInfo.processInfo.environment["HEEDLEWORK_UI_FIXTURE"] == "1" {
+            status = .open
+            workspacePath = UIFixture.workspacePath
+            snapshot = UIFixture.snapshot
+            terminal = UIFixture.terminal
+            terminalFrames = UIFixture.terminalFrames
+            return
+        }
         open()
     }
 
@@ -50,11 +61,26 @@ final class WorkspaceClient: ObservableObject {
         pendingCommands.removeAll()
         status = .closed
         browserIntegrations = nil
-        if clearState { workspacePath = ""; snapshot = nil; flows = nil; lastError = nil }
+        sleepPrevention = nil
+        terminal = nil
+        terminalFrames = [:]
+        if clearState {
+            workspacePath = ""
+            snapshot = nil
+            flows = nil
+            lastError = nil
+            WorkspaceSessionMemory.shared.clearHost(url)
+        }
     }
 
-    func send(_ command: [String: JSONValue], label: String) {
-        guard status == .open, let task else { lastError = "Not connected. Reconnect before using \(label)."; return }
+    // quiet: true for background traffic (presence heartbeats) the user never initiated, so a reconnect window
+    // never produces a modal error for it.
+    func send(_ command: [String: JSONValue], label: String, quiet: Bool = false) {
+        if ProcessInfo.processInfo.environment["HEEDLEWORK_UI_FIXTURE"] == "1" { return }
+        guard status == .open, let task else {
+            if !quiet { lastError = "Not connected. Reconnect before using \(label)." }
+            return
+        }
         commandId += 1
         let id = commandId
         let sendGeneration = generation
@@ -133,7 +159,7 @@ final class WorkspaceClient: ObservableObject {
     fileprivate func apply(_ event: WorkspaceWireEvent, generation: Int, task: URLSessionWebSocketTask) {
         guard isCurrent(task: task, generation: generation) else { return }
         switch event {
-        case .welcome(let workspacePath, let snapshot, let flows, let browserIntegrations, let hostUrls, let protocolVersion):
+        case .welcome(let workspacePath, let snapshot, let flows, let browserIntegrations, let sleepPrevention, let terminal, let hostUrls, let protocolVersion):
             guard protocolVersion == 1 else {
                 lastError = "Unsupported host protocol \(protocolVersion ?? -1)"
                 self.task?.cancel(with: .protocolError, reason: nil)
@@ -143,6 +169,9 @@ final class WorkspaceClient: ObservableObject {
             self.snapshot = snapshot
             self.flows = flows
             self.browserIntegrations = browserIntegrations
+            self.sleepPrevention = sleepPrevention
+            self.terminal = terminal
+            lastError = nil
             status = .open
             candidates = mergeCandidates(current: url, advertised: hostUrls)
             failures = 0
@@ -153,11 +182,21 @@ final class WorkspaceClient: ObservableObject {
             self.flows = flows
         case .browserIntegrations(let browserIntegrations):
             self.browserIntegrations = browserIntegrations
+        case .sleepPrevention(let sleepPrevention):
+            self.sleepPrevention = sleepPrevention
+        case .terminal(let terminal):
+            self.terminal = terminal
+            let ids = Set((terminal?.sessions ?? []).map(\.id))
+            terminalFrames = terminalFrames.filter { ids.contains($0.key) }
+        case .terminalFrame(let frame):
+            terminalFrames[frame.id] = frame
         case .result(let id, let ok, let error):
             if let id { pendingCommands.removeValue(forKey: id) }
             if ok == false { lastError = error ?? "Command failed" }
         case .error(let message):
             lastError = message
+        case .attention(let event):
+            NotificationService.shared.deliver(eventId: event.eventId, title: event.title, body: event.body, sessionPath: event.sessionPath)
         }
     }
 
@@ -172,6 +211,9 @@ final class WorkspaceClient: ObservableObject {
         pendingCommands.removeAll()
         status = .closed
         browserIntegrations = nil
+        sleepPrevention = nil
+        terminal = nil
+        terminalFrames = [:]
         lastError = error.localizedDescription
         failures += 1
         rotateIfStuck()
@@ -201,12 +243,16 @@ final class WorkspaceClient: ObservableObject {
 }
 
 enum WorkspaceWireEvent: @unchecked Sendable {
-    case welcome(workspacePath: String, snapshot: WorkbenchSnapshot, flows: FlowRuntimeSnapshot?, browserIntegrations: BrowserIntegrationSnapshot?, hostUrls: [String]?, protocolVersion: Int?)
+    case welcome(workspacePath: String, snapshot: WorkbenchSnapshot, flows: FlowRuntimeSnapshot?, browserIntegrations: BrowserIntegrationSnapshot?, sleepPrevention: SleepPreventionSnapshot?, terminal: RemoteTerminalSnapshot?, hostUrls: [String]?, protocolVersion: Int?)
     case snapshot(WorkbenchSnapshot)
     case flows(FlowRuntimeSnapshot?)
     case browserIntegrations(BrowserIntegrationSnapshot?)
+    case sleepPrevention(SleepPreventionSnapshot?)
+    case terminal(RemoteTerminalSnapshot?)
+    case terminalFrame(RemoteTerminalFrame)
     case result(id: Int?, ok: Bool?, error: String?)
     case error(String)
+    case attention(AttentionEvent)
 }
 
 actor WorkspaceWireEngine {
@@ -241,6 +287,8 @@ actor WorkspaceWireEngine {
                 snapshot: decoded,
                 flows: envelope.flows,
                 browserIntegrations: envelope.browserIntegrations,
+                sleepPrevention: envelope.sleepPrevention,
+                terminal: envelope.terminal,
                 hostUrls: envelope.hostUrls,
                 protocolVersion: envelope.protocolVersion
             ))
@@ -252,12 +300,20 @@ actor WorkspaceWireEngine {
             scheduleFlush()
         case "browserIntegrations":
             await publisher?(.browserIntegrations(envelope.browserIntegrations))
+        case "sleepPrevention":
+            await publisher?(.sleepPrevention(envelope.sleepPrevention))
+        case "terminal":
+            await publisher?(.terminal(envelope.terminal))
+        case "terminalFrame":
+            if let frame = envelope.terminalFrame { await publisher?(.terminalFrame(frame)) }
         case "flows":
             await publisher?(.flows(envelope.flows))
         case "result":
             await publisher?(.result(id: envelope.id, ok: envelope.ok, error: envelope.error))
         case "error":
             await publisher?(.error(envelope.message ?? "Host error"))
+        case "attention":
+            if let event = envelope.event { await publisher?(.attention(event)) }
         default:
             break
         }

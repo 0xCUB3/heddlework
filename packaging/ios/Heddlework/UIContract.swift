@@ -56,6 +56,7 @@ struct UIContract: Decodable {
         panels: [Item(id: "notifications", label: "Notifications"), Item(id: "surfaces", label: "Surfaces"), Item(id: "diff", label: "Changes"), Item(id: "queue", label: "Queue"), Item(id: "triage", label: "Triage"), Item(id: "receipts", label: "Receipts")],
         settings: [
             Item(id: "runtime", label: "Runtime"),
+            Item(id: "power", label: "Power"),
             Item(id: "interface", label: "Interface"),
             Item(id: "remote-access", label: "Remote access"),
             Item(id: "updates", label: "Updates"),
@@ -135,5 +136,14 @@ extension UIColor {
         let b = CGFloat((value >> (hasAlpha ? 8 : 0)) & 0xff) / 255
         let a = hasAlpha ? CGFloat(value & 0xff) / 255 : 1
         self.init(red: r, green: g, blue: b, alpha: a)
+    }
+}
+
+
+enum AppBuildInfo {
+    static var label: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return "local \(version) (\(build))"
     }
 }

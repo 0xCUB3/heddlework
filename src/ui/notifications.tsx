@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import type { Notice, NoticeKind, WorkbenchState } from '../workbench/state.ts'
+import { isLedgerNotice, noticeHeadline, type Notice, type NoticeKind } from '../workbench/notices.ts'
+import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
@@ -157,9 +158,9 @@ function NotificationCard({ notice, newest, depth, stacked, exiting, promotion, 
   )
 }
 
-export function NotificationLedgerView({ state, fullscreen = false, fullscreenProgress, panelWidth = 422, onClear, onClose }: { state: WorkbenchState; fullscreen?: boolean; fullscreenProgress?: number; panelWidth?: number; onClear(): void; onClose?(): void }) {
+export function NotificationLedgerView({ state, fullscreen = false, fullscreenProgress, panelWidth = 422, onClear, onClose, onOpen }: { state: WorkbenchState; fullscreen?: boolean; fullscreenProgress?: number; panelWidth?: number; onClear(): void; onClose?(): void; onOpen?(id: number): void }) {
   const { mobile } = useResponsiveLayout()
-  const notices = [...state.notices].reverse()
+  const notices = [...state.notices.filter(isLedgerNotice)].reverse()
   const virtualWindow = useNativeVirtualWindow(notices.length, `notifications:${notices.length}:${notices[0]?.id ?? ''}:${notices.at(-1)?.id ?? ''}`)
   const visibleNotices = notices.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
@@ -185,21 +186,23 @@ export function NotificationLedgerView({ state, fullscreen = false, fullscreenPr
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 180, gap: 9 }}>
             <div style={{ width: 38, height: 38, borderRadius: 19, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card }}><Icon name="bell" size={18} color={colors.textFaint} /></div>
             <text style={{ color: colors.text, fontSize: 15, fontWeight: 600 }}>No notifications yet</text>
-            <text style={{ maxWidth: '86%', color: colors.textFaint, fontSize: 11, lineHeight: 17, textAlign: 'center', whiteSpace: 'normal' }}>Harness and workspace events will be kept here.</text>
+            <text style={{ maxWidth: '86%', color: colors.textFaint, fontSize: 11, lineHeight: 17, textAlign: 'center', whiteSpace: 'normal' }}>Completions, failures, and requests for input land here. Copy and save confirmations do not.</text>
           </div>
-        ) : visibleNotices.map((notice) => <LedgerRow key={notice.id} notice={notice} />)}
+        ) : visibleNotices.map((notice) => <LedgerRow key={notice.id} notice={notice} {...(onOpen ? { onOpen } : {})} />)}
       </NativeVirtualList>
     </div>
   )
 }
 
-function LedgerRow({ notice }: { notice: Notice }) {
+function LedgerRow({ notice, onOpen }: { notice: Notice; onOpen?(id: number): void }) {
   const tone = noticeColor(notice.kind)
+  const unread = notice.readAt === undefined
+  const title = notice.sessionTitle || noticeHeadline(notice)
   return (
     <div testId="notification-ledger-row-frame" style={{ width: '100%', flexShrink: 0, display: 'flex', flexDirection: 'row', paddingLeft: 14, paddingRight: 14, paddingTop: 4, paddingBottom: 4 }}>
-      <div testId="notification-ledger-row" style={{ minWidth: 0, minHeight: 40, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 8, paddingRight: 12, paddingBottom: 8, paddingLeft: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, selectionColor: '#4F67D866' }}>
-        <div style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone, flexShrink: 0 }} />
-        <AutoScrollingNoticeText message={notice.message} scrollTestId="notification-ledger-scroll" />
+      <div testId="notification-ledger-row" tabIndex={0} style={{ minWidth: 0, minHeight: 40, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 8, paddingRight: 12, paddingBottom: 8, paddingLeft: 12, borderRadius: 10, borderWidth: 1, borderColor: unread ? colors.borderStrong : colors.border, backgroundColor: colors.card, cursor: onOpen ? 'pointer' : 'default', selectionColor: '#4F67D866' }} onClick={() => onOpen?.(notice.id)}>
+        <div style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: unread ? tone : colors.textFaint, flexShrink: 0 }} />
+        <AutoScrollingNoticeText message={notice.sessionTitle ? `${title} · ${notice.message}` : notice.message} scrollTestId="notification-ledger-scroll" />
         <text style={{ color: colors.textFaint, fontSize: 9, fontFamily: nativeTheme.fontSans, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatDate(notice.createdAt)}</text>
       </div>
     </div>
