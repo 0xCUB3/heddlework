@@ -31,4 +31,7 @@ if payloads.isEmpty {
     fputs("no qr\n", stderr)
     exit(1)
 }
-print(payloads.joined(separator: "\n"))
+// Vision can write framework diagnostics to stdout on CI VMs (ANE compilation warnings), so mark the payload lines.
+for payload in payloads {
+    print("QR:\(payload)")
+}

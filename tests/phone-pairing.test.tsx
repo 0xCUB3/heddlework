@@ -18,7 +18,9 @@ function decodeQr(imagePath: string): string {
   if (result.exitCode !== 0) {
     throw new Error(`QR decode failed (${result.exitCode}): ${result.stderr.toString() || result.stdout.toString()}`)
   }
-  return result.stdout.toString().trim()
+  const payloads = result.stdout.toString().split('\n').flatMap((line) => line.startsWith('QR:') ? [line.slice(3)] : [])
+  if (payloads.length === 0) throw new Error(`QR decode returned no payload: ${result.stdout.toString()}`)
+  return payloads.join('\n')
 }
 
 describe('phone pairing QR', () => {
