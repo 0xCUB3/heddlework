@@ -18,7 +18,8 @@ function decodeQr(imagePath: string): string {
   if (result.exitCode !== 0) {
     throw new Error(`QR decode failed (${result.exitCode}): ${result.stderr.toString() || result.stdout.toString()}`)
   }
-  const payloads = result.stdout.toString().split('\n').flatMap((line) => line.startsWith('QR:') ? [line.slice(3)] : [])
+  // Vision diagnostics on CI VMs can land on the same line as the marker, so match the marker anywhere.
+  const payloads = Array.from(result.stdout.toString().matchAll(/QR:(.*)/gu), (match) => match[1] ?? '')
   if (payloads.length === 0) throw new Error(`QR decode returned no payload: ${result.stdout.toString()}`)
   return payloads.join('\n')
 }
