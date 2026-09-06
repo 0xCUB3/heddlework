@@ -6,6 +6,7 @@ import { IconButton, NativeVirtualList, useNativeVirtualWindow } from './primiti
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
+import { trafficLightInset as trafficLightInsetFor } from './window-chrome.ts'
 
 export function composerNotificationStackHeight(noticeCount: number): number {
   const visibleCount = Math.min(3, Math.max(0, noticeCount))
@@ -164,7 +165,7 @@ export function NotificationLedgerView({ state, fullscreen = false, fullscreenPr
   const virtualWindow = useNativeVirtualWindow(notices.length, `notifications:${notices.length}:${notices[0]?.id ?? ''}:${notices.at(-1)?.id ?? ''}`)
   const visibleNotices = notices.slice(virtualWindow.windowStart, virtualWindow.windowEnd)
   const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
-  const trafficLightInset = process.platform === 'darwin' ? 96 * titlebarProgress : 0
+  const trafficLightInset = trafficLightInsetFor(titlebarProgress)
   return (
     <div testId="notification-panel" style={{ width: fullscreen ? '100%' : panelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
       <MotionDiv initial={false} animate={{ paddingLeft: 14 + trafficLightInset }} transition={LAYOUT_MOTION_TRANSITION} testId="notification-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14 + trafficLightInset, paddingRight: 14 }}>

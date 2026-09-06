@@ -42,7 +42,7 @@ export function SessionRow({
   disabled: boolean
   lifecycle: 'active' | 'snoozed' | 'settled'
   snoozedUntil?: number
-  branch: string
+  branch?: string | undefined
   snoozeOpen: boolean
   onClick(): void
   onSettle(): void
@@ -105,8 +105,8 @@ export function SessionRow({
       <div testId={active ? 'sidebar-session-active' : 'sidebar-session-row'} tabIndex={disabled ? -1 : 0} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, cursor: disabled ? 'default' : 'pointer' }} {...(disabled ? {} : { onClick })}>
         <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <Icon name="gitBranch" size={11} color={colors.textFaint} />
-          <text style={{ color: colors.textFaint, fontSize: 9 }}>{branch}</text>
+          <Icon name={branch ? 'gitBranch' : 'folder'} size={11} color={colors.textFaint} />
+          <text testId="sidebar-session-footer" style={{ color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{branch ?? shortPath(session.cwd)}</text>
         </div>
       </div>
     </div>
@@ -147,6 +147,12 @@ function SnoozeMenu({ open, onSchedule, onClose }: { open: boolean; onSchedule(u
   )
 }
 
+
+/** Home-relative folder for sessions outside the current workspace, so the footer stays stable across workspace
+ * switches. Paths come from the host machine, so the home prefix is recognised by shape rather than read from env. */
+export function shortPath(path: string): string {
+  return path.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)(?=[\\/]|$)/u, '~')
+}
 
 function relativeTime(timestamp: number): string {
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1_000))

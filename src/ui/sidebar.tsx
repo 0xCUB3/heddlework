@@ -11,6 +11,7 @@ import { SIDEBAR_VIRTUAL_WINDOW_SIZE, useNativeVirtualWindow, usePrependCount } 
 import { pickWorkspaceDirectory } from './open-external.ts'
 import { colors } from './theme.ts'
 import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
+import { trafficLightInset } from './window-chrome.ts'
 
 export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from './sidebar-session-row.tsx'
 
@@ -145,7 +146,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         disabled={false}
         lifecycle={lifecycle}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
-        branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || 'main' : 'saved session'}
+        branch={resolve(session.cwd) === resolve(state.workspacePath) ? state.workspaceDiff.branch || undefined : undefined}
         snoozeOpen={snoozeMenu === session.path}
         onClick={() => { onSelectSession(); void controller.switchSession(session) }}
         onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}
@@ -331,7 +332,7 @@ function ProjectFilter({ value, options, onChange }: { value: string; options: A
 
 function BrandHeader() {
   return (
-    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingLeft: process.platform === 'darwin' ? 90 : 0, backgroundColor: colors.sidebar }}>
+    <div testId="sidebar-brand" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingLeft: trafficLightInset(1, 90), backgroundColor: colors.sidebar }}>
       <text style={{ color: colors.textMuted, fontSize: 12, fontWeight: 650 }}>Heddlework</text>
     </div>
   )

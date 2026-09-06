@@ -98,7 +98,10 @@ export function toCss(style: StyleDesc | undefined, hovered = false, active = fa
       if (merged[key] !== undefined) css[cssKey] = px(merged[key])
     }
   }
-  if (merged.position === 'absolute' || merged.position === 'relative') css.position = merged.position
+  // GPUI paints children in source order and treats every element as the containing block for absolute
+  // children. In CSS, positioned elements paint above static siblings, so a static sibling after an absolute
+  // backdrop would be covered. Defaulting to relative restores source-order painting.
+  css.position = merged.position === 'absolute' ? 'absolute' : 'relative'
   return css as CSSProperties
 }
 

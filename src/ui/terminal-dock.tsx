@@ -8,6 +8,7 @@ import { TerminalView } from './terminal-view.tsx'
 import type { ResolvedTheme } from './theme.ts'
 import { useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
+import { trafficLightInset as trafficLightInsetFor } from './window-chrome.ts'
 
 export function TerminalDock({
   service,
@@ -53,7 +54,7 @@ export function TerminalDock({
   }, [requestFocus, service])
 
   const viewHeight = Math.max(1, height - TERMINAL_DOCK_HEADER)
-  const trafficLightInset = process.platform === 'darwin' ? 96 * fullscreenProgress : 0
+  const trafficLightInset = trafficLightInsetFor(fullscreenProgress)
 
   return (
     <MotionDiv initial={{ height: 0 }} animate={{ height }} transition={LAYOUT_MOTION_TRANSITION} testId="terminal-dock" style={{ height, flexShrink: 0, display: 'flex', flexDirection: 'column', borderTopWidth: fullscreenProgress > 0.5 ? 0 : 1, borderColor: colors.border, backgroundColor: colors.panel, overflow: 'hidden' }}>

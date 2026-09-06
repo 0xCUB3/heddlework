@@ -4,6 +4,7 @@ import { Icon, type IconName } from './icons.tsx'
 import { IconButton } from './primitives.tsx'
 import { colors } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
+import { trafficLightInset as trafficLightInsetFor } from './window-chrome.ts'
 
 interface HeaderRenderer {
   getElementBounds?(id: number): readonly number[] | undefined
@@ -57,7 +58,7 @@ export function RightPanelHeader({
   onClose(): void
 }) {
   const titlebarProgress = fullscreenProgress ?? (fullscreen ? 1 : 0)
-  const trafficLightInset = process.platform === 'darwin' ? 96 * titlebarProgress : 0
+  const trafficLightInset = trafficLightInsetFor(titlebarProgress)
   const renderer = useGpuixRequired() as HeaderRenderer
   const tabViewportId = useRef<number | undefined>(undefined)
   const tabScrollId = useRef<number | undefined>(undefined)
