@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import uiContract from '../workbench/ui-contract.json'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
@@ -74,6 +74,7 @@ export function WorkbenchApp({
   onStopAllAndQuit,
   layoutStorage,
   hostSwitcher,
+  onSettingsRenderForTest,
 }: {
   controller: WorkbenchControllerSurface
   presenters: ReadonlyMap<string, ToolPresenter>
@@ -92,6 +93,7 @@ export function WorkbenchApp({
   onStopAllAndQuit?: (() => Promise<void>) | undefined
   layoutStorage?: LayoutStorage
   hostSwitcher?: HostSwitcherSurface | undefined
+  onSettingsRenderForTest?: (() => void) | undefined
 }) {
   // Rendered by host-badge once the desktop lane lands.
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
@@ -102,7 +104,7 @@ export function WorkbenchApp({
   const windowSize = useWindowSize({ intervalMs: 50 })
   const windowInsets = useWindowInsets({ intervalMs: 50 })
   const safeWidth = Math.max(1, windowSize.width - windowInsets.effective.left - windowInsets.effective.right)
-  const baseLayout = resolveResponsiveLayout(safeWidth)
+  const baseLayout = useMemo(() => resolveResponsiveLayout(safeWidth), [safeWidth])
   const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => layoutStorage?.read() ?? {})
   const panelSizesRef = useRef(panelSizes)
   const [resizeDrag, setResizeDrag] = useState<{ panel: ResizePanel; start: number; size: number; before: PanelSizes } | undefined>()
@@ -117,7 +119,12 @@ export function WorkbenchApp({
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [threadRenameRequest, setThreadRenameRequest] = useState(0)
-  const layout = { ...baseLayout, sidebarWidth: baseLayout.navigationOverlay ? baseLayout.sidebarWidth : clampPanelSize(panelSizes.sidebar ?? baseLayout.sidebarWidth, 220, Math.min(440, safeWidth - 360 - (rightPanel ? 320 : 0))) }
+  const layout = useMemo(() => ({
+    ...baseLayout,
+    sidebarWidth: baseLayout.navigationOverlay
+      ? baseLayout.sidebarWidth
+      : clampPanelSize(panelSizes.sidebar ?? baseLayout.sidebarWidth, 220, Math.min(440, safeWidth - 360 - (rightPanel ? 320 : 0))),
+  }), [baseLayout, panelSizes.sidebar, rightPanel, safeWidth])
   const [displayedRightPanel, setDisplayedRightPanel] = useState<RightPanel | undefined>()
   const [panelFullscreen, setPanelFullscreen] = useState(false)
   const [panelFullscreenRendered, setPanelFullscreenRendered] = useState(false)
@@ -130,6 +137,16 @@ export function WorkbenchApp({
   const toasts = toastNotices(state.notices)
   const newestToastId = toasts.at(-1)?.id
   const draft = state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
+  const settingsState = useMemo(() => ({
+    connection: state.connection,
+    connectionMessage: state.connectionMessage,
+    models: state.models,
+    threadTitles: state.threadTitles,
+  }), [state.connection, state.connectionMessage, state.models, state.threadTitles])
+  const closeSettings = useCallback(() => setSurface('chat'), [])
+  const setThemeMode = useCallback((mode: Parameters<ThemeManager['setMode']>[0]) => themeManager.setMode(mode), [themeManager])
+  const setInterfaceFonts = useCallback((fonts: Parameters<ThemeManager['setFonts']>[0]) => themeManager.setFonts(fonts), [themeManager])
+  const resetInterfaceFonts = useCallback(() => themeManager.resetFonts(), [themeManager])
   const setLeftSidebarVisibility = useCallback((open: boolean) => {
     if (!open) setLeftSidebarMounted(true)
     setLeftSidebarOpen(open)
@@ -530,7 +547,7 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView onStopAllAndQuit={onStopAllAndQuit} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} state={state} controller={controller} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} onFontsChange={(fonts) => themeManager.setFonts(fonts)} onFontsReset={() => themeManager.resetFonts()} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} hostSwitcher={hostSwitcher} />
+            <SettingsView onRenderForTest={onSettingsRenderForTest} onStopAllAndQuit={onStopAllAndQuit} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} state={settingsState} controller={controller} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={setThemeMode} onFontsChange={setInterfaceFonts} onFontsReset={resetInterfaceFonts} terminals={terminals} browsers={browsers} onClose={closeSettings} hostSwitcher={hostSwitcher} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>
@@ -671,5 +688,3 @@ function TranscriptFade() {
     </div>
   )
 }
-
-

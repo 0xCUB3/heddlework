@@ -7,6 +7,13 @@ import { createInitialState } from '../src/workbench/state.ts'
 import type { ThreadTitleSettings } from '../src/workbench/thread-titles.ts'
 import { SettingsView } from '../src/ui/settings-view.tsx'
 import { DEFAULT_INTERFACE_FONTS } from '../src/ui/theme.ts'
+import { DEFAULT_TERMINAL_APPEARANCE } from '../src/terminal/appearance.ts'
+import type { TerminalSessionService } from '../src/terminal/service.ts'
+import { WorkbenchApp } from '../src/ui/app.tsx'
+import { WorkbenchController } from '../src/workbench/controller.ts'
+import { DemoTransport } from '../src/pi/demo-transport.ts'
+import { ThemeManager } from '../src/ui/theme-manager.ts'
+import { createTestUiRegistry, testControllerDependencies } from './helpers/workbench.ts'
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
@@ -75,6 +82,77 @@ describeNative('thread title settings', () => {
     } finally {
       await automation.close()
       root.unmount()
+    }
+  })
+
+  it('subscribes terminal settings to state changes instead of PTY frame updates', async () => {
+    let broadSubscriptions = 0
+    let stateSubscriptions = 0
+    const snapshot = { appearance: DEFAULT_TERMINAL_APPEARANCE }
+    const terminals = {
+      subscribe() { broadSubscriptions += 1; return () => undefined },
+      subscribeState() { stateSubscriptions += 1; return () => undefined },
+      getSnapshot() { return snapshot },
+      getStateSnapshot() { return snapshot },
+    } as unknown as TerminalSessionService
+    const root = createTestRoot({ width: 900, height: 900 })
+    root.render(
+      <SettingsView
+        state={createInitialState('/tmp/settings-terminal-subscription')}
+        controller={{ reconnect() {}, setThreadTitleSettings() {} } as unknown as WorkbenchControllerSurface}
+        theme={{ mode: 'dark', resolved: 'dark', fonts: DEFAULT_INTERFACE_FONTS }}
+        terminals={terminals}
+        onThemeModeChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    try {
+      root.renderer.flush()
+      expect(stateSubscriptions).toBe(1)
+      expect(broadSubscriptions).toBe(0)
+    } finally {
+      root.unmount()
+    }
+  })
+
+  it('does not rerender Settings for unrelated live controller updates', async () => {
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/settings-render-stability', testControllerDependencies())
+    const themeManager = new ThemeManager({ preferencePath: false, resolveSystemTheme: () => 'dark' })
+    let renders = 0
+    const root = createTestRoot({ width: 1_000, height: 700 })
+    root.render(
+      <WorkbenchApp
+        controller={controller}
+        presenters={new Map()}
+        ui={createTestUiRegistry(controller)}
+        themeManager={themeManager}
+        onSettingsRenderForTest={() => { renders += 1 }}
+      />,
+    )
+    await controller.start()
+    const automation = await connectTest(root.renderer)
+    try {
+      await controller.submit('/settings')
+      await Bun.sleep(0)
+      root.renderer.flush()
+      expect(await automation.getByTestId('settings-view').count()).toBe(1)
+      const initialRenders = renders
+      expect(initialRenders).toBeGreaterThan(0)
+
+      controller.acceptAgentEvent({ type: 'agent_start' })
+      controller.acceptAgentEvent({ type: 'tool_execution_start', toolCallId: 'settings-live-tool', toolName: 'bash', args: { command: 'printf live' } })
+      controller.acceptAgentEvent({ type: 'tool_execution_end', toolCallId: 'settings-live-tool', toolName: 'bash', result: { content: [] }, isError: false })
+      controller.acceptAgentEvent({ type: 'agent_end', messages: [{ role: 'assistant', content: [], stopReason: 'stop' }], willRetry: false })
+      controller.acceptAgentEvent({ type: 'agent_settled' })
+      await Bun.sleep(30)
+      root.renderer.flush()
+
+      expect(renders).toBe(initialRenders)
+    } finally {
+      await automation.close()
+      root.unmount()
+      themeManager.dispose()
+      await controller.dispose()
     }
   })
 })

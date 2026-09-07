@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import uiContract from '../workbench/ui-contract.json'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
@@ -33,7 +33,31 @@ import { HostListBody } from './host-picker.tsx'
 
 
 
-export function SettingsView({
+export type SettingsWorkbenchState = Pick<WorkbenchState, 'connection' | 'connectionMessage' | 'models' | 'threadTitles'>
+
+interface SettingsViewProps {
+  state: SettingsWorkbenchState
+  controller: WorkbenchControllerSurface
+  theme: ThemeSnapshot
+  remoteAccess?: RemoteAccessSurface | undefined
+  tailnetServe?: TailnetServeSurface | undefined
+  pluginHost?: PluginHost | undefined
+  updates?: UpdateService | undefined
+  titlebarInset?: number | undefined
+  onThemeModeChange(mode: ThemeMode): void
+  onFontsChange?(fonts: Partial<InterfaceFonts>): void
+  onFontsReset?(): void
+  terminals?: TerminalSessionService | undefined
+  browserIntegrations?: BrowserIntegrationService | undefined
+  browsers?: BrowserSessionService | undefined
+  sleepPrevention?: SleepPreventionService | undefined
+  onClose(): void
+  onStopAllAndQuit?: (() => Promise<void>) | undefined
+  hostSwitcher?: HostSwitcherSurface | undefined
+  onRenderForTest?: (() => void) | undefined
+}
+
+export const SettingsView = React.memo(function SettingsView({
   state,
   controller,
   theme,
@@ -52,26 +76,9 @@ export function SettingsView({
   onClose,
   onStopAllAndQuit,
   hostSwitcher,
-}: {
-  state: WorkbenchState
-  controller: WorkbenchControllerSurface
-  theme: ThemeSnapshot
-  remoteAccess?: RemoteAccessSurface | undefined
-  tailnetServe?: TailnetServeSurface | undefined
-  pluginHost?: PluginHost | undefined
-  updates?: UpdateService | undefined
-  titlebarInset?: number | undefined
-  onThemeModeChange(mode: ThemeMode): void
-  onFontsChange?(fonts: Partial<InterfaceFonts>): void
-  onFontsReset?(): void
-  terminals?: TerminalSessionService | undefined
-  browserIntegrations?: BrowserIntegrationService | undefined
-  browsers?: BrowserSessionService | undefined
-  sleepPrevention?: SleepPreventionService | undefined
-  onClose(): void
-  onStopAllAndQuit?: (() => Promise<void>) | undefined
-  hostSwitcher?: HostSwitcherSurface | undefined
-}) {
+  onRenderForTest,
+}: SettingsViewProps) {
+  onRenderForTest?.()
   const { mobile, compact, contentGutter } = useResponsiveLayout()
   const resolvedTitlebarInset = titlebarInset ?? (compact ? (process.platform === 'darwin' ? 132 : 54) : 18)
   return (
@@ -141,7 +148,7 @@ export function SettingsView({
       </div>
     </div>
   )
-}
+})
 
 export function updateStatusLabel(state: UpdateState): string {
   switch (state.status) {
@@ -286,19 +293,19 @@ function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
 
 const AUTOMATIC_TITLE_MODEL = 'automatic'
 
-function ThreadsSettings({ state, controller }: { state: WorkbenchState; controller: WorkbenchControllerSurface }) {
-  const models = [...state.models].sort((left, right) => {
+function ThreadsSettings({ state, controller }: { state: SettingsWorkbenchState; controller: WorkbenchControllerSurface }) {
+  const models = useMemo(() => [...state.models].sort((left, right) => {
     const provider = left.provider.localeCompare(right.provider)
     if (provider !== 0) return provider
     return (left.name ?? left.id).localeCompare(right.name ?? right.id)
-  })
-  const options = [
+  }), [state.models])
+  const options = useMemo(() => [
     { value: AUTOMATIC_TITLE_MODEL, label: 'Automatic (cheap model on the session provider)' },
     ...models.map((model) => ({
       value: `${model.provider}/${model.id}`,
       label: `${model.provider} / ${model.name ?? model.id}`,
     })),
-  ]
+  ], [models])
   return (
     <SettingsSection
       testId="settings-threads"
@@ -606,7 +613,7 @@ function BrowserSettings({ service }: { service: BrowserSessionService }) {
 }
 
 function TerminalSettings({ service }: { service: TerminalSessionService }) {
-  const appearance = useSyncExternalStore(service.subscribe, service.getSnapshot).appearance
+  const appearance = useSyncExternalStore(service.subscribeState, service.getStateSnapshot).appearance
   return (
     <SettingsSection title="Terminal" description="Native GPUI text shaping and renderer controls. Font changes apply to every live terminal without restarting its PTY.">
       <SettingsControlRow label="Primary font" description="Use the exact family name of an installed monospaced font.">
