@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { createServer } from 'node:net'
+import { createConnection, createServer } from 'node:net'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,7 +17,7 @@ import {
   type PiLiveBridgeAdvertisement,
 } from '../src/pi/live-bridge.ts'
 import { createPiTransport, selectPiLiveAdvertisement } from '../src/pi/rpc-transport.ts'
-import type { RpcRecord } from '../src/pi/types.ts'
+import type { PiMessage, RpcRecord } from '../src/pi/types.ts'
 
 const temporary: string[] = []
 
@@ -84,6 +84,8 @@ describe('Pi live bridge', () => {
           getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'session', getLeafId: () => null,
           getTree: () => [], getEntries: () => [], buildContextEntries: () => [
             { type: 'message', message: { role: 'user', content: 'old' } },
+            { type: 'compaction', id: 'compact', summary: 'compacted context', tokensBefore: 1234, timestamp: '2026-09-07T12:00:00.000Z' },
+            { type: 'branch_summary', id: 'branch', fromId: 'old-leaf', summary: 'branch context', timestamp: '2026-09-07T12:01:00.000Z' },
             { type: 'message', message: { role: 'assistant', content: 'older' } },
             { type: 'message', message: { role: 'user', content: 'latest' } },
           ],
@@ -115,6 +117,55 @@ describe('Pi live bridge', () => {
         assistant: { role: 'assistant', content: [{ type: 'text', text: 'prefix' }] },
         tools: [{ type: 'tool_execution_update', toolCallId: 'tool-1', toolName: 'read', args: { path: 'x' }, partialResult: 'partial' }],
       })
+      const context = await attached.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
+      expect(context.messages).toEqual([
+        { role: 'user', content: 'old' },
+        { role: 'compaction', content: 'compacted context', display: true, tokensBefore: 1234, timestamp: Date.parse('2026-09-07T12:00:00.000Z') },
+        { role: 'branchSummary', summary: 'branch context', fromId: 'old-leaf', timestamp: Date.parse('2026-09-07T12:01:00.000Z') },
+        { role: 'assistant', content: 'older' },
+        { role: 'user', content: 'latest' },
+      ])
+
+      const raw = createConnection({ host: '127.0.0.1', port: advertisement.port })
+      let authenticated = false
+      let streamBytes = 0
+      let rawBuffer = ''
+      raw.on('data', (chunk) => {
+        if (authenticated) streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength
+        rawBuffer += chunk.toString('utf8')
+        if (!authenticated && rawBuffer.includes('\n')) {
+          authenticated = true
+          streamBytes = 0
+          rawBuffer = ''
+        }
+      })
+      await new Promise<void>((resolve, reject) => {
+        raw.once('connect', resolve)
+        raw.once('error', reject)
+      })
+      raw.write(`${JSON.stringify({ type: 'hello', token: advertisement.token, version: 1 })}\n`)
+      for (let attempt = 0; attempt < 100 && !authenticated; attempt++) await Bun.sleep(2)
+      expect(authenticated).toBe(true)
+      const longUpdate = handlers.get('message_update')
+      for (let index = 1; index <= 200; index++) {
+        const cumulative = 'x'.repeat(index * 1_000)
+        longUpdate?.({
+          type: 'message_update',
+          message: { role: 'assistant', content: [{ type: 'text', text: cumulative }], usage: { input: 1, output: index } },
+          assistantMessageEvent: {
+            type: 'text_delta', contentIndex: 0, delta: 'x'.repeat(1_000),
+            partial: { role: 'assistant', content: [{ type: 'text', text: cumulative }] },
+          },
+        }, ctx)
+      }
+      const deadline = Date.now() + 2_000
+      while (rawBuffer.split('\n').length - 1 < 200 && Date.now() < deadline) await Bun.sleep(5)
+      const records = rawBuffer.trim().split('\n').map((line) => JSON.parse(line) as RpcRecord)
+      expect(records).toHaveLength(200)
+      expect(records.every((record) => record.type === 'message_update' && record.message === undefined && (record.assistantMessageEvent as { partial?: unknown }).partial === undefined)).toBe(true)
+      expect(streamBytes).toBeGreaterThan(200_000)
+      expect(streamBytes).toBeLessThan(300_000)
+      raw.destroy()
       idle = false
       handlers.get('agent_start')?.({ type: 'agent_start' }, ctx)
       expect(JSON.parse(readFileSync(adPath, 'utf8')).isStreaming).toBe(true)

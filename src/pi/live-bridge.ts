@@ -295,6 +295,46 @@ function contentText(content) {
   return content.flatMap((block) => block && typeof block.text === "string" ? [block.text] : []).join("\n");
 }
 
+function persistedTimestamp(value) {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function entryMessages(entry) {
+  if (entry.type === "message" && entry.message) {
+    const message = entry.message;
+    if ((message.role === "user" || message.role === "assistant" || message.role === "toolResult") && message.content == null) {
+      return [{ ...message, content: [] }];
+    }
+    return [message];
+  }
+  if (entry.type === "custom_message") {
+    return [{
+      role: "custom",
+      customType: entry.customType,
+      content: entry.content ?? [],
+      display: entry.display,
+      details: entry.details,
+      timestamp: persistedTimestamp(entry.timestamp),
+    }];
+  }
+  if (entry.type === "branch_summary" && entry.summary) {
+    return [{ role: "branchSummary", summary: entry.summary, fromId: entry.fromId, timestamp: persistedTimestamp(entry.timestamp) }];
+  }
+  if (entry.type === "compaction") {
+    return [{
+      role: "compaction",
+      content: entry.summary,
+      display: true,
+      tokensBefore: entry.tokensBefore,
+      timestamp: persistedTimestamp(entry.timestamp),
+    }];
+  }
+  return [];
+}
+
 function supportedThinking(model) {
   if (!model?.reasoning) return ["off"];
   return THINKING.filter((level) => {
@@ -306,7 +346,27 @@ function supportedThinking(model) {
 }
 
 function branchMessages(ctx) {
-  return ctx.sessionManager.buildContextEntries().flatMap((entry) => entry.type === "message" ? [entry.message] : []);
+  return ctx.sessionManager.buildContextEntries().flatMap(entryMessages);
+}
+
+function projectMessageUpdate(event) {
+  const delta = event.assistantMessageEvent || {};
+  let assistantMessageEvent;
+  if (delta.type === "toolcall_start") {
+    const toolCall = delta.partial?.content?.[delta.contentIndex];
+    const { partial: _partial, ...rest } = delta;
+    assistantMessageEvent = {
+      ...rest,
+      ...(toolCall?.type === "toolCall" && typeof toolCall.id === "string" ? { id: toolCall.id } : {}),
+      ...(toolCall?.type === "toolCall" && typeof toolCall.name === "string" ? { toolName: toolCall.name } : {}),
+    };
+  } else if (Object.prototype.hasOwnProperty.call(delta, "partial")) {
+    const { partial: _partial, ...rest } = delta;
+    assistantMessageEvent = rest;
+  } else {
+    assistantMessageEvent = delta;
+  }
+  return { type: "message_update", usage: event.message?.usage, assistantMessageEvent };
 }
 
 function forkMessages(ctx) {
@@ -352,6 +412,12 @@ function line(socket, value) {
   try { socket.write(JSON.stringify(value) + "\n"); } catch { socket.destroy(); }
 }
 
+function writeLine(socket, serialized) {
+  if (socket.destroyed) return;
+  if (socket.writableLength > 1024 * 1024) { socket.destroy(); return; }
+  try { socket.write(serialized); } catch { socket.destroy(); }
+}
+
 function createShared() {
   const root = registryRoot();
   mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -372,7 +438,10 @@ function createShared() {
 
   shared.broadcast = (value) => {
     const event = { ...value, sequence: ++shared.sequence };
-    for (const client of shared.clients) line(client, event);
+    if (shared.clients.size === 0) return event;
+    let serialized;
+    try { serialized = JSON.stringify(event) + "\n"; } catch { return event; }
+    for (const client of shared.clients) writeLine(client, serialized);
     return event;
   };
   shared.advertise = () => {
@@ -540,7 +609,7 @@ export default function heddleworkLiveBridge(pi) {
         const previous = shared.liveTools.get(event.toolCallId) || {};
         shared.liveTools.set(event.toolCallId, { ...previous, ...event });
       }
-      shared.broadcast(event);
+      shared.broadcast(eventName === "message_update" ? projectMessageUpdate(event) : event);
     });
   }
   pi.on("session_shutdown", (event, ctx) => {
