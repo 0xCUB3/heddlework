@@ -116,6 +116,7 @@ export function WorkbenchApp({
   const [bottomTerminalFullscreen, setBottomTerminalFullscreen] = useState(false)
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [threadRenameRequest, setThreadRenameRequest] = useState(0)
   const layout = { ...baseLayout, sidebarWidth: baseLayout.navigationOverlay ? baseLayout.sidebarWidth : clampPanelSize(panelSizes.sidebar ?? baseLayout.sidebarWidth, 220, Math.min(440, safeWidth - 360 - (rightPanel ? 320 : 0))) }
   const [displayedRightPanel, setDisplayedRightPanel] = useState<RightPanel | undefined>()
   const [panelFullscreen, setPanelFullscreen] = useState(false)
@@ -330,6 +331,16 @@ export function WorkbenchApp({
       void controller.reconnect()
       return
     }
+    if (action === 'thread.regenerateTitle') {
+      const path = state.session.sessionFile
+      if (path) void controller.regenerateThreadTitle(path)
+      return
+    }
+    if (action === 'thread.rename') {
+      returnToConversation()
+      setThreadRenameRequest((current) => current + 1)
+      return
+    }
     applyShortcutAction({ action }, {
       'sidebar.toggle': () => setLeftSidebarVisibility(!leftSidebarOpen),
       'terminal.toggle': toggleBottomTerminal,
@@ -524,7 +535,7 @@ export function WorkbenchApp({
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>
                 <MotionDiv initial={false} animate={{ height: chatHeaderHeight }} transition={LAYOUT_MOTION_TRANSITION} style={{ height: chatHeaderHeight, flexShrink: 0, overflow: 'hidden' }}>
-                  <ChatHeader state={state} controller={controller} diffOpen={diffOpen} terminalOpen={bottomTerminalOpen} leftSidebarProgress={layout.navigationOverlay ? 0 : animatedSidebarProgress} onToggleDiff={toggleDiff} {...(terminals ? { onToggleTerminal: toggleBottomTerminal } : {})} hostSwitcher={hostSwitcher} />
+                  <ChatHeader state={state} controller={controller} diffOpen={diffOpen} terminalOpen={bottomTerminalOpen} leftSidebarProgress={layout.navigationOverlay ? 0 : animatedSidebarProgress} onToggleDiff={toggleDiff} {...(terminals ? { onToggleTerminal: toggleBottomTerminal } : {})} hostSwitcher={hostSwitcher} renameRequest={threadRenameRequest} />
                 </MotionDiv>
                 <MotionDiv initial={false} animate={{ flexGrow: conversationBodyFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} testId="conversation-body" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: conversationBodyFlexGrow, minHeight: 0, overflow: 'hidden' }}>
                   {draft ? (

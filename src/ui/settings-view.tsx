@@ -9,6 +9,7 @@ import type { WorkbenchControllerSurface } from '../workbench/controller-surface
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
+import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { colors, nativeTheme, type InterfaceFonts } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
 import { useResponsiveLayout } from './responsive.tsx'
@@ -112,6 +113,8 @@ export function SettingsView({
             </SettingsControlRow>
             <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
           </SettingsSection>
+
+          <ThreadsSettings state={state} controller={controller} />
 
           {hostSwitcher ? <ComputersSection switcher={hostSwitcher} /> : null}
           {remoteAccess ? <RemoteAccessSection service={remoteAccess} tailnetServe={tailnetServe} controller={controller} /> : null}
@@ -280,6 +283,114 @@ function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
 }
 
 
+const AUTOMATIC_TITLE_MODEL = 'automatic'
+
+function ThreadsSettings({ state, controller }: { state: WorkbenchState; controller: WorkbenchControllerSurface }) {
+  const models = [...state.models].sort((left, right) => {
+    const provider = left.provider.localeCompare(right.provider)
+    if (provider !== 0) return provider
+    return (left.name ?? left.id).localeCompare(right.name ?? right.id)
+  })
+  const options = [
+    { value: AUTOMATIC_TITLE_MODEL, label: 'Automatic (cheap model on the session provider)' },
+    ...models.map((model) => ({
+      value: `${model.provider}/${model.id}`,
+      label: `${model.provider} / ${model.name ?? model.id}`,
+    })),
+  ]
+  return (
+    <SettingsSection
+      testId="settings-threads"
+      title="Threads"
+      description="Titles are generated after the first reply using a small model. Renaming a thread by hand turns off automatic titles for that thread."
+    >
+      <SettingsControlRow label="Name threads automatically">
+        <SettingsToggle
+          testId="settings-auto-titles"
+          enabled={state.threadTitles.autoTitles}
+          onChange={(autoTitles) => controller.setThreadTitleSettings({ autoTitles })}
+        />
+      </SettingsControlRow>
+      <SettingsControlRow label="Title model">
+        <TitleModelPicker
+          value={state.threadTitles.titleModel ?? AUTOMATIC_TITLE_MODEL}
+          options={options}
+          onChange={(value) => controller.setThreadTitleSettings({ titleModel: value === AUTOMATIC_TITLE_MODEL ? undefined : value })}
+        />
+      </SettingsControlRow>
+      <TitleInstructionsField
+        value={state.threadTitles.instructions ?? ''}
+        onCommit={(instructions) => controller.setThreadTitleSettings({ instructions })}
+      />
+    </SettingsSection>
+  )
+}
+
+function TitleModelPicker({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange(value: string): void }) {
+  const dropdown = useDropdownState()
+  const selected = options.find((option) => option.value === value)
+  return (
+    <div style={{ position: 'relative', maxWidth: 240 }}>
+      <div
+        testId="settings-title-model"
+        tabIndex={0}
+        style={{ minHeight: 28, maxWidth: 240, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, paddingRight: 7, borderRadius: 7, backgroundColor: dropdown.open ? colors.hover : colors.raised, cursor: 'pointer', hover: { backgroundColor: colors.hover } }}
+        onClick={() => dropdown.toggle()}
+        onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') dropdown.toggle() }}
+      >
+        <text style={{ minWidth: 0, color: colors.text, fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{selected?.label ?? 'Choose'}</text>
+        <Icon name="chevronDown" size={12} color={colors.textMuted} />
+      </div>
+      {dropdown.mounted ? (
+        <anchored side="bottom" align="end" gap={5} fit="snap" snapMargin={8} deferred priority={8} occlude>
+          <div style={{ display: 'flex', pointerEvents: dropdown.open ? 'auto' : 'none' }}>
+            <DropdownSurface testId="settings-title-model-menu" open={dropdown.open} style={{ width: 320, maxHeight: 280, padding: 5, overflow: 'scroll' }}>
+              {options.map((option) => (
+                <div
+                  key={option.value}
+                  testId="settings-title-model-option"
+                  tabIndex={0}
+                  style={{ minHeight: 32, display: 'flex', alignItems: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 6, backgroundColor: option.value === value ? colors.hover : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.hover } }}
+                  onClick={() => { onChange(option.value); dropdown.setOpen(false) }}
+                  onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') { onChange(option.value); dropdown.setOpen(false) } }}
+                >
+                  <text style={{ color: colors.textMuted, fontSize: 11 }}>{option.label}</text>
+                </div>
+              ))}
+            </DropdownSurface>
+          </div>
+        </anchored>
+      ) : null}
+    </div>
+  )
+}
+
+function TitleInstructionsField({ value, onCommit }: { value: string; onCommit(instructions: string | undefined): void }) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const commit = () => {
+    const next = draft.trim() ? draft.trim() : undefined
+    const current = value.trim() ? value.trim() : undefined
+    if (next !== current) onCommit(next)
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 12, paddingBottom: 12, paddingLeft: 13, paddingRight: 13, borderWidth: 1, borderColor: colors.border }}>
+      <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>Title instructions</text>
+      <textarea
+        testId="settings-title-instructions"
+        value={draft}
+        placeholder="Extra rules for titles, e.g. always in Swedish"
+        minRows={3}
+        maxRows={6}
+        theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }}
+        style={{ width: '100%', minWidth: 0, padding: 8, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 11, lineHeight: 17 }}
+        onChange={(event) => setDraft(String(event.value ?? ''))}
+        onBlur={commit}
+      />
+    </div>
+  )
+}
+
 function ComputersSection({ switcher }: { switcher: HostSwitcherSurface }) {
   const snapshot = useSyncExternalStore(switcher.subscribe, switcher.getSnapshot)
   return (
@@ -432,9 +543,9 @@ function remoteLabel(kind: ReturnType<typeof remoteConnectUrls>[number]['kind'])
   }
 }
 
-function SettingsSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+function SettingsSection({ title, description, children, testId }: { title: string; description: string; children: React.ReactNode; testId?: string }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div {...(testId ? { testId } : {})} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <text style={{ color: colors.text, fontSize: 14, fontWeight: 650 }}>{title}</text>
       <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17 }}>{description}</text>
       <div style={{ marginTop: 3, display: 'flex', flexDirection: 'column', borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card, overflow: 'hidden' }}>

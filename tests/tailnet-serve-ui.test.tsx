@@ -92,6 +92,15 @@ describeNative('tailnet serve settings', () => {
       expect(root.renderer.getPaintedText().join('\n')).toContain('Tailnet HTTPS')
       expect(root.renderer.getPaintedText().join('\n')).toContain('8443')
       expect(await automation.getByTestId('settings-tailnet-setup').count()).toBe(1)
+      const scroller = root.renderer.findByTestId('settings-scroll')!
+      const viewport = await automation.getByTestId('settings-scroll').bounds()
+      const setup = await automation.getByTestId('settings-tailnet-setup').bounds()
+      const overflow = setup.y + setup.height - viewport.y - viewport.height
+      if (overflow > 0) {
+        const offset = root.renderer.getScrollOffset(scroller.id)?.[1] ?? 0
+        root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(overflow) - 48)
+        root.renderer.flush()
+      }
       await automation.getByTestId('settings-tailnet-setup').click()
       await tailnetServe.idle()
       root.render(

@@ -4,6 +4,7 @@ import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket, sortActiveSessions } from '../workbench/thread-lifecycle.ts'
 import { DropdownSurface, useDropdownPresence } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
+import { TitleGeneratingDot } from './primitives.tsx'
 import { useResponsiveLayout } from './responsive.tsx'
 import { colors } from './theme.ts'
 import { buildThreadActions, type ThreadAction, type ThreadActionId } from './thread-actions.ts'
@@ -40,6 +41,7 @@ export function SessionRow({
   onMore,
   onAction,
   onRename,
+  titleGenerating = false,
 }: {
   sidebarWidth: number
   session: PiSessionSummary
@@ -60,6 +62,7 @@ export function SessionRow({
   onMore?(): void
   onAction?(id: ThreadActionId): void
   onRename?(name: string): void
+  titleGenerating?: boolean
 }) {
   const { compact } = useResponsiveLayout()
   const height = session.branch ? 74 : 56
@@ -96,6 +99,11 @@ export function SessionRow({
     hasMessages: session.messageCount > 0,
   }).map((action) => {
     if (action.id === 'rename' && !active) return { ...action, disabled: true, detail: 'Open the thread to rename it' }
+    if (action.id === 'regenerate-title') {
+      if (titleGenerating) return { ...action, disabled: true, detail: 'Generating…', testId: 'sidebar-regenerate-title' }
+      if (!active) return { ...action, disabled: true, detail: 'Open the thread to regenerate its title', testId: 'sidebar-regenerate-title' }
+      return { ...action, testId: 'sidebar-regenerate-title' }
+    }
     if ((action.id === 'clone' || action.id === 'export') && !active) {
       return { ...action, disabled: true, detail: action.id === 'clone' ? 'Open the thread to clone it' : 'Open the thread to export it' }
     }
@@ -147,7 +155,10 @@ export function SessionRow({
                 }}
               />
             ) : (
-              <text testId="sidebar-session-title" style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, lineHeight: 16, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
+              <div style={{ minWidth: 0, height: 16, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {titleGenerating ? <TitleGeneratingDot testId="sidebar-title-generating" /> : null}
+                <text testId="sidebar-session-title" style={{ minWidth: 0, flexGrow: 1, color: active ? colors.text : colors.textMuted, fontSize: 12, lineHeight: 16, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis', opacity: titleGenerating ? 0.65 : 1 }}>{session.title}</text>
+              </div>
             )}
             {session.branch ? <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 12 }}>
               <Icon name="gitBranch" size={11} color={metadataColor} />
@@ -215,7 +226,7 @@ function ThreadMenu({ open, actions, onSelect, onClose }: { open: boolean; actio
           {actions.map((action) => (
             <div
               key={action.id}
-              testId={`thread-menu-${action.id}`}
+              testId={action.testId ?? `thread-menu-${action.id}`}
               tabIndex={0}
               onKeyDown={event => {
                 escape(event)

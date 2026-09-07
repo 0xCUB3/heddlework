@@ -8,7 +8,7 @@ import { sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
 import type { HostSwitcherSurface } from '../client/host-switcher.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { HostSwitcherChip } from './host-picker.tsx'
-import { Button, IconButton } from './primitives.tsx'
+import { Button, IconButton, TitleGeneratingDot } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
 import { colors, nativeTheme } from './theme.ts'
@@ -25,6 +25,7 @@ export function ChatHeader({
   onToggleDiff,
   onToggleTerminal,
   hostSwitcher,
+  renameRequest = 0,
 }: {
   state: WorkbenchState
   controller: WorkbenchControllerSurface
@@ -34,17 +35,24 @@ export function ChatHeader({
   onToggleDiff(): void
   onToggleTerminal?(): void
   hostSwitcher?: HostSwitcherSurface | undefined
+  renameRequest?: number
 }) {
   const projectName = workspaceDisplayName(state.workspacePath)
   const title = activeThreadTitle(state)
   const layout = useResponsiveLayout()
   const collapsedLeftInset = process.platform === 'darwin' ? 132 : 54
+  const titleGenerating = Boolean(state.session.sessionFile && state.threadLifecycle[state.session.sessionFile]?.titleGeneratingAt)
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(title)
   useEffect(() => {
     setRenaming(false)
     setDraft(title)
   }, [state.session.sessionFile, title])
+  useEffect(() => {
+    if (!renameRequest) return
+    setDraft(title)
+    setRenaming(true)
+  }, [renameRequest, title])
   return (
     <MotionDiv
       initial={false}
@@ -83,7 +91,10 @@ export function ChatHeader({
             }}
           />
         ) : (
-          <text testId="chat-thread-title" style={{ width: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</text>
+          <div style={{ width: 0, flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+            <text testId="chat-thread-title" style={{ minWidth: 0, flexShrink: 1, color: colors.text, fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', opacity: titleGenerating ? 0.7 : 1 }}>{title}</text>
+            {titleGenerating ? <TitleGeneratingDot testId="chat-header-title-generating" /> : null}
+          </div>
         )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 3 : 7, flexShrink: 0 }}>
@@ -111,13 +122,17 @@ function ActionMenu({ state, controller, compact, onRename }: { state: Workbench
   const path = state.session.sessionFile
   const current = state.sessions.find((session) => session.path === path)
   const bucket = current ? sessionLifecycleBucket(current, path ? state.threadLifecycle[path] : undefined, Date.now()) : 'active'
+  const titleGenerating = Boolean(path && state.threadLifecycle[path]?.titleGeneratingAt)
   const threadActions = buildThreadActions({
     isPinned: ((path ? state.threadLifecycle[path]?.pinnedAt : undefined) ?? 0) > 0,
     isSettled: bucket === 'settled',
     isSnoozed: bucket === 'snoozed',
     isRunning: state.session.isStreaming,
     hasMessages: state.messages.length > 0,
-  }).filter((action) => action.id === 'pin' || action.id === 'unpin' || action.id === 'rename')
+  }).filter((action) => action.id === 'pin' || action.id === 'unpin' || action.id === 'rename' || action.id === 'regenerate-title')
+    .map((action) => action.id === 'regenerate-title' && titleGenerating
+      ? { ...action, disabled: true, detail: 'Generating…' }
+      : action)
   const options = [
     ...threadActions.map((action) => ({ value: action.id, label: action.label, detail: action.detail ?? '', disabled: Boolean(action.disabled) })),
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session', disabled: false },
@@ -134,6 +149,7 @@ function ActionMenu({ state, controller, compact, onRename }: { state: Workbench
       onOpenChange={dropdown.setOpen}
       onValueChange={(value) => {
         if (value === 'rename') onRename()
+        if (value === 'regenerate-title' && path) void controller.regenerateThreadTitle(path)
         if (value === 'pin' && path) controller.pinThread(path)
         if (value === 'unpin' && path) controller.unpinThread(path)
         if (value === 'new') void controller.newSession()

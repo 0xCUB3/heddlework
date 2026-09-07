@@ -210,16 +210,9 @@ describeNative('terminal panels', () => {
       await automation.getByTestId('terminal-ligatures-off').click()
       await scrollToControl('terminal-nerd-font-on')
       await automation.getByTestId('terminal-nerd-font-on').click()
-      const settingsScroll = root.renderer.findByTestId('settings-scroll')!
-      const settingsBounds = await automation.getByTestId('settings-scroll').bounds()
-      const mutedBounds = await automation.getByTestId('terminal-muted-emoji-off').bounds()
-      const overflow = mutedBounds.y + mutedBounds.height - settingsBounds.y - settingsBounds.height
-      if (overflow > 0) {
-        const offset = root.renderer.getScrollOffset(settingsScroll.id)?.[1] ?? 0
-        root.renderer.scrollTo(settingsScroll.id, 0, offset - Math.ceil(overflow) - 48)
-        root.renderer.flush()
-      }
-      await automation.getByTestId('terminal-muted-emoji-off').click()
+      root.renderer.flush()
+      await scrollToControl('terminal-muted-emoji-off')
+      await automation.getByTestId('terminal-muted-emoji-off').press('enter')
       root.renderer.flush()
 
       expect(terminals.getSnapshot().appearance).toMatchObject({

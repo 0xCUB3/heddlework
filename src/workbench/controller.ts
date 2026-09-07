@@ -980,7 +980,10 @@ export class WorkbenchController {
   }
 
   setThreadTitleSettings(settings: Partial<ThreadTitleSettings>): void {
-    const next = normalizeThreadTitleSettings({ ...this.#state.threadTitles, ...settings })
+    const merged: ThreadTitleSettings = { ...this.#state.threadTitles, ...settings }
+    if ('titleModel' in settings && settings.titleModel === undefined) delete merged.titleModel
+    if ('instructions' in settings && settings.instructions === undefined) delete merged.instructions
+    const next = normalizeThreadTitleSettings(merged)
     this.#patch({ threadTitles: next })
     this.#titleSettingsStore?.save(next)
   }

@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'bun:test'
-import type { HarnessAdapter, HarnessCapabilities } from '../src/pi/transport.ts'
+import type { AgentTransport } from '../src/pi/transport.ts'
 import type { PiMessage, PiSessionState, RpcRecord } from '../src/pi/types.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController, type ThreadTitleGeneratorService } from '../src/workbench/controller.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
 
 // Minimal harness: one session with a file path and a model, so the auto-title guards have something to look at.
-class TitleTransport implements HarnessAdapter {
-  readonly id = 'title-test'
-  readonly displayName = 'Title test'
-  readonly capabilities: HarnessCapabilities = { steering: true, followUp: true, compaction: false, forking: false, treeNavigation: false, sessionSwitching: true, sessionNaming: true, extensionUi: false } as HarnessCapabilities
+class TitleTransport implements AgentTransport {
   readonly listeners = new Set<(event: RpcRecord) => void>()
   readonly requests: RpcRecord[] = []
   sessionName: string | undefined
@@ -19,6 +16,7 @@ class TitleTransport implements HarnessAdapter {
   onEvent(listener: (event: RpcRecord) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   onStatus(): () => void { return () => undefined }
   send(): void {}
+  getStderr(): string { return '' }
   emit(event: RpcRecord): void { for (const listener of this.listeners) listener(event) }
   async request<T>(command: RpcRecord): Promise<T> {
     this.requests.push(command)
@@ -149,6 +147,24 @@ describe('thread titles in the controller', () => {
       controller.setThreadTitleSettings({ autoTitles: false })
       expect(saved).toEqual([{ autoTitles: true, titleModel: 'anthropic/claude-haiku-4-5' }, { autoTitles: false, titleModel: 'anthropic/claude-haiku-4-5' }])
       expect(controller.getSnapshot().threadTitles).toEqual({ autoTitles: false, titleModel: 'anthropic/claude-haiku-4-5' })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('clears a previously set title model when the partial passes undefined', async () => {
+    const saved: unknown[] = []
+    const transport = new TitleTransport()
+    const controller = new WorkbenchController(transport, '/tmp/title-workspace', {
+      ...testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })),
+      titleSettingsStore: { load: () => ({ autoTitles: true, titleModel: 'xai/grok-3-mini' }), save: (settings) => { saved.push(settings) } },
+    })
+    try {
+      await controller.start()
+      expect(controller.getSnapshot().threadTitles).toEqual({ autoTitles: true, titleModel: 'xai/grok-3-mini' })
+      controller.setThreadTitleSettings({ titleModel: undefined })
+      expect(controller.getSnapshot().threadTitles).toEqual({ autoTitles: true })
+      expect(saved.at(-1)).toEqual({ autoTitles: true })
     } finally {
       await controller.dispose()
     }

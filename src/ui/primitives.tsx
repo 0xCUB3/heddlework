@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Icon, type IconName } from './icons.tsx'
+import { MotionDiv } from './motion.ts'
 import { colors } from './theme.ts'
 
 export { ChipSelect, matchSelectOptions, type SelectOption } from './select.tsx'
@@ -108,4 +109,21 @@ export { NativeVirtualList, useNativeVirtualWindow, type NativeElementHandle, ty
 
 export function Label({ children }: { children: string }) {
   return <text style={{ color: colors.textFaint, fontSize: 10, fontWeight: 650 }}>{children.toUpperCase()}</text>
+}
+
+export function TitleGeneratingDot({ testId }: { testId: string }) {
+  const [bright, setBright] = useState(true)
+  useEffect(() => {
+    const timer = setInterval(() => setBright((value) => !value), 480)
+    return () => clearInterval(timer)
+  }, [])
+  return (
+    <MotionDiv
+      testId={testId}
+      initial={false}
+      animate={{ opacity: bright ? 1 : 0.28 }}
+      transition={{ duration: 0.45, ease: 'easeInOut' }}
+      style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.info, flexShrink: 0 }}
+    />
+  )
 }
