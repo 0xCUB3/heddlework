@@ -45,7 +45,7 @@ export type {
   WorkbenchSnapshot,
 } from './protocol/index.ts'
 export { terminalSessionToken, createTerminalPlugin } from './terminal/plugin.ts'
-export { TerminalSessionService } from './terminal/service.ts'
+export { TerminalSessionService, type TerminalSessionServiceSurface } from './terminal/service.ts'
 export { DEFAULT_TERMINAL_APPEARANCE, terminalAppearancePreferencePath } from './terminal/appearance.ts'
 export { BunPtyBackend, MemoryTerminalBackend, bunTerminalAvailable } from './terminal/backend.ts'
 export type { TerminalBackend, TerminalOutputMetadata, TerminalProcess } from './terminal/backend.ts'
@@ -64,7 +64,7 @@ export { parseSleepPreventionPolicy, DEFAULT_SLEEP_PREVENTION_POLICY } from './p
 export type { SleepPreventionPolicy, SleepPreventionSnapshot, SleepPreventionWhen, SleepPreventionStatus } from './power/types.ts'
 export { hostWorkIsRunning, shouldInhibitSleep } from './power/activity.ts'
 export { createFlowRuntimePlugin, flowRuntimeToken } from './flows/plugin.ts'
-export type { FlowRuntime, FlowRuntimeHost, FlowRuntimeOptions } from './flows/runtime.ts'
+export type { FlowRuntime, FlowRuntimeHost, FlowRuntimeOptions, FlowRuntimeSurface } from './flows/runtime.ts'
 export type { FlowLaunch, FlowMode, FlowRuntimeSnapshot, FlowSchedule, FlowScheduleInput, FlowScheduleTiming, FlowTemplate } from './flows/types.ts'
 export type {
   RegisteredWorkbenchSurface,
@@ -92,3 +92,29 @@ export type { ReceiptStoreService } from './receipts/store.ts'
 export type { MutationReceipt, ReceiptFile, ReceiptFileStatus, ReceiptToolCount } from './receipts/types.ts'
 export { pluginReportToken } from './plugins/host.ts'
 export type { PluginHost } from './plugins/host.ts'
+export type { WorkbenchControllerSurface } from './workbench/controller-surface.ts'
+export type {
+  RuntimeAttachDescriptor,
+  RemoteClientServices,
+  RemoteClientServicesOptions,
+  AttachRuntimeClientOptions,
+  WaitForWorkspaceClientOpenOptions,
+} from './client/runtime-attach.ts'
+export {
+  attachRuntimeWorkspaceClient,
+  waitForWorkspaceClientOpen,
+  createRemoteServices,
+} from './client/runtime-attach.ts'
+export type {
+  RuntimeSettingsStatus,
+  RuntimeSettingsRequest,
+  RuntimeSettingsResponse,
+  RuntimeHostSnapshot,
+  RuntimeRemoteAccessSnapshot,
+} from './runtime/control-protocol.ts'
+export { RuntimeSettingsControl, createRuntimeRemoteSettingsFacades } from './client/runtime-settings-control.ts'
+export type { RuntimeRemoteAccessFacade, RuntimeTailnetServeFacade, RuntimeRemoteSettingsFacades } from './client/runtime-settings-control.ts'
+export type { RemoteAccessSurface } from './host/remote-access.ts'
+export type { TailnetServeSurface } from './host/tailnet-serve.ts'
+
+

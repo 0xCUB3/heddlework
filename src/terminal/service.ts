@@ -344,4 +344,27 @@ function terminalAppearancesEqual(left: TerminalAppearance, right: TerminalAppea
     && left.muteEmojiColors === right.muteEmojiColors
 }
 
+
+
+export type TerminalSessionServiceSurface = Pick<
+  TerminalSessionService,
+  | 'subscribe'
+  | 'subscribeState'
+  | 'subscribeFrames'
+  | 'getSnapshot'
+  | 'getStateSnapshot'
+  | 'grid'
+  | 'setAppearance'
+  | 'resetAppearance'
+  | 'spawn'
+  | 'ensureSession'
+  | 'select'
+  | 'write'
+  | 'claimSize'
+  | 'resize'
+  | 'setScrollOffset'
+  | 'close'
+  | 'dispose'
+>
+
 export { MemoryTerminalBackend, BunPtyBackend }

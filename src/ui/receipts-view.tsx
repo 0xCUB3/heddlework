@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import type { MutationReceipt } from '../receipts/types.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { WrappedDiff } from './diff-panel.tsx'
 import { Button } from './primitives.tsx'
 import { RightPanelHeader, rightPanelStyle } from './right-panel-header.tsx'
@@ -17,7 +17,7 @@ export function ReceiptsPanel({
   onToggleFullscreen,
 }: {
   receipts: MutationReceipt[]
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   fullscreen: boolean
   fullscreenProgress: number
   fullscreenLocked?: boolean
@@ -77,3 +77,4 @@ function findFile(receipts: MutationReceipt[], key: string) {
   const path = key.slice(separator + 1)
   return receipts.find((receipt) => receipt.id === id)?.files.find((file) => file.path === path)
 }
+

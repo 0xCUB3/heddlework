@@ -3,7 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, typ
 import { resolve } from 'node:path'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import { isCurrentPiSession, sessionProjectName } from '../pi/session-summary.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Icon } from './icons.tsx'
@@ -42,7 +42,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 }: {
   width?: number
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   flowsAvailable?: boolean
   flowsActive?: boolean
   settingsActive: boolean
@@ -383,3 +383,4 @@ function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null 
 function compactTitle(value: string): string {
   return value.length > 60 ? `${value.slice(0, 57)}…` : value
 }
+

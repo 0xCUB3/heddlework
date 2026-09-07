@@ -9,7 +9,7 @@ import { createCoreUiExtension } from '../ui/core-extension-surfaces.tsx'
 import { coreToolPresentersPlugin, toolPresenterSlot } from '../ui/tool-presenters.ts'
 import { defaultThemeManager } from '../ui/theme-manager.ts'
 import { colors } from '../ui/theme.ts'
-import { RemoteWorkbenchController, asWorkbenchController } from '../dom/remote-controller.ts'
+import { RemoteWorkbenchController } from '../dom/remote-controller.ts'
 import { domRenderer, GpuixContext } from '../dom/host.tsx'
 import { fontStack } from '../dom/rich.tsx'
 import { workspaceClient } from './store.ts'
@@ -36,7 +36,7 @@ export function WebWorkbench() {
   const controller = useMemo(() => new RemoteWorkbenchController(client), [client])
   const registry = useMemo(() => {
     const ui = new WorkbenchUiRegistry()
-    ui.register(createCoreUiExtension(asWorkbenchController(controller)))
+    ui.register(createCoreUiExtension(controller))
     return ui
   }, [controller])
 
@@ -91,7 +91,7 @@ export function WebWorkbench() {
     <GpuixContext.Provider value={{ renderer: domRenderer }}>
       <WorkbenchApp
         layoutStorage={workbenchLayoutStorage}
-        controller={asWorkbenchController(controller)}
+        controller={controller}
         presenters={presenters}
         ui={registry}
         themeManager={defaultThemeManager as never}
@@ -100,3 +100,4 @@ export function WebWorkbench() {
     </GpuixContext.Provider>
   )
 }
+

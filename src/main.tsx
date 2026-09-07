@@ -1,3 +1,5 @@
+import { attachOrStartRuntime, runtimeControl } from './runtime/bootstrap.ts'
+import { attachRuntimeWorkspaceClient, createRemoteServices } from './client/runtime-attach.ts'
 import { workbenchLayoutStorage } from './ui/layout-storage.ts'
 import React from 'react'
 import { render, resetRender } from '@gpuix/react'
@@ -7,7 +9,7 @@ import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
 import { isGpuixWindowCloseRace } from './ui/native-window-lifecycle.ts'
 import { ThemeManager, themePreferencePath } from './ui/theme-manager.ts'
-import { createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
+import { createCoreUiExtension, createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
 import { workbenchUiHostPlugin, workbenchUiRegistryToken } from './ui/extensions.ts'
 import { coreToolPresentersPlugin, toolPresenterSlot } from './ui/tool-presenters.ts'
 import { sessionSidebarCachePath } from './pi/session-catalog.ts'
@@ -56,57 +58,53 @@ const themeManager = new ThemeManager()
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
-kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
-  queueStore: new FileQueueStore(demoMode ? false : queueStorePath()),
-  threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
-}))
-kernel.mount(createCheckoutLanePlugin())
-kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
-const hostOptions = hostOptionsFromEnvironment(process.env, demoMode ? false : themePreferencePath())
-const browserIntegrations = createBrowserIntegrationService()
-kernel.mount(createSleepPreventionPlugin({
-  browserIntegrations,
-  preferencePath: demoMode ? false : themePreferencePath(),
-}))
-kernel.mount(createTerminalPlugin({ cwd: workspacePath }))
-kernel.mount(createWorkspaceHostPlugin({
-  browserIntegrations,
-  enabled: hostOptions.enabled,
-  workspacePath,
-  port: hostOptions.port,
-  hostname: hostOptions.hostname,
-  lockedBy: hostOptions.lockedBy,
-  preferencePath: demoMode ? false : themePreferencePath(),
-  tokenPath: demoMode ? false : hostTokenPath(),
-  staticRoot: resolveStaticRoot(),
-}))
 kernel.mount(createUpdatePlugin({ enabled: demoMode ? false : undefined }))
-kernel.mount(createCoreUiExtensionPlugin())
-kernel.mount(workbenchUiHostPlugin)
 kernel.mount(createBrowserPlugin({
   ...(demoMode ? { statePath: false as const } : {}),
   cleanupOrphanedProfiles: coldStart,
 }))
-kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
-kernel.mount(localWorkspaceDiffPlugin)
-kernel.mount(createReceiptPlugin({ path: demoMode ? false : receiptStorePath() }))
-kernel.mount(createAgentTransportPlugin({
-  cwd: workspacePath,
-  demo: demoMode,
-  ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
-  piArgs: piArgumentsFromEnvironment(),
-}))
-const pluginHost = await startExternalPlugins(kernel, workspacePath, { trustPath: demoMode ? false : undefined })
-
-const controller = kernel.get(workbenchControllerToken)
-const flows = kernel.get(flowRuntimeToken)
-const ui = kernel.get(workbenchUiRegistryToken)
-const remoteAccess = kernel.get(remoteAccessToken)
-const tailnetServe = kernel.get(tailnetServeToken)
 const updates = kernel.get(updateServiceToken)
-const terminals = kernel.get(terminalSessionToken)
 const browsers = kernel.get(browserSessionToken)
-const sleepPrevention = kernel.get(sleepPreventionToken)
+kernel.mount(createTerminalPlugin({ cwd: workspacePath }))
+const terminals = kernel.get(terminalSessionToken)
+const descriptor = demoMode || browserSmokeUrl ? undefined : await attachOrStartRuntime({ workspacePath })
+const attached = descriptor ? await createRemoteServices(
+  attachRuntimeWorkspaceClient({ workspaceUrl: descriptor.url, controlUrl: descriptor.controlUrl, token: descriptor.token }),
+  { workspaceUrl: descriptor.url, controlUrl: descriptor.controlUrl, token: descriptor.token },
+  { browsers, updates, terminals },
+) : undefined
+const browserIntegrations = attached?.browserIntegrations ?? createBrowserIntegrationService()
+if (!attached) {
+  kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
+    queueStore: new FileQueueStore(false),
+    threadMetadataStore: new FileThreadMetadataStore(false),
+  }))
+  kernel.mount(createCheckoutLanePlugin())
+  kernel.mount(createFlowRuntimePlugin({ path: false, lanesFromKernel: true }))
+  const hostOptions = hostOptionsFromEnvironment(process.env, false)
+  kernel.mount(createSleepPreventionPlugin({ browserIntegrations, preferencePath: false }))
+  kernel.mount(createWorkspaceHostPlugin({ browserIntegrations, enabled: hostOptions.enabled, workspacePath, port: hostOptions.port, hostname: hostOptions.hostname, tokenPath: false, preferencePath: false, staticRoot: resolveStaticRoot() }))
+  kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
+  kernel.mount(localWorkspaceDiffPlugin)
+  kernel.mount(createReceiptPlugin({ path: false }))
+  kernel.mount(createAgentTransportPlugin({ cwd: workspacePath, demo: demoMode, ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}), piArgs: piArgumentsFromEnvironment() }))
+}
+kernel.mount(workbenchUiHostPlugin)
+if (attached) {
+  kernel.mount({ id: 'core-workbench-ui-client', activate(ctx) { return ctx.get(workbenchUiRegistryToken).register(createCoreUiExtension(attached.controller)) } })
+} else kernel.mount(createCoreUiExtensionPlugin())
+const pluginHost = attached?.pluginHost ?? (attached ? undefined : await startExternalPlugins(kernel, workspacePath, { trustPath: false }))
+const controller = attached?.controller ?? kernel.get(workbenchControllerToken)
+const flows = attached?.flows ?? kernel.get(flowRuntimeToken)
+const ui = kernel.get(workbenchUiRegistryToken)
+const remoteAccess = attached?.remoteAccess ?? kernel.get(remoteAccessToken)
+const tailnetServe = attached?.tailnetServe ?? kernel.get(tailnetServeToken)
+const terminalsForApp = attached?.terminals ?? terminals
+const sleepPrevention = attached?.sleepPrevention ?? kernel.get(sleepPreventionToken)
+const presenceTimer = attached ? setInterval(() => {
+  const sessionPath = controller.getSnapshot().session.sessionFile
+  void attached.client.send({ type: 'reportPresence', clientId: 'desktop', surface: 'desktop', visibility: 'visible', ...(sessionPath ? { sessionPath } : {}) }).catch(() => undefined)
+}, 15_000) : undefined
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
   shutdown(isGpuixWindowCloseRace(error) ? undefined : error)
@@ -123,6 +121,8 @@ const runtime: RuntimeHandle = {
     process.off('SIGTERM', shutdown)
     process.off('uncaughtException', handleUncaughtException)
     process.off('unhandledRejection', handleUnhandledRejection)
+    await attached?.dispose()
+    if (presenceTimer) clearInterval(presenceTimer)
     browserIntegrations.dispose()
     themeManager.dispose()
     await kernel.dispose()
@@ -172,7 +172,7 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 render(
-  <WorkbenchApp layoutStorage={workbenchLayoutStorage} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} controller={controller} flows={flows} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
+  <WorkbenchApp layoutStorage={workbenchLayoutStorage} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} controller={controller} flows={flows} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} terminals={terminalsForApp} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} onStopAllAndQuit={descriptor ? async () => { await runtimeControl(descriptor, "/stop", {}); shutdown() } : undefined} />,
   {
     ...createWindowOptions(
       process.platform,
@@ -307,3 +307,4 @@ function debugOverlay(): 'hidden' | 'minimal' | 'full' {
   const value = process.env.HEDDLEWORK_DEBUG_OVERLAY
   return value === 'minimal' || value === 'full' ? value : 'hidden'
 }
+

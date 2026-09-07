@@ -5,9 +5,9 @@ import type { PiMessage } from '../pi/types.ts'
 import { projectFlowActivity, type FlowActivityEntry } from '../flows/activity.ts'
 import { projectFlowFabricGraph, type FabricBranchStatus, type FlowFabricProjection } from '../flows/fabric-projection.ts'
 import { projectFlowRuns, terminalFlowTasks, type FlowRunProjection, type FlowTaskProjection, type FlowTaskStatus } from '../flows/projection.ts'
-import type { FlowRuntime } from '../flows/runtime.ts'
+import type { FlowRuntimeSurface } from '../flows/runtime.ts'
 import { flowProjectName, formatFlowDate, scheduleTimingLabel, type FlowRunRecord, type FlowSchedule, type FlowTaskRecord } from '../flows/types.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { queueSize } from '../workbench/queue.ts'
 import type { ThreadPriority, ToolRun, WorkbenchState } from '../workbench/state.ts'
 import { buildTimeline } from '../workbench/timeline.ts'
@@ -56,8 +56,8 @@ const EMPTY_FLOW_TOOLS: ToolRun[] = []
 
 interface FlowsViewProps {
   state: WorkbenchState
-  controller: WorkbenchController
-  runtime: FlowRuntime
+  controller: WorkbenchControllerSurface
+  runtime: FlowRuntimeSurface
   presenters: ReadonlyMap<string, ToolPresenter>
   titlebarInset?: number | undefined
   onClose(): void
@@ -122,7 +122,7 @@ export const FlowsView = memo(function FlowsView({ state, controller, runtime, t
 function WorkPage({ runs, state, controller, priorityCounts, onQueueInChat, onOpenTask }: {
   runs: FlowRunProjection[]
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   onQueueInChat(): void
   onOpenTask(task: FlowTaskProjection): void
@@ -195,7 +195,7 @@ const WorkTaskRow = memo(function WorkTaskRow({ row, mobile, compact, activeFabr
   mobile: boolean
   compact: boolean
   activeFabric: boolean
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   onOpenTask(task: FlowTaskProjection): void
 }) {
@@ -235,7 +235,7 @@ function WorkTaskRail({ task, dependency, mobile, onOpenTask, fabricAfter = fals
 function ActiveFabricRail({ task, dependency, controller, mobile, onOpenTask }: {
   task: FlowTaskProjection
   dependency: ReturnType<typeof taskDependency>
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   mobile: boolean
   onOpenTask(task: FlowTaskProjection): void
 }) {
@@ -243,13 +243,13 @@ function ActiveFabricRail({ task, dependency, controller, mobile, onOpenTask }: 
   return <WorkTaskRail task={task} dependency={dependency} mobile={mobile} onOpenTask={onOpenTask} fabricAfter={graph.branches.length > 0} />
 }
 
-function ActiveFabricWorkGraph({ task, controller, compact }: { task: FlowTaskProjection; controller: WorkbenchController; compact: boolean }) {
+function ActiveFabricWorkGraph({ task, controller, compact }: { task: FlowTaskProjection; controller: WorkbenchControllerSurface; compact: boolean }) {
   const graph = useActiveFabricGraph(task, controller)
   if (graph.branches.length === 0) return null
   return <FabricBranchRows graph={graph} compact={compact} embedded />
 }
 
-function useActiveFabricGraph(task: FlowTaskProjection, controller: WorkbenchController): FlowFabricProjection {
+function useActiveFabricGraph(task: FlowTaskProjection, controller: WorkbenchControllerSurface): FlowFabricProjection {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   return useMemo(() => projectFlowFabricGraph(task, state.messages, state.liveTools), [state.liveTools, state.messages, task])
 }
@@ -293,8 +293,8 @@ function laneRecordFor(runs: readonly FlowRunRecord[], taskId: string): FlowTask
 function TaskPage({ task, run, controller, runtime, laneRecord, priorityCounts, labelOptions, onBack, onOpenSession }: {
   task: FlowTaskProjection
   run: FlowRunProjection
-  controller: WorkbenchController
-  runtime: FlowRuntime
+  controller: WorkbenchControllerSurface
+  runtime: FlowRuntimeSurface
   laneRecord: FlowTaskRecord | undefined
   priorityCounts: Readonly<Record<ThreadPriority, number>>
   labelOptions: readonly string[]
@@ -476,7 +476,7 @@ function fabricFlowStatus(status: FabricBranchStatus): FlowTaskStatus {
   return status === 'stopped' ? 'failed' : status
 }
 
-function TriagePage({ runs, controller, onOpenTask }: { runs: FlowRunProjection[]; controller: WorkbenchController; onOpenTask(task: FlowTaskProjection): void }) {
+function TriagePage({ runs, controller, onOpenTask }: { runs: FlowRunProjection[]; controller: WorkbenchControllerSurface; onOpenTask(task: FlowTaskProjection): void }) {
   const layout = useResponsiveLayout()
   const [filter, setFilter] = useState<TriageFilter>('all')
   const [query, setQuery] = useState('')
@@ -579,10 +579,10 @@ function ScheduledPage({ schedules, pendingCount, state, runtime, creating, onCr
   schedules: readonly FlowSchedule[]
   pendingCount: number
   state: WorkbenchState
-  runtime: FlowRuntime
+  runtime: FlowRuntimeSurface
   creating: boolean
   onCreating(value: boolean): void
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
 }) {
   const layout = useResponsiveLayout()
   const rows = useMemo<ScheduleRenderRow[]>(() => schedules.map((schedule, index) => ({ id: `schedule:${schedule.id}`, schedule, index, count: schedules.length })), [schedules])
@@ -609,7 +609,7 @@ function ScheduledPage({ schedules, pendingCount, state, runtime, creating, onCr
   )
 }
 
-const ScheduleRow = memo(function ScheduleRow({ schedule, mobile, runtime, controller }: { schedule: FlowSchedule; mobile: boolean; runtime: FlowRuntime; controller: WorkbenchController }) {
+const ScheduleRow = memo(function ScheduleRow({ schedule, mobile, runtime, controller }: { schedule: FlowSchedule; mobile: boolean; runtime: FlowRuntimeSurface; controller: WorkbenchControllerSurface }) {
   useNativeTheme()
   return (
     <div style={{ ...contentRowStyle(0), minHeight: mobile ? 98 : 64, paddingBottom: 7 }}>

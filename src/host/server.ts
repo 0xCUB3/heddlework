@@ -4,7 +4,6 @@ import { join, normalize, resolve } from 'node:path'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import type { SleepPreventionService } from '../power/service.ts'
 import {
-  applyWorkbenchCommand,
   diffSnapshots,
   encodeFrames,
   isPatchEmpty,
@@ -24,6 +23,8 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { attentionBody, isLedgerNotice, noticeHeadline } from '../workbench/notices.ts'
 import { routeAttention, type ClientPresence } from '../workbench/presence.ts'
 import { advertiseCandidates, type AdvertiseCandidate } from './advertise.ts'
+import { executeSocketCommand, HostCommandSignal, socketAttachment } from './server-runtime.ts'
+import { SessionAdmissionError, type SessionRuntime } from './session-runtime.ts'
 import { timingSafeEqualToken } from './token.ts'
 
 export interface WorkspaceHostOptions {
@@ -38,6 +39,7 @@ export interface WorkspaceHostOptions {
   token: string
   staticRoot?: string | undefined
   extraHostUrls?: (() => readonly string[]) | undefined
+  runtime?: SessionRuntime | undefined
 }
 
 export interface WorkspaceHost {
@@ -54,6 +56,8 @@ interface SocketData {
   lastSnapshot: WorkbenchSnapshot | undefined
   scheduled: boolean
   presence?: ClientPresence
+  clientId: string
+  sessionKey: string
 }
 
 export const DEFAULT_HOST_PORT = 4817
@@ -108,7 +112,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
       const url = new URL(request.url)
       if (url.pathname === '/ws') {
         if (!authorized(request, url, options.token)) return new Response('Unauthorized', { status: 401 })
-        const upgraded = bunServer.upgrade(request, { data: { lastSnapshot: undefined, scheduled: false } })
+        const upgraded = bunServer.upgrade(request, { data: { lastSnapshot: undefined, scheduled: false, clientId: crypto.randomUUID(), sessionKey: options.runtime?.defaultSessionKey ?? 'default' } })
         return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 426 })
       }
       if (url.pathname === '/health') {
@@ -120,14 +124,22 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
     websocket: {
       open(socket) {
         sockets.add(socket)
-        const snapshot = serializeSnapshot(options.controller.getSnapshot())
+        const attachment = socketAttachment({
+          runtime: options.runtime,
+          controller: options.controller,
+          flows: options.flows,
+          browserIntegrations: options.browserIntegrations,
+          sleepPrevention: options.sleepPrevention,
+          terminals: options.terminals,
+        }, socket)
+        const snapshot = serializeSnapshot(attachment.controller.getSnapshot())
         socket.data.lastSnapshot = snapshot
         send(socket, {
           kind: 'welcome',
           protocol: PROTOCOL_VERSION,
           workspacePath: options.workspacePath,
           snapshot,
-          flows: options.flows.getSnapshot(),
+          flows: attachment.flows.getSnapshot(),
           ...(options.browserIntegrations ? { browserIntegrations: options.browserIntegrations.getSnapshot() } : {}),
           ...(options.sleepPrevention ? { sleepPrevention: options.sleepPrevention.getSnapshot() } : {}),
           ...(options.terminals ? { terminal: serializeRemoteTerminal(options.terminals) } : {}),
@@ -136,7 +148,15 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
         sendCurrentTerminal(socket)
       },
       close(socket) {
-        if (socket.data.presence?.clientId) options.controller.presence.remove(socket.data.presence.clientId)
+        const attachment = socketAttachment({
+          runtime: options.runtime,
+          controller: options.controller,
+          flows: options.flows,
+          browserIntegrations: options.browserIntegrations,
+          sleepPrevention: options.sleepPrevention,
+          terminals: options.terminals,
+        }, socket)
+        if (socket.data.presence?.clientId) attachment.controller.presence.remove(socket.data.presence.clientId)
         sockets.delete(socket)
       },
       async message(socket, raw) {
@@ -157,39 +177,52 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
           send(socket, { kind: 'result', id: message.id, ok: false, error: 'Unknown workbench command' })
           return
         }
+        const hostCommand = {
+          runtime: options.runtime,
+          controller: options.controller,
+          flows: options.flows,
+          browserIntegrations: options.browserIntegrations,
+          sleepPrevention: options.sleepPrevention,
+          terminals: options.terminals,
+        }
         try {
-          await applyWorkbenchCommand(options.controller, message.command, {
-            flows: options.flows,
-            browserIntegrations: options.browserIntegrations,
-            sleepPrevention: options.sleepPrevention,
-            terminals: options.terminals,
-          })
+          const commandValue = await executeSocketCommand(hostCommand, socket, message, (target, payload) => send(target as Bun.ServerWebSocket<SocketData>, payload))
           if (message.command.type === 'reportPresence') {
-            const presence = options.controller.presence.get(message.command.clientId)
+            const attachment = socketAttachment(hostCommand, socket)
+            const presence = attachment.controller.presence.get(message.command.clientId)
             if (presence) socket.data.presence = presence
           }
-          send(socket, { kind: 'result', id: message.id, ok: true })
+          send(socket, { kind: 'result', id: message.id, ok: true, ...(commandValue !== undefined ? { value: commandValue } : {}) })
         } catch (error) {
+          if (error instanceof HostCommandSignal && error.message === 'in-flight') return
+          if (error instanceof SessionAdmissionError) {
+            send(socket, { kind: 'result', id: message.id, ok: false, error: error.message })
+            return
+          }
           send(socket, { kind: 'result', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) })
         }
       },
     },
   })
 
-  const publish = (): void => {
+  const publishSession = (sessionKey: string): void => {
+    const bundle = options.runtime?.bundleForKey(sessionKey)
+    const controller = bundle?.controller ?? options.controller
     for (const socket of sockets) {
+      if (socket.data.sessionKey !== sessionKey) continue
       if (socket.data.scheduled) continue
       socket.data.scheduled = true
       queueMicrotask(() => {
         socket.data.scheduled = false
         if (!sockets.has(socket)) return
-        const next = serializeSnapshot(options.controller.getSnapshot())
+        const next = serializeSnapshot(controller.getSnapshot())
         const patch = diffSnapshots(socket.data.lastSnapshot, next)
         socket.data.lastSnapshot = next
         if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
       })
     }
   }
+
   const unsubscribeBrowser = options.browserIntegrations?.subscribe(() => {
     const browserIntegrations = options.browserIntegrations!.getSnapshot()
     for (const socket of sockets) send(socket, { kind: 'browserIntegrations', browserIntegrations })
@@ -202,41 +235,63 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
   const unsubscribeTerminalFrames = options.terminals?.subscribeFrames(scheduleTerminalFrame)
   const seenAttention = new Set<string>()
   const flushAttention = (): void => {
-    const notices = options.controller.getSnapshot().notices.filter(isLedgerNotice)
-    for (const notice of notices) {
-      const eventId = notice.eventId ?? `id:${notice.id}`
-      if (seenAttention.has(eventId)) continue
-      seenAttention.add(eventId)
-      if (seenAttention.size > 200) {
-        const oldest = seenAttention.values().next().value
-        if (oldest !== undefined) seenAttention.delete(oldest)
-      }
-      const targets = new Set(routeAttention({
-        createdAt: notice.createdAt,
-        ...(notice.sessionPath ? { sessionPath: notice.sessionPath } : {}),
-      }, options.controller.presence.list()))
-      if (targets.size === 0) continue
-      const event = {
-        eventId,
-        noticeId: notice.id,
-        title: noticeHeadline(notice),
-        body: attentionBody(notice),
-        ...(notice.sessionPath ? { sessionPath: notice.sessionPath } : {}),
-      }
-      for (const socket of sockets) {
-        const clientId = socket.data.presence?.clientId
-        if (clientId && targets.has(clientId)) send(socket, { kind: 'attention', event })
+    const controllers: WorkbenchController[] = []
+    if (options.runtime) options.runtime.forEachSession((_sessionKey, bundle) => controllers.push(bundle.controller))
+    else controllers.push(options.controller)
+    for (const controller of controllers) {
+      const notices = controller.getSnapshot().notices.filter(isLedgerNotice)
+      for (const notice of notices) {
+        const eventId = notice.eventId ?? (`id:${notice.id}`)
+        if (seenAttention.has(eventId)) continue
+        seenAttention.add(eventId)
+        if (seenAttention.size > 200) {
+          const oldest = seenAttention.values().next().value
+          if (oldest !== undefined) seenAttention.delete(oldest)
+        }
+        const targets = new Set(routeAttention({
+          createdAt: notice.createdAt,
+          ...(notice.sessionPath ? { sessionPath: notice.sessionPath } : {}),
+        }, controller.presence.list()))
+        if (targets.size === 0) continue
+        const event = {
+          eventId,
+          noticeId: notice.id,
+          title: noticeHeadline(notice),
+          body: attentionBody(notice),
+          ...(notice.sessionPath ? { sessionPath: notice.sessionPath } : {}),
+        }
+        for (const socket of sockets) {
+          const clientId = socket.data.presence?.clientId
+          if (clientId && targets.has(clientId)) send(socket, { kind: 'attention', event })
+        }
       }
     }
   }
-  const unsubscribeController = options.controller.subscribe(() => {
-    publish()
-    flushAttention()
-  })
-  const unsubscribeFlows = options.flows.subscribe(() => {
-    const snapshot = options.flows.getSnapshot()
-    for (const socket of sockets) send(socket, { kind: 'flows', snapshot })
-  })
+
+  const unsubscribeController = options.runtime
+    ? options.runtime.subscribeSnapshots((sessionKey) => {
+      publishSession(sessionKey)
+      flushAttention()
+    })
+    : options.controller.subscribe(() => {
+      publishSession('default')
+      flushAttention()
+    })
+
+  const unsubscribeFlows = options.runtime
+    ? options.runtime.subscribeFlowSnapshots((sessionKey) => {
+      const bundle = options.runtime!.bundleForKey(sessionKey)
+      if (!bundle) return
+      const snapshot = bundle.flows.getSnapshot()
+      for (const socket of sockets) {
+        if (socket.data.sessionKey !== sessionKey) continue
+        send(socket, { kind: 'flows', snapshot })
+      }
+    })
+    : options.flows.subscribe(() => {
+      const snapshot = options.flows.getSnapshot()
+      for (const socket of sockets) send(socket, { kind: 'flows', snapshot })
+    })
 
   const port = server.port ?? options.port
   const displayHost = hostname === '0.0.0.0' || hostname === '::' ? '127.0.0.1' : hostname
@@ -384,3 +439,4 @@ function serveStatic(root: string, pathname: string): Response {
   if (target.endsWith('.webmanifest')) headers['content-type'] = 'application/manifest+json'
   return new Response(Bun.file(target), { headers })
 }
+

@@ -3,6 +3,10 @@ vendor/gpuix/*.tgz
 dist/
 *.log
 .DS_Store
+.pi/validation/
+.pi/fabric.json
+.pi/fabric/mesh/events.jsonl
+.pi/fabric/mesh/sequence
 screenshots/
 docs/validation/**/*.png
 docs/validation/**/measurements.json

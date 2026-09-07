@@ -31,6 +31,8 @@ export interface TailnetServeOptions {
   verify?: (url: string) => Promise<void>
 }
 
+export type TailnetServeSurface = Pick<TailnetServeService, 'subscribe' | 'getSnapshot' | 'advertisedHostUrls' | 'refresh' | 'reconcile' | 'idle' | 'setEnabled' | 'setHttpsPort' | 'dispose'>
+
 export class TailnetServeService {
   readonly #preferencePath: string | false
   readonly #getHost: () => WorkspaceHost | undefined

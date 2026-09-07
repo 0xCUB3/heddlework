@@ -30,7 +30,7 @@ export class WorkspaceClient {
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #backoff = MIN_BACKOFF_MS
   #commandId = 0
-  #pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>()
+  #pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   #listeners = new Set<() => void>()
   #attentionListeners = new Set<(event: AttentionEvent) => void>()
   #frames = new FrameAssembler()
@@ -80,7 +80,7 @@ export class WorkspaceClient {
     return this.#candidates
   }
 
-  send(command: WorkbenchCommand): Promise<void> {
+  send(command: WorkbenchCommand): Promise<unknown> {
     const socket = this.#socket
     if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Not connected'))
     const id = ++this.#commandId
@@ -91,9 +91,12 @@ export class WorkspaceClient {
   }
 
   sendAndReport(command: WorkbenchCommand): Promise<void> {
-    return this.send(command).catch((error: unknown) => {
-      this.reportError(error)
-    })
+    return this.send(command).then(
+      () => undefined,
+      (error: unknown) => {
+        this.reportError(error)
+      },
+    )
   }
 
   reconnect(): void {
@@ -161,7 +164,7 @@ export class WorkspaceClient {
         if (!pending) return
         this.#pending.delete(message.id)
         if (message.ok && this.#view.lastError) this.#set({ lastError: undefined })
-        if (message.ok) pending.resolve()
+        if (message.ok) pending.resolve('value' in message ? message.value : undefined)
         else pending.reject(new Error(message.error))
         return
       }
@@ -246,3 +249,4 @@ export function readConnectionSettings(search = '', storage: Pick<Storage, 'getI
     token: params.get('token') ?? storage?.getItem('heddlework.token') ?? '',
   }
 }
+

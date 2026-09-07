@@ -1,6 +1,6 @@
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { hostWorkIsRunning, shouldInhibitSleep } from './activity.ts'
 import {
   createPlatformSleepBackend,
@@ -16,7 +16,7 @@ import {
 } from './types.ts'
 
 export interface SleepPreventionSources {
-  controller: Pick<WorkbenchController, 'subscribe' | 'getSnapshot'>
+  controller: Pick<WorkbenchControllerSurface, 'subscribe' | 'getSnapshot'>
   flows?: Pick<FlowRuntime, 'subscribe' | 'getSnapshot'> | undefined
   browserIntegrations?: Pick<BrowserIntegrationService, 'subscribe' | 'getSnapshot'> | undefined
 }

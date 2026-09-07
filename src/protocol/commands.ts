@@ -1,11 +1,12 @@
 import { BROWSER_INTEGRATION_COMMAND_TYPES, isBrowserIntegrationCommand, type BrowserIntegrationCommand } from '../browser/integration-types.ts'
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
-import type { FlowRuntime } from '../flows/runtime.ts'
+import { isFlowWorkbenchCommand, type FlowWorkbenchCommand } from './flow-commands.ts'
+import type { FlowRuntimeSurface } from '../flows/runtime.ts'
 import { isSleepPreventionWhen, parseSleepPreventionPolicy, type SleepPreventionPolicy } from '../power/types.ts'
 import type { ComposerImage, ThinkingLevel } from '../pi/types.ts'
 import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
 import type { NoticeKind } from '../workbench/notices.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { isPresenceSurface, isPresenceVisibility, type PresenceSurface, type PresenceVisibility } from '../workbench/presence.ts'
 import type { QueueLane } from '../workbench/queue.ts'
 import type { ThreadPriority } from '../workbench/state.ts'
@@ -21,7 +22,7 @@ export function isSleepPreventionCommand(value: unknown): value is SleepPreventi
   return command.type === 'setSleepPreventionPolicy' && isSleepPreventionWhen(command.when) && typeof command.keepDisplayAwake === 'boolean'
 }
 
-// Every command a remote surface may issue. Each member maps onto one public WorkbenchController method.
+// Every command a remote surface may issue. Each member maps onto one public WorkbenchControllerSurface method.
 export type WorkbenchCommand =
   | BrowserIntegrationCommand
   | TerminalCommand
@@ -64,6 +65,7 @@ export type WorkbenchCommand =
   | { type: 'addEditorImage'; image: ComposerImage }
   | { type: 'removeEditorImage'; id: string }
   | { type: 'clearReceipts'; sessionPath: string }
+  | FlowWorkbenchCommand
   | { type: 'mergeLane'; laneId: string }
   | { type: 'removeLane'; laneId: string }
   | { type: 'navigateTree'; entryId: string }
@@ -91,7 +93,7 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
   'wakeThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
-  'markNoticeRead', 'markNoticesRead', 'activateNotice', 'clearNotices', 'reportPresence', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
+  'markNoticeRead', 'markNoticesRead', 'activateNotice', 'clearNotices', 'reportPresence', 'createFlowSchedule', 'setFlowScheduleEnabled', 'removeFlowSchedule', 'launchFlow', 'runFlowScheduleNow', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
   'navigateTree', 'cloneSession', 'exportSession', 'switchWorkspace', 'markThreadsRead', 'drainQueueMessages', 'cancelBlockingQueueActivity',
   'queueFabricPeerGate', 'setAskUserQuestionnaireCollapsed', 'completeUiRequest', 'removeQueuedFlow', 'notify',
 ]
@@ -102,17 +104,18 @@ export function isWorkbenchCommand(value: unknown): value is WorkbenchCommand {
   if (typeof type === 'string' && (BROWSER_INTEGRATION_COMMAND_TYPES as readonly string[]).includes(type)) return isBrowserIntegrationCommand(value)
   if (typeof type === 'string' && (SLEEP_PREVENTION_COMMAND_TYPES as readonly string[]).includes(type)) return isSleepPreventionCommand(value)
   if (typeof type === 'string' && (TERMINAL_COMMAND_TYPES as readonly string[]).includes(type)) return isTerminalCommand(value)
+  if (isFlowWorkbenchCommand(value)) return true
   return typeof type === 'string' && (WORKBENCH_COMMAND_TYPES as readonly string[]).includes(type)
 }
 
 export interface WorkbenchCommandTargets {
   browserIntegrations?: BrowserIntegrationService | undefined
-  flows?: Pick<FlowRuntime, 'mergeLane' | 'removeLane'> | undefined
+  flows?: FlowRuntimeSurface | undefined
   sleepPrevention?: { setPolicy(policy: SleepPreventionPolicy): void } | undefined
   terminals?: TerminalCommandTarget | undefined
 }
 
-export async function applyWorkbenchCommand(controller: WorkbenchController, command: WorkbenchCommand, targets: WorkbenchCommandTargets = {}): Promise<void> {
+export async function applyWorkbenchCommand(controller: WorkbenchControllerSurface, command: WorkbenchCommand, targets: WorkbenchCommandTargets = {}): Promise<unknown> {
   switch (command.type) {
     case 'selectBrowserIntegration': case 'requestBrowserTask': case 'approveBrowserTask': case 'cancelBrowserTask': case 'clearBrowserTask':
       if (!targets.browserIntegrations) throw new Error('Browser integrations unavailable on this host')
@@ -126,6 +129,24 @@ export async function applyWorkbenchCommand(controller: WorkbenchController, com
       if (!targets.terminals) throw new Error('Terminal is unavailable on this host')
       await applyTerminalCommand(targets.terminals, command)
       return
+    case 'createFlowSchedule': {
+      if (!targets.flows?.createSchedule) throw new Error('Flow runtime is not available')
+      return targets.flows.createSchedule(command.input)
+    }
+    case 'setFlowScheduleEnabled':
+      if (!targets.flows?.setScheduleEnabled) throw new Error('Flow runtime is not available')
+      targets.flows.setScheduleEnabled(command.id, command.enabled)
+      return
+    case 'removeFlowSchedule':
+      if (!targets.flows?.removeSchedule) throw new Error('Flow runtime is not available')
+      targets.flows.removeSchedule(command.id)
+      return
+    case 'launchFlow':
+      if (!targets.flows?.launch) throw new Error('Flow runtime is not available')
+      return targets.flows.launch(command.template)
+    case 'runFlowScheduleNow':
+      if (!targets.flows?.runScheduleNow) throw new Error('Flow runtime is not available')
+      return targets.flows.runScheduleNow(command.id)
     case 'mergeLane': {
       if (!targets.flows) throw new Error('Flow runtime is not available')
       const result = await targets.flows.mergeLane(command.laneId)

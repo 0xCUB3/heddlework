@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { resolve } from 'node:path'
 import { workspaceDisplayName } from '../workbench/workspace-name.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Composer } from './composer.tsx'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
@@ -30,7 +30,7 @@ export function workspaceChoices(state: Pick<WorkbenchState, 'workspacePath' | '
   })
 }
 
-export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchState; controller: WorkbenchController }) {
+export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchState; controller: WorkbenchControllerSurface }) {
   const layout = useResponsiveLayout()
   const dropdown = useDropdownState()
   const [picking, setPicking] = useState(false)
@@ -108,3 +108,4 @@ export function DraftWorkspaceChooser({ state, controller }: { state: WorkbenchS
     </div>
   )
 }
+

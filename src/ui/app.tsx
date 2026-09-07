@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import uiContract from '../workbench/ui-contract.json'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
-import type { WorkbenchController } from '../workbench/controller.ts'
-import type { FlowRuntime } from '../flows/runtime.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
+import type { FlowRuntimeSurface } from '../flows/runtime.ts'
 import { ChatHeader } from './chat-header.tsx'
 import { Composer } from './composer.tsx'
 import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
@@ -30,8 +30,8 @@ import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
-import type { RemoteAccessService } from '../host/remote-access.ts'
-import type { TailnetServeService } from '../host/tailnet-serve.ts'
+import type { RemoteAccessSurface } from '../host/remote-access.ts'
+import type { TailnetServeSurface } from '../host/tailnet-serve.ts'
 import type { PluginHost } from '../plugins/host.ts'
 import type { SleepPreventionService } from '../power/service.ts'
 import type { UpdateService } from '../updates/service.ts'
@@ -66,14 +66,15 @@ export function WorkbenchApp({
   pluginHost,
   updates,
   onQuit,
+  onStopAllAndQuit,
   layoutStorage,
 }: {
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   presenters: ReadonlyMap<string, ToolPresenter>
   ui: WorkbenchUiRegistry
-  flows?: FlowRuntime | undefined
-  remoteAccess?: RemoteAccessService | undefined
-  tailnetServe?: TailnetServeService | undefined
+  flows?: FlowRuntimeSurface | undefined
+  remoteAccess?: RemoteAccessSurface | undefined
+  tailnetServe?: TailnetServeSurface | undefined
   pluginHost?: PluginHost | undefined
   updates?: UpdateService | undefined
   terminals?: TerminalSessionService
@@ -82,6 +83,7 @@ export function WorkbenchApp({
   browsers?: BrowserSessionService
   themeManager?: ThemeManager
   onQuit?(): void
+  onStopAllAndQuit?: (() => Promise<void>) | undefined
   layoutStorage?: LayoutStorage
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
@@ -427,7 +429,7 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} state={state} controller={controller} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} onFontsChange={(fonts) => themeManager.setFonts(fonts)} onFontsReset={() => themeManager.resetFonts()} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
+            <SettingsView onStopAllAndQuit={onStopAllAndQuit} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} state={state} controller={controller} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} onFontsChange={(fonts) => themeManager.setFonts(fonts)} onFontsReset={() => themeManager.resetFonts()} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>
@@ -557,3 +559,5 @@ function TranscriptFade() {
     </div>
   )
 }
+
+

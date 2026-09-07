@@ -1,6 +1,6 @@
 import { DESKTOP_CLIENT_ID, routeAttention } from '../workbench/presence.ts'
 import { attentionBody, isLedgerNotice, noticeHeadline, type Notice } from '../workbench/notices.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 
 const fired = new Set<string>()
 
@@ -29,7 +29,7 @@ export function showOsNotification(title: string, body: string, tag?: string): v
   }
 }
 
-export function watchDesktopAttention(controller: WorkbenchController): () => void {
+export function watchDesktopAttention(controller: WorkbenchControllerSurface): () => void {
   let previous = new Set(controller.getSnapshot().notices.filter(isLedgerNotice).map((notice) => notice.eventId ?? `id:${notice.id}`))
   return controller.subscribe(() => {
     const state = controller.getSnapshot()
@@ -57,3 +57,4 @@ export function rememberFiredNotice(eventId: string): void {
 export function hasFiredNotice(eventId: string): boolean {
   return fired.has(eventId)
 }
+

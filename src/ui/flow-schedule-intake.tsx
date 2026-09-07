@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import type { FlowRuntime } from '../flows/runtime.ts'
+import type { FlowRuntimeSurface } from '../flows/runtime.ts'
 import type { FlowLaneKind, FlowMode, FlowScheduleTiming, FlowTaskSpec } from '../flows/types.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
@@ -7,7 +7,7 @@ import { colors, nativeTheme } from './theme.ts'
 
 export function FlowScheduleIntake({ state, runtime, onCreated, onCancel }: {
   state: WorkbenchState
-  runtime: FlowRuntime
+  runtime: FlowRuntimeSurface
   onCreated(id: string): void
   onCancel(): void
 }) {

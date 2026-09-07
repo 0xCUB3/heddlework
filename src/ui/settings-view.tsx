@@ -5,7 +5,7 @@ import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import { BrowserIntegrationSettings } from './browser-integration-settings.tsx'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { resolvePiExecutable } from '../pi/rpc-transport.ts'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button } from './primitives.tsx'
@@ -15,8 +15,8 @@ import { useResponsiveLayout } from './responsive.tsx'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { hostConnectUrl, preferredPairingLink, remoteConnectUrls } from '../host/server.ts'
 import { PhonePairingQr } from './phone-pairing.tsx'
-import type { RemoteAccessMode, RemoteAccessService } from '../host/remote-access.ts'
-import type { TailnetServeService } from '../host/tailnet-serve.ts'
+import type { RemoteAccessMode, RemoteAccessSurface } from '../host/remote-access.ts'
+import type { TailnetServeSurface } from '../host/tailnet-serve.ts'
 import { TAILSCALE_HTTPS_PORTS, type TailscaleHttpsPort } from '../host/tailscale-cli.ts'
 import type { PluginHost } from '../plugins/host.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
@@ -46,12 +46,13 @@ export function SettingsView({
   pluginHost,
   updates,
   onClose,
+  onStopAllAndQuit,
 }: {
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   theme: ThemeSnapshot
-  remoteAccess?: RemoteAccessService | undefined
-  tailnetServe?: TailnetServeService | undefined
+  remoteAccess?: RemoteAccessSurface | undefined
+  tailnetServe?: TailnetServeSurface | undefined
   pluginHost?: PluginHost | undefined
   updates?: UpdateService | undefined
   titlebarInset?: number | undefined
@@ -63,6 +64,7 @@ export function SettingsView({
   browsers?: BrowserSessionService | undefined
   sleepPrevention?: SleepPreventionService | undefined
   onClose(): void
+  onStopAllAndQuit?: (() => Promise<void>) | undefined
 }) {
   const { mobile, compact, contentGutter } = useResponsiveLayout()
   const resolvedTitlebarInset = titlebarInset ?? (compact ? (process.platform === 'darwin' ? 132 : 54) : 18)
@@ -76,11 +78,12 @@ export function SettingsView({
       {/* A column scroller so only the vertical axis scrolls and the content height, not the row cross-size, sets the extent; the child centres itself with alignItems. */}
       <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, minWidth: 0, overflow: 'scroll', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
         <div testId="settings-global" style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minHeight: mobile ? 0 : 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
-          <SettingsSection title="Runtime" description="Global Pi connection settings for this application.">
+          <SettingsSection title="Runtime" description={onStopAllAndQuit ? "Agents keep running when you close or update the app. Reopen to reconnect." : "Global Pi connection settings for this application."}>
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
             <SettingsActions>
               <Button label="Reconnect" compact icon="refresh" onClick={() => void controller.reconnect()} />
+              {onStopAllAndQuit ? <Button testId="runtime-stop-all" label="Stop all agents and quit" compact onClick={() => void onStopAllAndQuit().catch(error => controller.notify('error', error instanceof Error ? error.message : String(error)))} /> : null}
             </SettingsActions>
           </SettingsSection>
 
@@ -144,7 +147,7 @@ export function updateActionLabel(state: UpdateState): 'Check for updates' | 'Do
   return 'Check for updates'
 }
 
-function UpdatesSection({ service, controller }: { service: UpdateService; controller: WorkbenchController }) {
+function UpdatesSection({ service, controller }: { service: UpdateService; controller: WorkbenchControllerSurface }) {
   const state = React.useSyncExternalStore(service.subscribe, service.getSnapshot)
   const action = updateActionLabel(state)
   const runAction = () => {
@@ -198,7 +201,7 @@ function ChannelPicker({ channel, onChange, disabled }: { channel: UpdateChannel
   )
 }
 
-function PowerSettings({ service, controller }: { service: SleepPreventionService; controller: WorkbenchController }) {
+function PowerSettings({ service, controller }: { service: SleepPreventionService; controller: WorkbenchControllerSurface }) {
   const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot)
   const setWhen = (when: SleepPreventionWhen) => {
     try {
@@ -263,7 +266,7 @@ function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
 }
 
 
-function RemoteAccessSection({ service, tailnetServe, controller }: { service: RemoteAccessService; tailnetServe?: TailnetServeService | undefined; controller: WorkbenchController }) {
+function RemoteAccessSection({ service, tailnetServe, controller }: { service: RemoteAccessSurface; tailnetServe?: TailnetServeSurface | undefined; controller: WorkbenchControllerSurface }) {
   const state = React.useSyncExternalStore(service.subscribe, service.getSnapshot)
   const tailnet = React.useSyncExternalStore(tailnetServe?.subscribe ?? emptySubscribe, tailnetServe?.getSnapshot ?? emptyTailnetSnapshot)
   React.useEffect(() => { void tailnetServe?.refresh().catch(() => undefined) }, [tailnetServe])
@@ -545,3 +548,5 @@ function ThemeModePicker({ theme, onChange }: { theme: ThemeSnapshot; onChange(m
 function SettingsActions({ children }: { children: React.ReactNode }) {
   return <div style={{ minHeight: 48, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 7, padding: 9 }}>{children}</div>
 }
+
+

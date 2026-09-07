@@ -1,5 +1,5 @@
 import React, { useSyncExternalStore } from 'react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { DiffPanel } from './diff-panel.tsx'
 import { ReceiptsPanel } from './receipts-view.tsx'
 import { useOptionalBrowserService } from './browser-context.tsx'
@@ -76,7 +76,7 @@ function TerminalSurface(props: WorkbenchSurfaceProps) {
   )
 }
 
-export function createCoreUiExtension(controller: WorkbenchController): WorkbenchUiExtension {
+export function createCoreUiExtension(controller: WorkbenchControllerSurface): WorkbenchUiExtension {
   function DiffSurface(props: WorkbenchSurfaceProps) {
     const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
     return (
@@ -160,3 +160,4 @@ function placeholder(id: string, title: string, description: string, icon: IconN
 
   return { id, title, description, icon, order, component: PlaceholderSurface }
 }
+

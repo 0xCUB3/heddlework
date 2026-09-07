@@ -27,7 +27,7 @@ export type ServerMessage =
   | { kind: 'patch'; patch: SnapshotPatch }
   | { kind: 'flows'; snapshot: FlowRuntimeSnapshot }
   | { kind: 'attention'; event: AttentionEvent }
-  | { kind: 'result'; id: number; ok: true }
+  | { kind: 'result'; id: number; ok: true; value?: unknown }
   | { kind: 'result'; id: number; ok: false; error: string }
   | { kind: 'error'; message: string }
   | { kind: 'pong' }

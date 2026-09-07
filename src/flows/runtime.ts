@@ -45,6 +45,20 @@ interface FlowRuntimeDocument {
   runs: FlowRunRecord[]
 }
 
+
+export type FlowRuntimeSurface = Pick<
+  FlowRuntime,
+  | 'subscribe'
+  | 'getSnapshot'
+  | 'createSchedule'
+  | 'setScheduleEnabled'
+  | 'removeSchedule'
+  | 'launch'
+  | 'mergeLane'
+  | 'removeLane'
+  | 'runScheduleNow'
+>
+
 export class FlowRuntime {
   readonly #host: FlowRuntimeHost
   readonly #path: string | false
@@ -389,3 +403,4 @@ function isFlowSchedule(value: unknown): value is FlowSchedule {
   const schedule = value as Record<string, unknown>
   return typeof schedule.id === 'string' && typeof schedule.title === 'string' && Array.isArray(schedule.prompts) && schedule.prompts.every((prompt) => typeof prompt === 'string') && (schedule.mode === 'sequential' || schedule.mode === 'parallel') && typeof schedule.workspacePath === 'string' && typeof schedule.enabled === 'boolean' && typeof schedule.createdAt === 'number' && typeof schedule.updatedAt === 'number' && Boolean(schedule.timing) && typeof schedule.timing === 'object'
 }
+

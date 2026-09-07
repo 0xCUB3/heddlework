@@ -1,11 +1,11 @@
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import type { WorkspaceDiffService } from '../workbench/services.ts'
 import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
 import type { ReceiptStoreService } from './store.ts'
 import { RECEIPT_PATCH_LIMIT_BYTES, type MutationReceipt, type ReceiptFile, type ReceiptToolCount } from './types.ts'
 
 export interface ReceiptRecorderOptions {
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   workspaceDiff: WorkspaceDiffService
   store: ReceiptStoreService
   now?: (() => number) | undefined
@@ -82,7 +82,7 @@ export function createReceiptRecorder(options: ReceiptRecorderOptions): () => vo
   }
 }
 
-export function sessionIdentity(controller: Pick<WorkbenchController, 'getSnapshot'>): string {
+export function sessionIdentity(controller: Pick<WorkbenchControllerSurface, 'getSnapshot'>): string {
   const state = controller.getSnapshot()
   return state.session.sessionFile ?? `${state.workspacePath}#unsaved`
 }

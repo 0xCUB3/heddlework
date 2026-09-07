@@ -25,6 +25,8 @@ export interface RemoteAccessOptions {
   start(mode: Exclude<RemoteAccessMode, 'off'>): WorkspaceHost
 }
 
+export type RemoteAccessSurface = Pick<RemoteAccessService, 'subscribe' | 'getSnapshot' | 'setMode' | 'close' | 'host'>
+
 export class RemoteAccessService {
   #options: RemoteAccessOptions
   #state: RemoteAccessState

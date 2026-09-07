@@ -2,7 +2,7 @@ import React from 'react'
 import uiContract from '../workbench/ui-contract.json'
 import { workspaceDisplayName } from '../workbench/workspace-name.ts'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
-import type { WorkbenchController } from '../workbench/controller.ts'
+import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
@@ -22,7 +22,7 @@ export function ChatHeader({
   onToggleTerminal,
 }: {
   state: WorkbenchState
-  controller: WorkbenchController
+  controller: WorkbenchControllerSurface
   diffOpen: boolean
   terminalOpen?: boolean
   leftSidebarProgress: number
@@ -70,7 +70,7 @@ export function ChatHeader({
   )
 }
 
-function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchController; compact: boolean }) {
+function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchControllerSurface; compact: boolean }) {
   const dropdown = useDropdownState()
   const options = [
     { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },
@@ -134,3 +134,4 @@ export function activeThreadTitle(state: WorkbenchState): string {
   if (!text) return 'New thread'
   return text.length > 68 ? `${text.slice(0, 65)}…` : text
 }
+

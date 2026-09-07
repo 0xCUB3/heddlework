@@ -1,114 +1,104 @@
+import { readFileSync, unlinkSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { createBrowserIntegrationService } from '../browser/integrations.ts'
-import { resolve } from 'node:path'
-import { WorkbenchKernel } from '../core/kernel.ts'
-import { createFlowRuntimePlugin } from '../flows/plugin.ts'
-import { flowRuntimePath } from '../flows/runtime.ts'
-import { sessionSidebarCachePath } from '../pi/session-catalog.ts'
-import { coreToolPresentersPlugin } from '../ui/tool-presenters.ts'
-import {
-  createAgentTransportPlugin,
-  createSessionCatalogPlugin,
-  createWorkbenchControllerPlugin,
-  localWorkspaceDiffPlugin,
-  workbenchControllerToken,
-} from '../workbench/plugins.ts'
-import { FileQueueStore, queueStorePath } from '../workbench/queue-store.ts'
-import { FileThreadMetadataStore, threadMetadataStorePath } from '../workbench/thread-metadata-store.ts'
-import { createReceiptPlugin } from '../receipts/plugin.ts'
-import { createCheckoutLanePlugin } from '../workspace/checkout-lanes.ts'
-import { receiptStorePath } from '../receipts/store.ts'
-import { createSleepPreventionPlugin } from '../power/plugin.ts'
-import { createTerminalPlugin } from '../terminal/plugin.ts'
+import { createSleepPreventionPlugin, sleepPreventionToken } from '../power/plugin.ts'
+import { createTerminalPlugin, terminalSessionToken } from '../terminal/plugin.ts'
 import { themePreferencePath } from '../ui/theme-manager.ts'
-import { createWorkspaceHostPlugin, hostOptionsFromEnvironment, tailnetServeToken, workspaceHostToken } from './plugin.ts'
-import { bestConnectUrl, hostConnectUrl, remoteConnectUrls } from './server.ts'
-import { qrAscii } from '../web/qr.ts'
+import { currentAppVersion } from '../updates/version.ts'
+import { PROTOCOL_VERSION } from '../protocol/version.ts'
+import { runtimeDirectory, writePrivateJson, type RuntimeDescriptor } from '../runtime/paths.ts'
+import { tryProcessLock } from '../runtime/process-lock.ts'
+import { createRuntimeControlServer } from '../runtime/control-server.ts'
+import { createRuntimeSettingsCoordinator } from '../runtime/settings-coordinator.ts'
+import { createWorkspaceHost, remoteConnectUrls, hostConnectUrl } from './server.ts'
+import { hostOptionsFromEnvironment } from './plugin.ts'
+import { hostTokenPath, loadOrCreateHostToken } from './token.ts'
+import { RemoteAccessService } from './remote-access.ts'
+import { TailnetServeService } from './tailnet-serve.ts'
 import { resolveStaticRoot } from './static-root.ts'
-import { hostTokenPath } from './token.ts'
-import { startExternalPlugins } from '../plugins/host.ts'
+import { createRuntimeSessionFactory } from './runtime-composition.ts'
+import { SessionRuntime } from './session-runtime.ts'
 
-// Headless entry: the same kernel as the desktop shell without GPUIX, serving the workspace over the host protocol.
-const workspacePath = resolveWorkspacePath()
-const demoMode = process.env.HEDDLEWORK_DEMO === '1'
-const hostOptions = hostOptionsFromEnvironment()
-
-const kernel = new WorkbenchKernel()
-kernel.mount(coreToolPresentersPlugin)
-kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
-  queueStore: new FileQueueStore(demoMode ? false : queueStorePath()),
-  threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
-}))
-kernel.mount(createCheckoutLanePlugin())
-kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))
+const directory = runtimeDirectory()
+const release = tryProcessLock(join(directory, 'runtime.lock'))
+if (!release) throw new Error('The Heddlework runtime is already running')
+process.once('exit', release)
+const workspacePath = resolve(process.env.HEDDLEWORK_CWD ?? process.argv.slice(2).find(value => value !== '--' && !value.startsWith('-')) ?? process.cwd())
+const demo = process.env.HEDDLEWORK_DEMO === '1'
+const isolated = demo || process.env.HEDDLEWORK_RUNTIME_TEST === '1'
+const preferencePath = isolated ? false : themePreferencePath()
+const token = loadOrCreateHostToken(isolated ? join(directory, 'host-token') : hostTokenPath())
+const createSession = createRuntimeSessionFactory(directory, demo)
+const initial = await createSession({ workspacePath, id: 'default', ...(process.env.HEDDLEWORK_SESSION ? { sessionPath: process.env.HEDDLEWORK_SESSION } : {}) })
+const runtime = new SessionRuntime({ initial, createSession, path: join(directory, 'registry.json') })
 const browserIntegrations = createBrowserIntegrationService()
-kernel.mount(createSleepPreventionPlugin({
-  browserIntegrations,
-  preferencePath: demoMode ? false : themePreferencePath(),
-}))
-kernel.mount(createTerminalPlugin({
-  cwd: workspacePath,
-  ...(demoMode ? { appearancePath: false as const } : {}),
-}))
-kernel.mount(createWorkspaceHostPlugin({
-  browserIntegrations,
-  enabled: true,
+initial.kernel.mount(createSleepPreventionPlugin({ browserIntegrations, preferencePath }))
+initial.kernel.mount(createTerminalPlugin({ cwd: workspacePath, ...(isolated ? { appearancePath: false as const, backend: 'memory' as const } : {}) }))
+const sleepPrevention = initial.kernel.get(sleepPreventionToken)
+const terminals = initial.kernel.get(terminalSessionToken)
+const hostOptions = hostOptionsFromEnvironment(process.env, preferencePath)
+let tailnet: TailnetServeService | undefined
+const common = {
+  controller: initial.controller,
+  flows: initial.flows,
+  runtime,
   workspacePath,
-  port: hostOptions.port,
-  hostname: hostOptions.hostname,
-  preferencePath: demoMode ? false : themePreferencePath(),
-  tokenPath: demoMode ? false : hostTokenPath(),
+  token,
+  browserIntegrations,
+  sleepPrevention,
+  terminals,
   staticRoot: resolveStaticRoot(),
-}))
-kernel.mount(createSessionCatalogPlugin({ cachePath: sessionSidebarCachePath() }))
-kernel.mount(localWorkspaceDiffPlugin)
-kernel.mount(createReceiptPlugin({ path: demoMode ? false : receiptStorePath() }))
-kernel.mount(createAgentTransportPlugin({
-  cwd: workspacePath,
-  demo: demoMode,
-  ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}),
-  piArgs: piArgumentsFromEnvironment(),
-}))
-await startExternalPlugins(kernel, workspacePath, { trustPath: demoMode ? false : undefined })
-
-const controller = kernel.get(workbenchControllerToken)
-const host = kernel.get(workspaceHostToken)
-if (!host) throw new Error('Workspace host failed to start')
-const tailnet = kernel.get(tailnetServeToken)
-await tailnet.idle()
-const serveUrl = tailnet.getSnapshot().status === 'ready' ? tailnet.getSnapshot().url : undefined
-
-let disposed = false
-const shutdown = (): void => {
-  if (disposed) return
-  disposed = true
+  extraHostUrls: () => tailnet?.advertisedHostUrls() ?? [],
+}
+// Native attachment always has a private loopback endpoint. Turning remote access off
+// must not disconnect the desktop or terminate agents.
+const local = createWorkspaceHost({ ...common, port: 0, hostname: '127.0.0.1' })
+const remoteAccess = new RemoteAccessService({
+  initialMode: hostOptions.enabled ? (hostOptions.hostname === '0.0.0.0' || hostOptions.hostname === '::' ? 'network' : 'local') : 'off',
+  preferencePath,
+  lockedBy: hostOptions.lockedBy,
+  start: mode => createWorkspaceHost({ ...common, port: hostOptions.port, hostname: mode === 'network' ? '0.0.0.0' : '127.0.0.1' }),
+})
+tailnet = new TailnetServeService({ preferencePath, getHost: () => remoteAccess.host })
+const unsubscribeRemote = remoteAccess.subscribe(() => { if (!remoteAccess.getSnapshot().busy) void tailnet?.reconcile() })
+const settings = createRuntimeSettingsCoordinator({ workspacePath, remoteAccess, tailnet })
+const instanceId = crypto.randomUUID()
+let shuttingDown = false
+const isBusy = () => runtime.isBusy() || terminals.getSnapshot().sessions.some(session => session.status.kind === 'running')
+const shutdown = async (): Promise<void> => {
+  if (shuttingDown) return
+  shuttingDown = true
+  unsubscribeRemote()
+  await local.close()
+  await remoteAccess.close()
+  await tailnet?.dispose()
   browserIntegrations.dispose()
-  void kernel.dispose().finally(() => process.exit(0))
+  await runtime.dispose()
+  await control.close()
+  try {
+    const saved = JSON.parse(readFileSync(join(directory, 'connection.json'), 'utf8')) as RuntimeDescriptor
+    if (saved.instanceId === instanceId) unlinkSync(join(directory, 'connection.json'))
+  } catch {}
+  release()
 }
-process.once('SIGINT', shutdown)
-process.once('SIGTERM', shutdown)
-
-console.log(`Heddlework host serving ${workspacePath}`)
-console.log(`  url     ${host.url}`)
-console.log(`  connect ${hostConnectUrl(host)}`)
-if (serveUrl) console.log(`  tailnet ${bestConnectUrl(host, serveUrl)}`)
-for (const remote of remoteConnectUrls(host)) console.log(`  ${remote.kind.padEnd(7)} ${remote.url}`)
-if (!demoMode) console.log(`  token   ${hostTokenPath()}`)
-const tailnetStatus = tailnet.getSnapshot()
-if (tailnetStatus.status !== 'ready' && tailnetStatus.status !== 'idle' && tailnetStatus.message) console.log(`  serve   ${tailnetStatus.message}`)
-console.log(qrAscii(bestConnectUrl(host, serveUrl)))
-void controller.start()
-
-function resolveWorkspacePath(): string {
-  if (process.env.HEDDLEWORK_CWD) return resolve(process.env.HEDDLEWORK_CWD)
-  const argument = process.argv.slice(2).find((value) => value !== '--' && !value.startsWith('-'))
-  return resolve(argument ?? process.cwd())
-}
-
-function piArgumentsFromEnvironment(): string[] {
-  const args: string[] = []
-  if (process.env.HEDDLEWORK_PROVIDER) args.push('--provider', process.env.HEDDLEWORK_PROVIDER)
-  if (process.env.HEDDLEWORK_MODEL) args.push('--model', process.env.HEDDLEWORK_MODEL)
-  if (process.env.HEDDLEWORK_SESSION) args.push('--session', process.env.HEDDLEWORK_SESSION)
-  if (process.env.HEDDLEWORK_NO_SESSION === '1') args.push('--no-session')
-  return args
-}
+const exit = (): void => { void shutdown().then(() => process.exit(0), error => { console.error(error); process.exit(1) }) }
+const control = createRuntimeControlServer({
+  token, instanceId, protocol: PROTOCOL_VERSION, version: currentAppVersion(), isBusy,
+  ...settings,
+  upgrade: async () => {
+    if (isBusy()) throw new Error('Agents or terminals are still running. The runtime update will wait.')
+    setTimeout(exit, 100)
+  },
+  stop: async () => { setTimeout(exit, 100) },
+})
+process.once('SIGINT', exit)
+process.once('SIGTERM', exit)
+writePrivateJson(join(directory, 'connection.json'), {
+  pid: process.pid, instanceId, protocol: PROTOCOL_VERSION, version: currentAppVersion(), executable: process.execPath,
+  url: local.url, controlUrl: control.url, token, workspacePath,
+  supervisor: process.env.HEDDLEWORK_RUNTIME_SUPERVISOR === 'launchd' ? 'launchd' : 'process',
+} satisfies RuntimeDescriptor)
+console.log(`Heddlework background runtime ${process.pid} serving ${workspacePath}`)
+console.log(`  local ${hostConnectUrl(local)}`)
+if (remoteAccess.host) for (const address of remoteConnectUrls(remoteAccess.host)) console.log(`  ${address.kind} ${address.url}`)
+void initial.controller.start()

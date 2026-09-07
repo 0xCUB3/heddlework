@@ -60,12 +60,25 @@ try {
     }
   }
 
+  const runtimeDirectory = bundleChromium ? resolve(appBundle, 'Contents', 'Resources', 'runtime') : resolve(dirname(output), 'runtime')
+  mkdirSync(runtimeDirectory, { recursive: true })
+  const runtimeOutput = resolve(runtimeDirectory, process.platform === 'win32' ? 'heddlework-runtime.exe' : 'heddlework-runtime')
+  const runtimeBuild = await Bun.build({
+    entrypoints: [resolve(root, 'src/host/main.ts')],
+    compile: { outfile: runtimeOutput, ...(compile.target ? { target: compile.target } : {}) },
+    minify: true,
+    define: { __HEDDLEWORK_VERSION__: JSON.stringify(appVersion), __HEDDLEWORK_RUNTIME_CHANNEL__: JSON.stringify(devInstall ? 'dev' : 'release') },
+  })
+  if (!runtimeBuild.success) throw new Error(`Failed to compile background runtime: ${runtimeBuild.logs.join('\n')}`)
+  if (process.platform !== 'win32') chmodSync(runtimeOutput, 0o755)
+  cpSync(webOutput, resolve(runtimeDirectory, 'web'), { recursive: true })
+
   const result = await Bun.build({
     entrypoints: [resolve(root, 'src/main.tsx')],
     compile,
     minify: true,
     sourcemap: 'external',
-    define: { __HEDDLEWORK_VERSION__: JSON.stringify(appVersion) },
+    define: { __HEDDLEWORK_VERSION__: JSON.stringify(appVersion), __HEDDLEWORK_RUNTIME_CHANNEL__: JSON.stringify(devInstall ? "dev" : "release") },
     ...(nativePackagingDirectory ? { plugins: [verifiedNativePlugin(nativePackagingDirectory)] } : {}),
   })
 
@@ -145,6 +158,7 @@ function packageMacApp(bundle: string, cefSource: string, executable: string): v
 
   const launcher = resolve(dist, 'heddlework')
   symlinkSync(relative(dist, executable), launcher)
+  signBundle(resolve(resources, "runtime", "heddlework-runtime"))
   signBundle(bundle)
   verifyBundle(bundle)
 }
