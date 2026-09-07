@@ -55,7 +55,7 @@ export function socketAttachment(
 
 function sendSwitchPreview(
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
-  socket: Bun.ServerWebSocket<{ lastSnapshot: WorkbenchSnapshot | undefined }>,
+  socket: Bun.ServerWebSocket<PreviewSocketData>,
   current: WorkbenchState,
   sessionPath: string,
   isCurrent: () => boolean,
@@ -82,21 +82,48 @@ function sendSwitchPreview(
     socket.data.lastSnapshot = next
     if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
   }
+  socket.data.previewTranscript = undefined
   pushPreview(preview)
   void loadHistory(sessionPath).then((page) => {
     // Navigation identity, not snapshot object identity, decides whether this async preview is stale.
     if (!isCurrent()) return
+    if (page.messages.length > 0) socket.data.previewTranscript = { sessionFile: targetPath, messages: page.messages, hasOlder: page.hasOlder }
     pushPreview({ ...preview, messages: page.messages, messagesHasOlder: page.hasOlder })
   }).catch(() => { /* No transcript yet; the bundle's bootstrap fills it in. */ })
 }
 
+export interface PreviewTranscript {
+  sessionFile: string
+  messages: WorkbenchState['messages']
+  hasOlder: boolean
+}
+
+export interface PreviewSocketData {
+  lastSnapshot: WorkbenchSnapshot | undefined
+  previewTranscript?: PreviewTranscript | undefined
+}
+
+// A bundle that just booted reports connected before its transcript loads. Sending its empty message
+// list would paint a blank draft over a thread the client is already reading from the disk preview, so
+// the preview transcript stays on the socket until the bundle produces messages of its own.
+export function withPreviewTranscript(socket: Bun.ServerWebSocket<PreviewSocketData>, next: WorkbenchSnapshot): WorkbenchSnapshot {
+  const preview = socket.data.previewTranscript
+  if (!preview) return next
+  const nextFile = next.session.sessionFile ? resolve(next.session.sessionFile) : undefined
+  if ((nextFile !== undefined && nextFile !== preview.sessionFile) || next.messages.length > 0 || next.liveAssistant) {
+    socket.data.previewTranscript = undefined
+    return next
+  }
+  return { ...next, messages: preview.messages, messagesHasOlder: preview.hasOlder }
+}
+
 export function resyncSocket(
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
-  socket: Bun.ServerWebSocket<{ lastSnapshot: WorkbenchSnapshot | undefined }>,
+  socket: Bun.ServerWebSocket<PreviewSocketData>,
   controller: WorkbenchController,
   flows: FlowRuntime,
 ): void {
-  const next = serializeSnapshot(controller.getSnapshot())
+  const next = withPreviewTranscript(socket, serializeSnapshot(controller.getSnapshot()))
   const patch = diffSnapshots(socket.data.lastSnapshot, next)
   socket.data.lastSnapshot = next
   send(socket, { kind: 'flows', snapshot: flows.getSnapshot() })
@@ -109,6 +136,7 @@ export async function executeSocketCommand(
     clientId: string
     sessionKey: string
     lastSnapshot: WorkbenchSnapshot | undefined
+    previewTranscript?: PreviewTranscript | undefined
     navigationGeneration?: number | undefined
     pendingNavigation?: PendingNavigation | undefined
   }>,

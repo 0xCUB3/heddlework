@@ -125,8 +125,10 @@ export interface WorkbenchState {
   threadTitles: ThreadTitleSettings
 }
 
-export function isDraftConversation(state: Pick<WorkbenchState, 'messages' | 'liveAssistant' | 'session' | 'activity'>): boolean {
+export function isDraftConversation(state: Pick<WorkbenchState, 'messages' | 'liveAssistant' | 'session' | 'activity' | 'connection'>): boolean {
   if (state.activity === 'Opening thread') return false
+  // A known thread that is still connecting is loading, not empty.
+  if (state.connection === 'connecting' && state.session.sessionFile) return false
   return state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
 }
 

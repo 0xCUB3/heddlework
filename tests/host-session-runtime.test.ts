@@ -165,7 +165,22 @@ describe('session runtime routing', () => {
       const transcript = await client.next((message) => message.kind === 'patch' && Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.length > 0)
       expect(transcript.kind).toBe('patch')
       // Once the bundle lands the socket is fully connected to beta, not stuck on the preview.
-      await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connected')
+      const connected = await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connected')
+      // The booting bundle's empty Ready snapshot must never reach the socket between the preview and the live bundle.
+      const between = client.messages.slice(client.messages.indexOf(preview) + 1, client.messages.indexOf(connected))
+      for (const message of between) {
+        if (message.kind !== 'patch') continue
+        expect(Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.length === 0).toBe(false)
+        expect(message.patch.changed.activity).not.toBe('Ready')
+        expect(message.patch.changed.connectionMessage).not.toBe('Starting Pi…')
+      }
+      // The live bundle's first patch keeps the disk transcript instead of emptying it while its own load finishes.
+      expect(connected.kind === 'patch' && Array.isArray(connected.patch.changed.messages) && connected.patch.changed.messages.length === 0).toBe(false)
+      await Bun.sleep(200)
+      for (const message of client.messages.slice(client.messages.indexOf(connected) + 1)) {
+        if (message.kind !== 'patch') continue
+        expect(Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.length === 0).toBe(false)
+      }
     } finally {
       await client.close().catch(() => undefined)
       await host.close()

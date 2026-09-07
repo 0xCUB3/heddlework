@@ -23,7 +23,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { attentionBody, isLedgerNotice, noticeHeadline } from '../workbench/notices.ts'
 import { routeAttention, type ClientPresence } from '../workbench/presence.ts'
 import { advertiseCandidates, type AdvertiseCandidate } from './advertise.ts'
-import { executeSocketCommand, HostCommandSignal, socketAttachment, type PendingNavigation, type RuntimeCommandHostOptions } from './server-runtime.ts'
+import { executeSocketCommand, HostCommandSignal, socketAttachment, withPreviewTranscript, type PendingNavigation, type PreviewTranscript, type RuntimeCommandHostOptions } from './server-runtime.ts'
 import { SessionAdmissionError, type SessionRuntime } from './session-runtime.ts'
 import { timingSafeEqualToken } from './token.ts'
 import type { HostIdentity } from '../protocol/host-identity.ts'
@@ -64,6 +64,7 @@ interface SocketData {
   sessionKey: string
   navigationGeneration?: number
   pendingNavigation?: PendingNavigation
+  previewTranscript?: PreviewTranscript
 }
 
 export const DEFAULT_HOST_PORT = 4817
@@ -218,13 +219,16 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
     const controller = bundle?.controller ?? options.controller
     for (const socket of sockets) {
       if (socket.data.sessionKey !== sessionKey) continue
+      // A bundle that is still booting for this socket publishes an empty Ready snapshot before its
+      // transcript loads. The switch preview already owns the socket; resyncSocket lands the real bundle.
+      if (socket.data.pendingNavigation && socket.data.pendingNavigation.error === undefined) continue
       if (socket.data.scheduled) continue
       socket.data.scheduled = true
       queueMicrotask(() => {
         socket.data.scheduled = false
         if (!sockets.has(socket)) return
         if (socket.data.sessionKey !== sessionKey) return
-        const next = serializeSnapshot(controller.getSnapshot())
+        const next = withPreviewTranscript(socket, serializeSnapshot(controller.getSnapshot()))
         const patch = diffSnapshots(socket.data.lastSnapshot, next)
         socket.data.lastSnapshot = next
         if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
