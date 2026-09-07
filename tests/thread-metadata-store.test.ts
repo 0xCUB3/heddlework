@@ -21,6 +21,7 @@ describe('thread projection metadata', () => {
       '/tmp/session.jsonl': {
         settledAt: 10,
         readAt: 20,
+        pinnedAt: 40,
         priority: 2,
         labels: [' release ', 'Release', 'needs   review'],
       },
@@ -30,6 +31,7 @@ describe('thread projection metadata', () => {
       '/tmp/session.jsonl': {
         settledAt: 10,
         readAt: 20,
+        pinnedAt: 40,
         priority: 2,
         labels: ['release', 'needs review'],
       },

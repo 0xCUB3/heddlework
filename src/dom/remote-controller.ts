@@ -150,6 +150,9 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   settleThread(path: string): void { void this.#send({ type: 'settleThread', path }) }
   snoozeThread(path: string, snoozedUntil: number): void { void this.#send({ type: 'snoozeThread', path, snoozedUntil }) }
   wakeThread(path: string): void { void this.#send({ type: 'wakeThread', path }) }
+  pinThread(path: string): void { void this.#send({ type: 'pinThread', path }) }
+  unpinThread(path: string): void { void this.#send({ type: 'unpinThread', path }) }
+  async renameThread(name: string): Promise<void> { await this.#send({ type: 'renameThread', name }) }
   setThreadPriority(path: string, priority: ThreadPriority | undefined): void { void this.#send({ type: 'setThreadPriority', path, priority }) }
   setThreadLabels(path: string, labels: readonly string[]): void { void this.#send({ type: 'setThreadLabels', path, labels: [...labels] }) }
   markThreadRead(path: string, updatedAt: number): void { void this.#send({ type: 'markThreadRead', path, updatedAt }) }

@@ -64,6 +64,9 @@ export interface WorkbenchControllerSurface {
   settleThread(path: string): void
   snoozeThread(path: string, snoozedUntil: number): void
   wakeThread(path: string): void
+  pinThread(path: string): void
+  unpinThread(path: string): void
+  renameThread(name: string): Promise<void>
   setThreadPriority(path: string, priority: ThreadPriority | undefined): void
   setThreadLabels(path: string, labels: readonly string[]): void
   markThreadRead(path: string, updatedAt: number): void

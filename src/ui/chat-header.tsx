@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import uiContract from '../workbench/ui-contract.json'
 import { workspaceDisplayName } from '../workbench/workspace-name.ts'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
+import { sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
@@ -11,6 +12,7 @@ import { openPath } from './open-external.ts'
 import { colors, nativeTheme } from './theme.ts'
 import { LAYOUT_MOTION_TRANSITION, MotionDiv } from './motion.ts'
 import { useResponsiveLayout } from './responsive.tsx'
+import { buildThreadActions } from './thread-actions.ts'
 
 export function ChatHeader({
   state,
@@ -33,6 +35,12 @@ export function ChatHeader({
   const title = activeThreadTitle(state)
   const layout = useResponsiveLayout()
   const collapsedLeftInset = process.platform === 'darwin' ? 132 : 54
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(title)
+  useEffect(() => {
+    setRenaming(false)
+    setDraft(title)
+  }, [state.session.sessionFile, title])
   return (
     <MotionDiv
       initial={false}
@@ -48,10 +56,28 @@ export function ChatHeader({
             <text style={{ color: colors.textFaint, fontSize: 12 }}>/</text>
           </>
         )}
-        <text testId="chat-thread-title" style={{ width: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</text>
+        {renaming ? (
+          <input
+            testId="thread-rename-input"
+            value={draft}
+            autoFocus
+            theme={{ caret: colors.text, text: colors.text, textMuted: colors.textFaint, bg: colors.transparent }}
+            style={{ width: 0, flexGrow: 1, height: 26, minWidth: 0, borderWidth: 0, backgroundColor: colors.transparent, color: colors.text, fontSize: 12, fontWeight: 600 }}
+            onChange={(event) => setDraft(String(event.value ?? ''))}
+            onKeyDown={(event) => {
+              if (event.key === 'enter') {
+                void controller.renameThread(draft)
+                if (draft.trim()) setRenaming(false)
+              }
+              if (event.key === 'escape') setRenaming(false)
+            }}
+          />
+        ) : (
+          <text testId="chat-thread-title" style={{ width: 0, flexGrow: 1, color: colors.text, fontSize: 12, fontWeight: 600, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</text>
+        )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 3 : 7, flexShrink: 0 }}>
-        <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} />
+        <ActionMenu state={state} controller={controller} compact={layout.compact || diffOpen} onRename={() => { setDraft(title); setRenaming(true) }} />
         {!layout.mobile && (layout.compact || diffOpen ? (
           <>
             <IconButton testId="header-open" icon="box" label="Open" onClick={() => openPath(state.workspacePath)} />
@@ -70,15 +96,26 @@ export function ChatHeader({
   )
 }
 
-function ActionMenu({ state, controller, compact }: { state: WorkbenchState; controller: WorkbenchControllerSurface; compact: boolean }) {
+function ActionMenu({ state, controller, compact, onRename }: { state: WorkbenchState; controller: WorkbenchControllerSurface; compact: boolean; onRename(): void }) {
   const dropdown = useDropdownState()
+  const path = state.session.sessionFile
+  const current = state.sessions.find((session) => session.path === path)
+  const bucket = current ? sessionLifecycleBucket(current, path ? state.threadLifecycle[path] : undefined, Date.now()) : 'active'
+  const threadActions = buildThreadActions({
+    isPinned: ((path ? state.threadLifecycle[path]?.pinnedAt : undefined) ?? 0) > 0,
+    isSettled: bucket === 'settled',
+    isSnoozed: bucket === 'snoozed',
+    isRunning: state.session.isStreaming,
+    hasMessages: state.messages.length > 0,
+  }).filter((action) => action.id === 'pin' || action.id === 'unpin' || action.id === 'rename')
   const options = [
-    { value: 'new', label: 'New thread', detail: 'Start a clean Pi session' },
-    { value: 'open', label: 'Open project', detail: 'Open this workspace externally' },
-    { value: 'clone', label: 'Clone thread', detail: 'Duplicate the current Pi branch' },
-    { value: 'compact', label: 'Compact context', detail: 'Reduce the current context window' },
-    { value: 'refresh', label: 'Refresh sessions', detail: 'Rescan every saved Pi session' },
-    { value: 'export', label: 'Export transcript', detail: 'Write this thread as HTML' },
+    ...threadActions.map((action) => ({ value: action.id, label: action.label, detail: action.detail ?? '', disabled: Boolean(action.disabled) })),
+    { value: 'new', label: 'New thread', detail: 'Start a clean Pi session', disabled: false },
+    { value: 'open', label: 'Open project', detail: 'Open this workspace externally', disabled: false },
+    { value: 'clone', label: 'Clone thread', detail: 'Duplicate the current Pi branch', disabled: false },
+    { value: 'compact', label: 'Compact context', detail: 'Reduce the current context window', disabled: false },
+    { value: 'refresh', label: 'Refresh sessions', detail: 'Rescan every saved Pi session', disabled: false },
+    { value: 'export', label: 'Export transcript', detail: 'Write this thread as HTML', disabled: false },
   ]
   return (
     <Select
@@ -86,6 +123,9 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       open={dropdown.mounted}
       onOpenChange={dropdown.setOpen}
       onValueChange={(value) => {
+        if (value === 'rename') onRename()
+        if (value === 'pin' && path) controller.pinThread(path)
+        if (value === 'unpin' && path) controller.unpinThread(path)
         if (value === 'new') void controller.newSession()
         if (value === 'open') openPath(state.workspacePath)
         if (value === 'clone') void controller.cloneSession()
@@ -104,8 +144,8 @@ function ActionMenu({ state, controller, compact }: { state: WorkbenchState; con
       <SelectContent testId="add-action-content" side="bottom" sideOffset={7} align="end" style={{ width: 254, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: colors.background, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}>
         <DropdownSurface testId="add-action-menu" open={dropdown.open} style={{ width: '100%', padding: 5 }}>
           {options.map((option) => {
-            const alwaysEnabled = option.value === 'refresh' || option.value === 'open'
-            const disabled = alwaysEnabled ? false : state.session.isStreaming || (option.value !== 'new' && state.messages.length === 0)
+            const alwaysEnabled = option.value === 'refresh' || option.value === 'open' || option.value === 'pin' || option.value === 'unpin'
+            const disabled = option.disabled || (alwaysEnabled ? false : state.session.isStreaming || (option.value !== 'new' && option.value !== 'rename' && state.messages.length === 0))
             return (
               <SelectItem
                 key={option.value}
@@ -134,4 +174,3 @@ export function activeThreadTitle(state: WorkbenchState): string {
   if (!text) return 'New thread'
   return text.length > 68 ? `${text.slice(0, 65)}…` : text
 }
-

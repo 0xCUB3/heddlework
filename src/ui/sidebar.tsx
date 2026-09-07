@@ -11,10 +11,12 @@ import { IconButton, NativeVirtualList, type NativeElementHandle, type NativeScr
 import { SIDEBAR_VIRTUAL_WINDOW_SIZE, useNativeVirtualWindow, usePrependCount } from './virtual-list.tsx'
 import { pickWorkspaceDirectory } from './open-external.ts'
 import { colors } from './theme.ts'
-import { SessionRow, sessionLifecycleBucket } from './sidebar-session-row.tsx'
+import { copyTextToClipboard } from './clipboard-media.ts'
+import { SessionRow, sessionLifecycleBucket, sortActiveSessions } from './sidebar-session-row.tsx'
+import type { ThreadActionId } from './thread-actions.ts'
 import { trafficLightInset } from './window-chrome.ts'
 
-export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket } from './sidebar-session-row.tsx'
+export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket, sortActiveSessions } from './sidebar-session-row.tsx'
 
 const SIDEBAR_WIDTH = 256
 const ALL_PROJECTS_SCOPE = '__all-projects__'
@@ -59,6 +61,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   const [projectScope, setProjectScope] = useState(ALL_PROJECTS_SCOPE)
   const [pickingProject, setPickingProject] = useState(false)
   const [snoozeMenu, setSnoozeMenu] = useState<string | null>(null)
+  const [threadMenu, setThreadMenu] = useState<string | null>(null)
   const [settledExpanded, setSettledExpanded] = useState(false)
   const [clock, setClock] = useState(Date.now())
   const sessionScrollDistance = useRef(0)
@@ -122,7 +125,10 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     const timer = setTimeout(() => setClock(Date.now()), Math.max(25, refreshAt - currentTime + 10))
     return () => clearTimeout(timer)
   }, [now, state.threadLifecycle])
-  const activeSessions = visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'active')
+  const activeSessions = sortActiveSessions(
+    visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'active'),
+    state.threadLifecycle,
+  )
   const snoozedSessions = visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'snoozed')
   const settledSessions = visibleSessions.filter((session) => sessionLifecycleBucket(session, state.threadLifecycle[session.path], now) === 'settled')
   const renderedSettledSessions = settledExpanded
@@ -146,13 +152,25 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         running={active && state.session.isStreaming}
         disabled={false}
         lifecycle={lifecycle}
+        pinned={(state.threadLifecycle[session.path]?.pinnedAt ?? 0) > 0}
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         snoozeOpen={snoozeMenu === session.path}
+        moreOpen={threadMenu === session.path}
         onClick={() => { onSelectSession(); void controller.switchSession(session) }}
-        onSettle={() => { setSnoozeMenu(null); controller.settleThread(session.path) }}
+        onSettle={() => { setSnoozeMenu(null); setThreadMenu(null); controller.settleThread(session.path) }}
         onWake={() => controller.wakeThread(session.path)}
-        onSnooze={() => setSnoozeMenu((current) => current === session.path ? null : session.path)}
+        onSnooze={() => { setThreadMenu(null); setSnoozeMenu((current) => current === session.path ? null : session.path) }}
         onSchedule={(until) => { setSnoozeMenu(null); controller.snoozeThread(session.path, until) }}
+        onMore={() => { setSnoozeMenu(null); setThreadMenu((current) => current === session.path ? null : session.path) }}
+        onAction={(id) => {
+          setThreadMenu(null)
+          if (id === 'snooze') {
+            setSnoozeMenu(session.path)
+            return
+          }
+          handleThreadAction(controller, session, id)
+        }}
+        onRename={(name) => { void controller.renameThread(name) }}
       />
     )
   }
@@ -382,5 +400,34 @@ function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null 
 
 function compactTitle(value: string): string {
   return value.length > 60 ? `${value.slice(0, 57)}…` : value
+}
+
+function handleThreadAction(controller: WorkbenchControllerSurface, session: PiSessionSummary, id: ThreadActionId): void {
+  if (id === 'pin') controller.pinThread(session.path)
+  else if (id === 'unpin') controller.unpinThread(session.path)
+  else if (id === 'copy-path') void copyThreadText(controller, session.path, 'Copied path to clipboard')
+  else if (id === 'copy-thread-id') void copyThreadText(controller, session.id, 'Copied thread id to clipboard')
+  else if (id === 'clone') void controller.cloneSession()
+  else if (id === 'export') void controller.exportSession()
+  else if (id === 'settle') controller.settleThread(session.path)
+  else if (id === 'unsettle' || id === 'wake') controller.wakeThread(session.path)
+  else if (id === 'snooze') return
+}
+
+async function copyThreadText(controller: WorkbenchControllerSurface, text: string, success: string): Promise<void> {
+  let copied = await copyTextToClipboard(text)
+  if (!copied) {
+    const clipboard = (globalThis as { navigator?: { clipboard?: { writeText?: (value: string) => Promise<void> } } }).navigator?.clipboard
+    if (clipboard?.writeText) {
+      try {
+        await clipboard.writeText(text)
+        copied = true
+      } catch {
+        copied = false
+      }
+    }
+  }
+  if (copied) controller.notify('info', success)
+  else controller.notify('warning', text)
 }
 

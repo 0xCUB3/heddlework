@@ -893,7 +893,7 @@ export class WorkbenchController {
 
   settleThread(path: string): void {
     const current = this.#state.threadLifecycle[path] ?? {}
-    const { snoozedUntil: _snoozedUntil, unsettledAt: _unsettledAt, ...retained } = current
+    const { snoozedUntil: _snoozedUntil, unsettledAt: _unsettledAt, pinnedAt: _pinnedAt, ...retained } = current
     const threadLifecycle = {
       ...this.#state.threadLifecycle,
       [path]: { ...retained, settledAt: Date.now() },
@@ -920,6 +920,41 @@ export class WorkbenchController {
       [path]: { ...retained, unsettledAt: Date.now() },
     }
     this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread returned to Active'))
+  }
+
+  pinThread(path: string): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const threadLifecycle = {
+      ...this.#state.threadLifecycle,
+      [path]: { ...current, pinnedAt: Date.now() },
+    }
+    this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread pinned'))
+  }
+
+  unpinThread(path: string): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const { pinnedAt: _pinnedAt, ...retained } = current
+    const threadLifecycle = {
+      ...this.#state.threadLifecycle,
+      [path]: retained,
+    }
+    this.#setState((state) => addNotice({ ...state, threadLifecycle }, 'info', 'Thread unpinned'))
+  }
+
+  async renameThread(name: string): Promise<void> {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      this.#setState((state) => addNotice(state, 'warning', 'Thread name cannot be empty'))
+      return
+    }
+    try {
+      await this.#transport.request({ type: 'set_session_name', name: trimmed })
+      this.#patch({ session: { ...this.#state.session, sessionName: trimmed } })
+      void this.refreshSessions()
+      this.#setState((state) => addNotice(state, 'info', `Session name set: ${trimmed}`))
+    } catch (error) {
+      this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
   }
 
   setThreadPriority(path: string, priority: ThreadPriority | undefined): void {

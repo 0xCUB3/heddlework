@@ -3,6 +3,15 @@ import type { ThreadLifecycle } from './state.ts'
 
 export const SESSION_SETTLED_AFTER_MS = 7 * 24 * 60 * 60 * 1_000
 
+export function sortActiveSessions(sessions: readonly PiSessionSummary[], lifecycle: Record<string, ThreadLifecycle>): PiSessionSummary[] {
+  return [...sessions].sort((left, right) => {
+    const leftPinned = (lifecycle[left.path]?.pinnedAt ?? 0) > 0
+    const rightPinned = (lifecycle[right.path]?.pinnedAt ?? 0) > 0
+    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
+    return right.modifiedAt - left.modifiedAt
+  })
+}
+
 export function sessionLifecycleBucket(session: PiSessionSummary, lifecycle: ThreadLifecycle | undefined, now: number): 'active' | 'snoozed' | 'settled' {
   if ((lifecycle?.snoozedUntil ?? 0) > now) return 'snoozed'
   if ((lifecycle?.settledAt ?? 0) >= session.modifiedAt) return 'settled'

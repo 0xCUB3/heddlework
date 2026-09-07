@@ -51,6 +51,9 @@ export type WorkbenchCommand =
   | { type: 'settleThread'; path: string }
   | { type: 'snoozeThread'; path: string; snoozedUntil: number }
   | { type: 'wakeThread'; path: string }
+  | { type: 'pinThread'; path: string }
+  | { type: 'unpinThread'; path: string }
+  | { type: 'renameThread'; name: string }
   | { type: 'setThreadPriority'; path: string; priority: ThreadPriority | undefined }
   | { type: 'setThreadLabels'; path: string; labels: string[] }
   | { type: 'markThreadRead'; path: string; updatedAt: number }
@@ -92,7 +95,7 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   'toggleQueuedInputPause', 'steerQueuedInput', 'resumeQueue', 'pause', 'abort', 'newSession', 'switchSession',
   'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
-  'wakeThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
+  'wakeThread', 'pinThread', 'unpinThread', 'renameThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
   'markNoticeRead', 'markNoticesRead', 'activateNotice', 'clearNotices', 'reportPresence', 'createFlowSchedule', 'setFlowScheduleEnabled', 'removeFlowSchedule', 'launchFlow', 'runFlowScheduleNow', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
   'navigateTree', 'cloneSession', 'exportSession', 'switchWorkspace', 'markThreadsRead', 'drainQueueMessages', 'cancelBlockingQueueActivity',
   'queueFabricPeerGate', 'setAskUserQuestionnaireCollapsed', 'completeUiRequest', 'removeQueuedFlow', 'notify',
@@ -244,6 +247,15 @@ export async function applyWorkbenchCommand(controller: WorkbenchControllerSurfa
       return
     case 'wakeThread':
       controller.wakeThread(command.path)
+      return
+    case 'pinThread':
+      controller.pinThread(command.path)
+      return
+    case 'unpinThread':
+      controller.unpinThread(command.path)
+      return
+    case 'renameThread':
+      await controller.renameThread(command.name)
       return
     case 'setThreadPriority':
       controller.setThreadPriority(command.path, command.priority)

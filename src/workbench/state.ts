@@ -16,6 +16,7 @@ export interface ThreadLifecycle {
   snoozedUntil?: number
   unsettledAt?: number
   readAt?: number
+  pinnedAt?: number
   priority?: ThreadPriority
   labels?: string[]
 }

@@ -73,10 +73,20 @@ describe('workbench command protocol', () => {
     await waitFor(() => !controller.getSnapshot().session.isStreaming, 'abort to settle')
 
     const sessionPath = controller.getSnapshot().session.sessionFile ?? '/tmp/heddlework-protocol-commands/session'
+    await applyWorkbenchCommand(controller, { type: 'pinThread', path: sessionPath })
+    expect(controller.getSnapshot().threadLifecycle[sessionPath]?.pinnedAt).toBeNumber()
+    await applyWorkbenchCommand(controller, { type: 'unpinThread', path: sessionPath })
+    expect(controller.getSnapshot().threadLifecycle[sessionPath]?.pinnedAt).toBeUndefined()
+    await applyWorkbenchCommand(controller, { type: 'pinThread', path: sessionPath })
     await applyWorkbenchCommand(controller, { type: 'settleThread', path: sessionPath })
     expect(controller.getSnapshot().threadLifecycle[sessionPath]?.settledAt).toBeNumber()
+    expect(controller.getSnapshot().threadLifecycle[sessionPath]?.pinnedAt).toBeUndefined()
     await applyWorkbenchCommand(controller, { type: 'wakeThread', path: sessionPath })
     expect(controller.getSnapshot().threadLifecycle[sessionPath]?.settledAt).toBeUndefined()
+    await applyWorkbenchCommand(controller, { type: 'renameThread', name: 'Wire name' })
+    expect(controller.getSnapshot().session.sessionName).toBe('Wire name')
+    await applyWorkbenchCommand(controller, { type: 'renameThread', name: '   ' })
+    expect(controller.getSnapshot().notices.some((notice) => notice.kind === 'warning' && notice.message.includes('empty'))).toBe(true)
 
     await expect(applyWorkbenchCommand(controller, { type: 'setModel', provider: 'nope', id: 'missing' })).rejects.toThrow('Unknown model')
     await expect(applyWorkbenchCommand(controller, { type: 'switchSession', path: '/does/not/exist' })).rejects.toThrow('Unknown session')

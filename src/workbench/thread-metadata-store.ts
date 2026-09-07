@@ -69,12 +69,14 @@ export function restoreThreadMetadata(value: unknown): Record<string, ThreadLife
     const snoozedUntil = finiteNumber(source.snoozedUntil)
     const unsettledAt = finiteNumber(source.unsettledAt)
     const readAt = finiteNumber(source.readAt)
+    const pinnedAt = finiteNumber(source.pinnedAt)
     const priority = threadPriority(source.priority)
     const labels = Array.isArray(source.labels) ? normalizeThreadLabels(source.labels.filter((label): label is string => typeof label === 'string')) : []
     if (settledAt !== undefined) thread.settledAt = settledAt
     if (snoozedUntil !== undefined) thread.snoozedUntil = snoozedUntil
     if (unsettledAt !== undefined) thread.unsettledAt = unsettledAt
     if (readAt !== undefined) thread.readAt = readAt
+    if (pinnedAt !== undefined) thread.pinnedAt = pinnedAt
     if (priority !== undefined) thread.priority = priority
     if (labels.length > 0) thread.labels = labels
     if (Object.keys(thread).length > 0) restored[key] = thread
