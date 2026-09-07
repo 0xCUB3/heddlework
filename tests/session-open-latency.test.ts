@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WorkbenchController } from '../src/workbench/controller.ts'
+import { isDraftConversation } from '../src/workbench/state.ts'
 import type { AgentTransport, TransportStatus } from '../src/pi/transport.ts'
 import type { RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import type { PiSessionSummary } from '../src/pi/session-catalog.ts'
@@ -68,7 +69,9 @@ it('renders a bounded disk preview while Pi is blocked, without sending to the o
     const switching = controller.switchSession(sessions[1]!)
     expect(controller.getSnapshot().session.sessionFile).toBe(sessions[1]!.path)
     expect(controller.getSnapshot().connection).toBe('connecting')
+    expect(isDraftConversation(controller.getSnapshot())).toBe(false)
     await until(() => controller.getSnapshot().messages.at(-1)?.content === 'b message 99')
+    expect(isDraftConversation(controller.getSnapshot())).toBe(false)
     expect(transport.active.id).toBe('a')
     expect(controller.getSnapshot().messages).toHaveLength(80)
     await controller.submit('must not go to a')

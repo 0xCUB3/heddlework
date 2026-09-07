@@ -125,6 +125,11 @@ export interface WorkbenchState {
   threadTitles: ThreadTitleSettings
 }
 
+export function isDraftConversation(state: Pick<WorkbenchState, 'messages' | 'liveAssistant' | 'session' | 'activity'>): boolean {
+  if (state.activity === 'Opening thread') return false
+  return state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
+}
+
 let noticeId = 0
 
 export function createInitialState(workspacePath: string): WorkbenchState {

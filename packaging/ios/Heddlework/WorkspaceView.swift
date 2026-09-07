@@ -710,7 +710,8 @@ struct ChatWorkspace: View {
     private var memoryHost: String { client.candidates.first ?? "" }
 
     var isEmptyChat: Bool {
-        (client.snapshot?.messages ?? []).isEmpty && client.snapshot?.liveAssistant == nil && (client.snapshot?.liveTools ?? []).isEmpty
+        if client.snapshot?.activity == "Opening thread" { return false }
+        return (client.snapshot?.messages ?? []).isEmpty && client.snapshot?.liveAssistant == nil && (client.snapshot?.liveTools ?? []).isEmpty
     }
 
     var body: some View {

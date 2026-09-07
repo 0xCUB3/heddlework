@@ -632,9 +632,11 @@ export class WorkbenchController {
       workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
     }
     this.#notifier.notify(true)
-    void new PiSessionHistoryPager(session.path).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS).then((page) => {
+    // A bounded reverse page from the end of the file, not the navigation scan that keeps reading until it
+    // finds twelve conversation turns. Fabric-heavy threads would otherwise sit on an empty draft for seconds.
+    void new PiSessionHistoryPager(session.path).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES).then((page) => {
       if (this.#disposed || generation !== this.#sessionSwitchGeneration || !this.#sessionPreview) return
-      this.#sessionPreview = { ...this.#sessionPreview, messages: page.messages }
+      this.#sessionPreview = { ...this.#sessionPreview, messages: page.messages, messagesHasOlder: page.hasOlder }
       this.#notifier.notify(true)
     }).catch(() => { /* Missing files fall back to Pi's transcript after activation. */ })
     const task = (this.#sessionSwitch ?? Promise.resolve()).then(async () => {

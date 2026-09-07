@@ -37,6 +37,7 @@ import type { PluginHost } from '../plugins/host.ts'
 import type { SleepPreventionService } from '../power/service.ts'
 import type { UpdateService } from '../updates/service.ts'
 import { isLedgerNotice, toastNotices, unreadLedgerNotices } from '../workbench/notices.ts'
+import { isDraftConversation } from '../workbench/state.ts'
 import { clampPanelSize, draggedPanelSize, type LayoutStorage, type PanelSizes, type ResizePanel } from './panel-layout.ts'
 import { ResizeHandle } from './resize-handle.tsx'
 import { adjacentSession, orderedActiveSessions } from './session-order.ts'
@@ -136,7 +137,7 @@ export function WorkbenchApp({
   const unreadCount = unreadLedgerNotices(state.notices).filter((notice) => notice.id > lastSeenNoticeId).length
   const toasts = toastNotices(state.notices)
   const newestToastId = toasts.at(-1)?.id
-  const draft = state.messages.length === 0 && !state.liveAssistant && !state.session.isStreaming
+  const draft = isDraftConversation(state)
   const settingsState = useMemo(() => ({
     connection: state.connection,
     connectionMessage: state.connectionMessage,

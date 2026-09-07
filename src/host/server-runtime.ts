@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
-import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES, SESSION_HISTORY_PAGE_MAX_MESSAGES, SESSION_HISTORY_PAGE_MESSAGES } from '../pi/session-history.ts'
+import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_MESSAGES } from '../pi/session-history.ts'
 import { createQueueState } from '../workbench/queue.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import type { SleepPreventionService } from '../power/service.ts'
@@ -196,10 +196,7 @@ export async function executeSocketCommand(
       // A thread with no live bundle needs a Pi process, which takes seconds. Show the thread now from
       // the current snapshot plus its transcript on disk; the real bundle replaces it when it lands.
       const isCurrent = () => previewActive && socket.data.navigationGeneration === generation && socket.data.sessionKey === targetPath
-      const loadHistory = options.loadSessionHistory ?? ((sessionPath: string) => new PiSessionHistoryPager(sessionPath).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, {
-        minimumConversationMessages: SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES,
-        maximumMessages: SESSION_HISTORY_PAGE_MAX_MESSAGES,
-      }))
+      const loadHistory = options.loadSessionHistory ?? ((sessionPath: string) => new PiSessionHistoryPager(sessionPath).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES))
       if (!target) sendSwitchPreview(send, socket, current, path, isCurrent, loadHistory)
       const opening = options.runtime.ensureSession(path, summary)
       const pending: PendingNavigation = { generation, promise: opening.then(() => undefined, (error) => { pending.error = error }) }
