@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { attachJsonlReader, serializeJsonLine } from './jsonl.ts'
@@ -9,7 +9,8 @@ import {
   parseTreeNavigateBridgeEvent,
   type TreeNavigateBridgeEvent,
 } from './fabric-bridge.ts'
-import type { TransportStatus } from './transport.ts'
+import { discoverPiLiveBridges, heddleworkLiveBridgePath, parsePiLiveSessionStateRecord, PiLiveBridgeTransport, piLiveBridgeDirectory, type PiLiveBridgeAdvertisement } from './live-bridge.ts'
+import type { AgentTransport, TransportStatus } from './transport.ts'
 import { describePiAdapter, type HarnessAdapter, type HarnessCapabilities } from '../protocol/adapter.ts'
 import type { RpcCommand, RpcRecord } from './types.ts'
 
@@ -36,6 +37,7 @@ interface PendingTreeNavigation {
 }
 
 export class PiRpcTransport implements HarnessAdapter {
+  readonly ownership = 'owned' as const
   readonly id = 'pi-rpc'
   readonly displayName = 'Pi (RPC)'
   readonly capabilities: HarnessCapabilities = describePiAdapter()
@@ -61,7 +63,10 @@ export class PiRpcTransport implements HarnessAdapter {
     this.#stderr = ''
 
     const command = this.#options.command ?? resolvePiExecutable()
-    const bridgeArgs = this.#options.fabricBridge === false ? [] : ['--extension', heddleworkFabricBridgePath()]
+    const bridgeRoot = join(piLiveBridgeDirectory({ ...process.env, ...this.#options.env }), 'extension')
+    const bridgeArgs = this.#options.fabricBridge === false
+      ? []
+      : ['--extension', heddleworkFabricBridgePath(), '--extension', heddleworkLiveBridgePath(bridgeRoot)]
     const args = [...(this.#options.commandArgs ?? []), '--mode', 'rpc', ...bridgeArgs, ...(this.#options.piArgs ?? [])]
     const env = piProcessEnvironment(command, { ...process.env, ...this.#options.env })
     const child = spawn(command, args, {
@@ -222,6 +227,11 @@ export class PiRpcTransport implements HarnessAdapter {
       this.#emitEvent({ type: 'transport_parse_error', line })
       return
     }
+    const liveState = parsePiLiveSessionStateRecord(record)
+    if (liveState) {
+      this.#emitEvent(liveState)
+      return
+    }
     const treeEvent = parseTreeNavigateBridgeEvent(record)
     if (treeEvent) {
       const pending = this.#pendingTreeNavigations.get(treeEvent.requestId)
@@ -270,6 +280,145 @@ export class PiRpcTransport implements HarnessAdapter {
   #emitStatus(status: TransportStatus): void {
     for (const listener of this.#statusListeners) listener(status)
   }
+}
+
+export interface CreatePiTransportOptions extends PiRpcTransportOptions {
+  sessionFile?: string | undefined
+  sessionId?: string | undefined
+  liveAdvertisements?: readonly PiLiveBridgeAdvertisement[] | undefined
+}
+
+export function selectPiLiveAdvertisement(options: Pick<CreatePiTransportOptions, 'piArgs' | 'sessionFile' | 'sessionId'> & { cwd?: string }, advertisements: readonly PiLiveBridgeAdvertisement[]): PiLiveBridgeAdvertisement | undefined {
+  const requestedFile = options.sessionFile ?? piArgumentValue(options.piArgs, '--session')
+  const requestedId = options.sessionId ?? piArgumentValue(options.piArgs, '--session-id')
+  if (!requestedFile && !requestedId) return undefined
+  const path = requestedFile ? canonicalSessionPath(requestedFile, options.cwd) : undefined
+  const matching = advertisements.filter((advertisement) => path
+    ? Boolean(advertisement.sessionFile && canonicalSessionPath(advertisement.sessionFile) === path)
+    : advertisement.sessionId === requestedId)
+  if (matching.length > 1) throw new Error('Multiple Pi processes claim this session; close the duplicate owner before attaching')
+  return matching[0]
+}
+
+function canonicalSessionPath(path: string, cwd = process.cwd()): string {
+  const absolute = resolve(cwd, path)
+  try { return comparablePath(realpathSync(absolute)) } catch { return comparablePath(absolute) }
+}
+
+/**
+ * Prefer an already-running authoritative Pi process for the requested session.
+ * Once selected, an attached transport never falls back to spawning another writer
+ * if that owner disconnects; callers must explicitly choose a new owner/session.
+ */
+export function createPiTransport(options: CreatePiTransportOptions): AgentTransport {
+  return new PiSelectingTransport(options)
+}
+
+class PiSelectingTransport implements AgentTransport {
+  readonly #options: CreatePiTransportOptions
+  readonly #eventListeners = new Set<(event: RpcRecord) => void>()
+  readonly #statusListeners = new Set<(status: TransportStatus) => void>()
+  #selected: AgentTransport | undefined
+  #ownership: 'owned' | 'attached' | undefined
+  #everAttached = false
+  #identity: { sessionFile?: string | undefined; sessionId?: string | undefined; cwd: string } | undefined
+  #forwarding: (() => void)[] = []
+  #starting: Promise<void> | undefined
+  #running = false
+  #generation = 0
+  constructor(options: CreatePiTransportOptions) { this.#options = options }
+  get ownership(): 'owned' | 'attached' | undefined { return this.#ownership }
+  start(): Promise<void> {
+    if (this.#starting) return this.#starting
+    if (this.#running) return Promise.reject(new Error('Pi transport is already started'))
+    const task = this.#startSelection(++this.#generation).finally(() => { if (this.#starting === task) this.#starting = undefined })
+    this.#starting = task
+    return task
+  }
+  async #startSelection(generation: number): Promise<void> {
+    // Recheck ownership on every reconnect, including a previously owned RPC
+    // session. Another live frontend may have taken ownership while we were out.
+    await this.#selected?.stop()
+    for (const off of this.#forwarding.splice(0)) off()
+    if (generation !== this.#generation) throw new Error('Pi transport startup was cancelled')
+    const options = this.#currentOptions()
+    const advertisements = options.liveAdvertisements ?? discoverPiLiveBridges(piLiveBridgeDirectory({ ...process.env, ...options.env }))
+    const matching = selectPiLiveAdvertisement(options, advertisements)
+    if (this.#everAttached && !matching) throw new Error('Previously attached Pi session owner is unavailable; refusing to spawn a second writer')
+    const selected: AgentTransport = matching
+      ? new PiLiveBridgeTransport({ advertisement: matching, ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }) })
+      : new PiRpcTransport(options)
+    this.#selected = selected
+    this.#ownership = selected.ownership
+    if (selected.ownership === 'attached') this.#everAttached = true
+    this.#forwarding = [
+      selected.onEvent((event) => {
+        if (generation !== this.#generation) return
+        if (event.type === 'heddlework_session_state' || event.type === 'session_switched' || event.type === 'heddlework_live_snapshot') this.#observeState(event.state, event.cwd)
+        for (const listener of this.#eventListeners) listener(event)
+      }),
+      selected.onStatus((status) => {
+        if (generation !== this.#generation) return
+        if (status.state === 'exited' || status.state === 'stopped') this.#running = false
+        for (const listener of this.#statusListeners) listener(status)
+      }),
+    ]
+    try {
+      await selected.start()
+      if (generation !== this.#generation) throw new Error('Pi transport startup was cancelled')
+      this.#running = true
+    } catch (error) {
+      await selected.stop().catch(() => undefined)
+      throw error
+    }
+  }
+  #currentOptions(): CreatePiTransportOptions {
+    if (!this.#identity) {
+      if (!this.#options.sessionFile || piArgumentValue(this.#options.piArgs, '--session')) return this.#options
+      return { ...this.#options, piArgs: [...(this.#options.piArgs ?? []), '--session', this.#options.sessionFile] }
+    }
+    const piArgs: string[] = []
+    const original = this.#options.piArgs ?? []
+    for (let index = 0; index < original.length; index++) {
+      if (original[index] === '--session' || original[index] === '--session-id') { index++; continue }
+      piArgs.push(original[index]!)
+    }
+    if (this.#identity.sessionFile) piArgs.push('--session', this.#identity.sessionFile)
+    return { ...this.#options, ...this.#identity, piArgs }
+  }
+  #observeState(value: unknown, cwd?: unknown): void {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return
+    const state = value as Record<string, unknown>
+    if (typeof state.sessionId !== 'string' && typeof state.sessionFile !== 'string') return
+    this.#identity = {
+      cwd: typeof cwd === 'string' && cwd ? resolve(cwd) : this.#identity?.cwd ?? this.#options.cwd,
+      sessionId: typeof state.sessionId === 'string' ? state.sessionId : undefined,
+      sessionFile: typeof state.sessionFile === 'string' && state.sessionFile ? canonicalSessionPath(state.sessionFile) : undefined,
+    }
+  }
+  async stop(): Promise<void> {
+    ++this.#generation
+    this.#running = false
+    await this.#selected?.stop()
+    for (const off of this.#forwarding.splice(0)) off()
+  }
+  async request<T = unknown>(command: RpcCommand): Promise<T> {
+    if (!this.#selected || !this.#running) throw new Error('Pi transport selector is not started')
+    const result = await this.#selected.request<T>(command)
+    if (command.type === 'get_state') this.#observeState(result)
+    return result
+  }
+  send(record: RpcRecord): void { if (!this.#selected || !this.#running) throw new Error('Pi transport selector is not started'); this.#selected.send(record) }
+  onEvent(listener: (event: RpcRecord) => void): () => void { this.#eventListeners.add(listener); return () => { this.#eventListeners.delete(listener) } }
+  onStatus(listener: (status: TransportStatus) => void): () => void { this.#statusListeners.add(listener); return () => { this.#statusListeners.delete(listener) } }
+  getStderr(): string { return this.#selected?.getStderr() ?? '' }
+}
+
+function piArgumentValue(args: readonly string[] | undefined, name: string): string | undefined {
+  if (!args) return undefined
+  const index = args.indexOf(name)
+  const value = index >= 0 ? args[index + 1] : undefined
+  return value && !value.startsWith('-') ? value : undefined
 }
 
 export function piProcessEnvironment(command: string, env: NodeJS.ProcessEnv, cwd = process.cwd(), home = homedir(), exists: (path: string) => boolean = existsSync): NodeJS.ProcessEnv {

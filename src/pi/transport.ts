@@ -7,6 +7,7 @@ export type TransportStatus =
   | { state: 'exited'; message: string }
 
 export interface AgentTransport {
+  readonly ownership?: 'owned' | 'attached' | undefined
   start(): Promise<void>
   stop(): Promise<void>
   request<T = unknown>(command: RpcCommand): Promise<T>

@@ -1,0 +1,13 @@
+# Pi TUI live sync
+
+Heddlework can attach to a Pi process that is already running in the TUI without starting a second writer for the same session JSONL.
+
+The Heddlework live bridge is a Pi user extension. `ensureHeddleworkLiveBridgeInstalled()` places `heddlework-live-bridge.js` in Pi's global user extension directory (`~/.pi/agent/extensions` by default, or `PI_CODING_AGENT_DIR/extensions`), because Pi auto-discovers direct `.js`/`.ts` extensions. The runtime/bootstrap layer should call this installer deliberately; `PiRpcTransport` itself does not mutate the user's global extension directory. Heddlework-owned RPC launches load a private materialized copy explicitly.
+
+Each live Pi process owns its session and opens a loopback-only TCP listener on an ephemeral port. It writes a per-process advertisement beneath Heddlework's stable per-user runtime/state directory (or `HEDDLEWORK_RUNTIME_DIR`). Advertisements are created private (`0600`), and each process generates a random 256-bit bearer token. The bridge never binds a LAN interface.
+
+`discoverPiLiveBridges()` removes advertisements only after the owning process is gone; a legitimate long-running Pi is never expired by file age. `createPiTransport()` defers selection until `start()`, and attaches only on an explicit session file or session ID match—cwd alone never claims a running TUI. Once attached, it never falls back to spawning another writer after disconnect. `AgentTransport.ownership` exposes `attached` versus `owned` after selection for bootstrap/reconnect safety. `PiLiveBridgeTransport` authenticates with the advertised token and then uses UTF-8-safe JSONL request/response framing. It supports the controller refresh surface (`get_state`, messages, tree, fork messages, thinking levels, stats), safe prompt/steer/follow-up dispatch, abort, model, thinking level, session name, and image-bearing prompts using Pi's native text/image content array.
+
+Session switches remain inside the authoritative Pi process. The extension refreshes its advertisement when Pi starts/resumes/forks a session and broadcasts a `session_switched` event. On normal process shutdown it closes clients and removes its advertisement; discovery also cleans stale entries after crashes.
+
+Pi 0.85.1 does not expose the newer experimental remote server/client CLI, so a stock TUI cannot yet become a full remote UI for a session whose authoritative process was started by Heddlework RPC. App-to-running-TUI attachment is supported without concurrent JSONL writers. True TUI-to-app attachment should use Pi's upstream remote-session protocol once that server/client surface is available in the installed Pi release rather than emulating a second session runtime.
