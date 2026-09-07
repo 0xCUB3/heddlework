@@ -21,6 +21,7 @@ struct WorkbenchSnapshot: Decodable, Equatable {
     var stats: SessionStats?
     var notices: [Notice]?
     var threadLifecycle: [String: ThreadLifecycle]?
+    var threadTitles: ThreadTitleSettings? = nil
     var workspaceDiff: WorkspaceDiff?
     var statusItems: [String: String]?
     var widgets: [String: ExtensionWidget]?
@@ -147,7 +148,22 @@ struct Notice: Decodable, Equatable, Identifiable {
     var isLedger: Bool { channel != "toast" }
     var isUnread: Bool { readAt == nil }
 }
-struct ThreadLifecycle: Decodable, Equatable { var settledAt: Double?; var snoozedUntil: Double?; var unsettledAt: Double?; var readAt: Double?; var priority: Int?; var labels: [String]? }
+struct ThreadLifecycle: Decodable, Equatable {
+    var settledAt: Double?
+    var snoozedUntil: Double?
+    var unsettledAt: Double?
+    var readAt: Double?
+    var priority: Int?
+    var labels: [String]?
+    var titleSource: String?
+    var titleGeneratingAt: Double?
+}
+
+struct ThreadTitleSettings: Decodable, Equatable {
+    var autoTitles: Bool
+    var titleModel: String?
+    var instructions: String?
+}
 struct SlashCommand: Decodable, Equatable, Identifiable { var name: String; var description: String?; var argumentHint: String?; var source: String; var id: String { name } }
 struct WorkbenchUiRequest: Decodable, Equatable { var id: Int; var kind: String; var text: String? }
 

@@ -128,6 +128,16 @@ enum CommandFactory {
         return command
     }
 
+    static func setThreadTitleSettings(autoTitles: Bool? = nil, titleModel: String? = nil, instructions: String? = nil) -> [String: JSONValue] {
+        var settings: [String: JSONValue] = [:]
+        if let autoTitles { settings["autoTitles"] = .bool(autoTitles) }
+        if let titleModel { settings["titleModel"] = .string(titleModel) }
+        if let instructions { settings["instructions"] = .string(instructions) }
+        var command = simple("setThreadTitleSettings")
+        command["settings"] = .object(settings)
+        return command
+    }
+
     static func setModel(provider: String, id: String) -> [String: JSONValue] {
         var command = simple("setModel")
         command["provider"] = .string(provider)

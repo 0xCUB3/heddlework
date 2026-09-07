@@ -370,6 +370,13 @@ struct SidebarView: View {
         } else {
             Button("Wake") { wake(session) }
         }
+        Button {
+            client.send(CommandFactory.withString("regenerateThreadTitle", key: "path", value: session.path), label: "Regenerate title")
+        } label: {
+            Label("Regenerate title", systemImage: "sparkles")
+        }
+        .disabled(snapshot?.threadLifecycle?[session.path]?.titleGeneratingAt != nil)
+        .accessibilityIdentifier("thread-regenerate-title")
     }
 
     private var connectionColor: Color {
@@ -414,6 +421,7 @@ private struct NativeSessionCard: View {
 
     private var selected: Bool { SessionCatalog.isCurrentSession(session, state: snapshot?.session) }
     private var metadataColor: Color { selected ? AppColors.sidebarActiveMuted : AppColors.textFaint }
+    private var generatingTitle: Bool { snapshot?.threadLifecycle?[session.path]?.titleGeneratingAt != nil }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -424,7 +432,13 @@ private struct NativeSessionCard: View {
                         Text(SessionCatalog.projectName(for: session)).font(.workbench(size: 10, weight: .medium)).foregroundStyle(selected ? AppColors.sidebarActiveMuted : AppColors.muted).lineLimit(1)
                         Spacer(minLength: 70)
                     }
-                    Text(session.title).font(.workbench(size: 12, weight: .medium)).foregroundStyle(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? AppColors.text : AppColors.muted).lineLimit(1)
+                    SessionTitleRow(
+                        title: session.title,
+                        generating: generatingTitle,
+                        color: selected ? AppColors.text : AppColors.muted,
+                        fontSize: 12,
+                        weight: .medium
+                    )
                     if let branch = SessionCatalog.footerLabel(session: session) {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.triangle.branch").font(.workbench(size: 9)).foregroundStyle(metadataColor)
@@ -479,6 +493,8 @@ private struct CompactSessionRow: View {
     let onOpen: () -> Void
     let onWake: () -> Void
 
+    private var generatingTitle: Bool { snapshot?.threadLifecycle?[session.path]?.titleGeneratingAt != nil }
+
     var body: some View {
         HStack(spacing: 7) {
             Button(action: onOpen) {
@@ -486,10 +502,13 @@ private struct CompactSessionRow: View {
                     Image(systemName: lifecycle == .snoozed ? "clock" : "square.and.pencil")
                         .font(.workbench(size: 12))
                         .foregroundStyle(lifecycle == .settled ? AppColors.settledIcon : AppColors.info)
-                    Text(session.title)
-                        .font(.workbench(size: 11))
-                        .foregroundStyle(lifecycle == .settled ? AppColors.settledText : AppColors.textFaint)
-                        .lineLimit(1)
+                    SessionTitleRow(
+                        title: session.title,
+                        generating: generatingTitle,
+                        color: lifecycle == .settled ? AppColors.settledText : AppColors.textFaint,
+                        fontSize: 11,
+                        weight: .regular
+                    )
                     Spacer()
                 }
             }
@@ -512,6 +531,29 @@ private struct CompactSessionRow: View {
             return Date(timeIntervalSince1970: until / 1_000).formatted(date: .omitted, time: .shortened)
         }
         return SessionCatalog.relativeTime(from: session.modifiedAt ?? session.updatedAt)
+    }
+}
+
+private struct SessionTitleRow: View {
+    let title: String
+    let generating: Bool
+    let color: Color
+    var fontSize: CGFloat = 12
+    var weight: Font.Weight = .medium
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if generating {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 12, height: 12)
+                    .accessibilityIdentifier("thread-title-generating")
+            }
+            Text(title)
+                .font(.workbench(size: fontSize, weight: weight))
+                .foregroundStyle(generating ? Color.secondary : color)
+                .lineLimit(1)
+        }
     }
 }
 
