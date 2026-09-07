@@ -125,6 +125,9 @@ export class WorkbenchController {
   #started = false
   #connecting = false
   #refreshTimer: ReturnType<typeof setTimeout> | undefined
+  #refreshFull = false
+  #streamRevision = 0
+  #transcriptRefreshGeneration = 0
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectAttempts = 0
   #disposed = false
@@ -1575,22 +1578,29 @@ export class WorkbenchController {
 
   async #bootstrap(includeModels: boolean, deferMetadata = false): Promise<void> {
     const generation = ++this.#bootstrapGeneration
-    const [session, sessionTree] = await Promise.all([
+    const transcriptGeneration = ++this.#transcriptRefreshGeneration
+    const streamRevision = this.#streamRevision
+    const [reportedSession, sessionTree] = await Promise.all([
       this.#transport.request<PiSessionState>({ type: 'get_state' }),
       this.#tryRequestSessionTree(),
     ])
     if (this.#disposed || generation !== this.#bootstrapGeneration) return
+    // Events may arrive while get_state is in flight. A late idle snapshot must
+    // not hide a new response or drain queued work into an already-running turn.
+    const session = streamRevision === this.#streamRevision ? reportedSession : {
+      ...reportedSession, isStreaming: this.#state.session.isStreaming,
+    }
     this.#sessionTree = sessionTree
     this.#reconnectAttempts = 0
     this.#patch({
       connection: 'connected', connectionMessage: 'Connected', session,
-      liveAssistant: undefined, liveTools: [], activity: session.isStreaming ? 'Working' : 'Ready',
+      activity: session.isStreaming ? 'Working' : 'Ready',
     })
     const current = () => !this.#disposed && generation === this.#bootstrapGeneration
     const transcript = this.#loadInitialTranscript(session, sessionTree?.leafId).then(({ page, pager }) => {
-      if (!current()) return
+      if (!current() || transcriptGeneration !== this.#transcriptRefreshGeneration) return
       this.#historyPager = pager
-      this.#patch({ messages: page.messages, messagesHasOlder: page.hasOlder, messagesLoadingEarlier: false })
+      this.#patch({ messages: page.messages, messagesHasOlder: page.hasOlder, messagesLoadingEarlier: false, ...reconcileLiveTranscript(this.#state, page.messages) })
     })
     // Supplementary RPC metadata must never hold the transcript or navigation hostage.
     const metadata = Promise.allSettled([
@@ -1613,7 +1623,7 @@ export class WorkbenchController {
     if (!deferMetadata) await metadata
     if (!current()) return
     void this.refreshWorkspaceDiff()
-    if (!session.isStreaming) queueMicrotask(() => this.#drainQueue())
+    if (!this.#state.session.isStreaming) queueMicrotask(() => { if (current() && !this.#state.session.isStreaming) this.#drainQueue() })
   }
 
   async #loadInitialTranscript(session: PiSessionState, leafId?: string | null): Promise<{ page: SessionHistoryPage; pager: PiSessionHistoryPager | undefined }> {
@@ -1653,21 +1663,23 @@ export class WorkbenchController {
   }
 
   async #refreshMessages(): Promise<void> {
+    const refreshGeneration = ++this.#transcriptRefreshGeneration
+    const generation = this.#sessionSwitchGeneration
+    const current = () => !this.#disposed && generation === this.#sessionSwitchGeneration && refreshGeneration === this.#transcriptRefreshGeneration && !this.#sessionSwitch
     try {
-      const generation = this.#sessionSwitchGeneration
       const sessionFile = this.#state.session.sessionFile
       const previousTree = this.#sessionTree
       const [sessionTree, forkMessages] = await Promise.all([
         this.#tryRequestSessionTree(),
-        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }),
+        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }).catch(() => ({ messages: this.#state.forkMessages })),
       ])
-      if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
+      if (!current()) return
       if (sessionTree) this.#sessionTree = sessionTree
       // Pi announces the session file before it writes it (the first user message creates it),
       // so a missing file means the transcript still lives only in pi's memory. Fall through to
       // get_messages and attach the pager on the next refresh once the file exists.
       const loaded = sessionFile ? await this.#tryLoadTranscriptPage(sessionFile, sessionTree?.leafId) : undefined
-      if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
+      if (!current()) return
       if (loaded) {
         const { pager: latestPager, ...page } = loaded
         const branchChanged = previousTree !== undefined
@@ -1680,16 +1692,15 @@ export class WorkbenchController {
           messagesHasOlder: retainedPager ? this.#state.messagesHasOlder : page.hasOlder,
           messagesLoadingEarlier: false,
           forkMessages: forkMessagesFrom(forkMessages),
-          liveAssistant: undefined,
-          liveTools: [],
+          ...reconcileLiveTranscript(this.#state, page.messages),
         })
         return
       }
       const messages = await this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
-      if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
-      this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
+      if (!current()) return
+      this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), ...reconcileLiveTranscript(this.#state, messages.messages) })
     } catch (error) {
-      this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
+      if (current()) this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
     }
   }
 
@@ -1704,8 +1715,11 @@ export class WorkbenchController {
   }
 
   async #refreshStats(): Promise<void> {
+    const generation = this.#sessionSwitchGeneration
+    const bootstrapGeneration = this.#bootstrapGeneration
     try {
       const stats = await this.#transport.request<PiSessionStats>({ type: 'get_session_stats' })
+      if (this.#disposed || this.#sessionSwitch || generation !== this.#sessionSwitchGeneration || bootstrapGeneration !== this.#bootstrapGeneration) return
       this.#patch({ stats })
     } catch {
       // Stats are supplementary; transcript operation should continue without them.
@@ -1721,10 +1735,16 @@ export class WorkbenchController {
 
   #scheduleRefresh(full: boolean): void {
     if (this.#sessionTransitionDepth > 0 || this.#disposed) return
-    if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
+    this.#refreshFull ||= full
+    // Coalesce without postponing forever under continuous tool traffic, and
+    // never downgrade a full session refresh to a transcript-only refresh.
+    if (this.#refreshTimer) return
     this.#refreshTimer = setTimeout(() => {
       this.#refreshTimer = undefined
-      void (full ? Promise.all([this.#bootstrap(false), this.refreshSessions()]) : Promise.all([this.#refreshMessages(), this.#refreshStats()]))
+      const refreshFull = this.#refreshFull
+      this.#refreshFull = false
+      void (refreshFull ? Promise.all([this.#bootstrap(false), this.refreshSessions(true)]) : Promise.all([this.#refreshMessages(), this.#refreshStats()]))
+        .catch((error) => { if (!this.#disposed) this.#setState((state) => addNotice(state, 'warning', `Could not refresh session: ${errorMessage(error)}`)) })
     }, full ? 80 : 35)
   }
 
@@ -1821,6 +1841,8 @@ export class WorkbenchController {
   }
 
   #handleEvent(event: RpcRecord): void {
+    if (this.#disposed) return
+    if (event.type === 'agent_start' || event.type === 'agent_settled') ++this.#streamRevision
     const fabricEvent = parseFabricBridgeEvent(event)
     if (fabricEvent) {
       this.#handleFabricBridgeEvent(fabricEvent)
@@ -2016,6 +2038,19 @@ function sameCompactionMessage(candidate: PiMessage, message: PiMessage): boolea
   return candidate.role === 'compaction'
     && contentText(candidate.content) === contentText(message.content)
     && candidate.tokensBefore === message.tokensBefore
+}
+
+/** Drop only live rows already represented by the authoritative transcript. */
+function reconcileLiveTranscript(state: WorkbenchState, messages: PiMessage[]): Pick<WorkbenchState, 'liveAssistant' | 'liveTools'> {
+  if (!state.session.isStreaming) return { liveAssistant: undefined, liveTools: state.liveTools.length ? [] : state.liveTools }
+  let liveAssistant = state.liveAssistant
+  const completedTools = new Set<string>()
+  for (const message of messages) {
+    if (liveAssistant && message.role === 'assistant' && message.timestamp !== undefined && liveAssistant.id === `live-${message.timestamp}`) liveAssistant = undefined
+    if (message.role === 'toolResult' && typeof message.toolCallId === 'string') completedTools.add(message.toolCallId)
+  }
+  const remaining = state.liveTools.filter((tool) => tool.status !== 'complete' || !completedTools.has(tool.id))
+  return { liveAssistant, liveTools: remaining.length === state.liveTools.length ? state.liveTools : remaining }
 }
 
 function mergeTranscriptTail(current: PiMessage[], latest: PiMessage[]): PiMessage[] {
