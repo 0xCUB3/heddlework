@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
+import { shortcutBus } from './ui/shortcuts.ts'
 import { isGpuixWindowCloseRace } from './ui/native-window-lifecycle.ts'
 import { ThemeManager, themePreferencePath } from './ui/theme-manager.ts'
 import { createCoreUiExtension, createCoreUiExtensionPlugin } from './ui/core-extension.tsx'
@@ -181,6 +182,7 @@ render(
       browsers.canInitializeNativeBrowser() && process.env.HEDDLEWORK_NATIVE_BROWSER !== '0',
     ),
     ...(browserSmokeUrl ? { focus: false, show: false } : {}),
+    onKeyDown: (event) => { shortcutBus.dispatch(event) },
     onTerminated: shutdown,
   },
 )
