@@ -27,6 +27,8 @@ import { osNotificationCapability, requestOsNotifications } from './os-notificat
 import type { UpdateChannel } from '../updates/feed.ts'
 import { openExternal } from './open-external.ts'
 import { formatShortcut, SHORTCUTS } from './shortcuts.ts'
+import type { HostSwitcherSurface } from '../client/host-switcher.ts'
+import { HostListBody } from './host-picker.tsx'
 
 
 
@@ -48,6 +50,7 @@ export function SettingsView({
   updates,
   onClose,
   onStopAllAndQuit,
+  hostSwitcher,
 }: {
   state: WorkbenchState
   controller: WorkbenchControllerSurface
@@ -66,6 +69,7 @@ export function SettingsView({
   sleepPrevention?: SleepPreventionService | undefined
   onClose(): void
   onStopAllAndQuit?: (() => Promise<void>) | undefined
+  hostSwitcher?: HostSwitcherSurface | undefined
 }) {
   const { mobile, compact, contentGutter } = useResponsiveLayout()
   const resolvedTitlebarInset = titlebarInset ?? (compact ? (process.platform === 'darwin' ? 132 : 54) : 18)
@@ -109,6 +113,7 @@ export function SettingsView({
             <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
           </SettingsSection>
 
+          {hostSwitcher ? <ComputersSection switcher={hostSwitcher} /> : null}
           {remoteAccess ? <RemoteAccessSection service={remoteAccess} tailnetServe={tailnetServe} controller={controller} /> : null}
           {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
           {pluginHost ? <PluginsSection pluginHost={pluginHost} /> : null}
@@ -274,6 +279,22 @@ function PluginsSection({ pluginHost }: { pluginHost: PluginHost }) {
   )
 }
 
+
+function ComputersSection({ switcher }: { switcher: HostSwitcherSurface }) {
+  const snapshot = useSyncExternalStore(switcher.subscribe, switcher.getSnapshot)
+  return (
+    <SettingsSection title="Computers" description="The app can drive a Heddlework runtime on another computer. One host is active at a time.">
+      <HostListBody
+        switcher={switcher}
+        snapshot={snapshot}
+        variant="settings"
+        disabled={snapshot.busy}
+        onConnect={(target) => { void switcher.connect(target).catch(() => undefined) }}
+        onLocal={() => { void switcher.useLocal().catch(() => undefined) }}
+      />
+    </SettingsSection>
+  )
+}
 
 function RemoteAccessSection({ service, tailnetServe, controller }: { service: RemoteAccessSurface; tailnetServe?: TailnetServeSurface | undefined; controller: WorkbenchControllerSurface }) {
   const state = React.useSyncExternalStore(service.subscribe, service.getSnapshot)

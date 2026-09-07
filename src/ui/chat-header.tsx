@@ -5,7 +5,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState,
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { sessionLifecycleBucket } from '../workbench/thread-lifecycle.ts'
+import type { HostSwitcherSurface } from '../client/host-switcher.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
+import { HostSwitcherChip } from './host-picker.tsx'
 import { Button, IconButton } from './primitives.tsx'
 import { Icon } from './icons.tsx'
 import { openPath } from './open-external.ts'
@@ -22,6 +24,7 @@ export function ChatHeader({
   leftSidebarProgress,
   onToggleDiff,
   onToggleTerminal,
+  hostSwitcher,
 }: {
   state: WorkbenchState
   controller: WorkbenchControllerSurface
@@ -30,6 +33,7 @@ export function ChatHeader({
   leftSidebarProgress: number
   onToggleDiff(): void
   onToggleTerminal?(): void
+  hostSwitcher?: HostSwitcherSurface | undefined
 }) {
   const projectName = workspaceDisplayName(state.workspacePath)
   const title = activeThreadTitle(state)
@@ -49,6 +53,12 @@ export function ChatHeader({
       style={{ height: uiContract.layout.headerHeight, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: layout.mobile ? 5 : 10, paddingLeft: 20 + (collapsedLeftInset - 20) * (1 - leftSidebarProgress), paddingRight: layout.mobile ? 8 : 12, backgroundColor: colors.background, userSelect: 'none' }}
     >
       <div testId="chat-breadcrumb" style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+        {hostSwitcher ? (
+          <>
+            <HostSwitcherChip switcher={hostSwitcher} compact={layout.mobile} />
+            {!layout.mobile && <text style={{ color: colors.textFaint, fontSize: 12 }}>›</text>}
+          </>
+        ) : null}
         {!layout.mobile && (
           <>
             <Icon name="folder" size={14} color={colors.textFaint} />

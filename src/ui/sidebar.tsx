@@ -16,6 +16,8 @@ import { SessionRow, sessionLifecycleBucket, sortActiveSessions } from './sideba
 import type { ThreadActionId } from './thread-actions.ts'
 import { compareSessionsByRecency, orderedActiveSessions } from './session-order.ts'
 import { trafficLightInset } from './window-chrome.ts'
+import type { HostSwitcherSurface } from '../client/host-switcher.ts'
+import { hostDisplayName, hostStatusColor, useHostSwitcherSnapshot } from './host-badge.tsx'
 
 export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket, sortActiveSessions } from './sidebar-session-row.tsx'
 
@@ -42,6 +44,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   onFlows = () => undefined,
   onSettings,
   onNotifications,
+  hostSwitcher,
 }: {
   width?: number
   state: WorkbenchState
@@ -56,6 +59,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   onFlows?(): void
   onSettings(): void
   onNotifications(): void
+  hostSwitcher?: HostSwitcherSurface | undefined
 }) {
   const renderer = useGpuixRequired()
   const [search, setSearch] = useState('')
@@ -135,11 +139,15 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   const renderedSettledSessions = settledExpanded
     ? settledSessions
     : settledSessions.filter((session) => isCurrentPiSession(session, state.session))
-  const connectionColor = state.connection === 'connected'
-    ? colors.success
-    : state.connection === 'connecting'
-      ? colors.warning
-      : colors.error
+  const hostSnapshot = useHostSwitcherSnapshot(hostSwitcher)
+  const connectionColor = hostSnapshot
+    ? hostStatusColor(hostSnapshot.current.status)
+    : state.connection === 'connected'
+      ? colors.success
+      : state.connection === 'connecting'
+        ? colors.warning
+        : colors.error
+  const hostName = hostSnapshot ? hostDisplayName(hostSnapshot.current) : undefined
 
   const renderSession = (session: PiSessionSummary, lifecycle: 'active' | 'snoozed' | 'settled') => {
     const active = isCurrentPiSession(session, state.session)
@@ -284,8 +292,9 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         </div>
         <IconButton icon="refresh" label="Refresh threads" disabled={state.sessionsLoading} onClick={() => void controller.refreshSessions()} />
         <div style={{ flexGrow: 1 }} />
-        <div testId="sidebar-connection-status" style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: connectionColor }} />
+        <div testId="sidebar-connection-status" style={{ ...(hostName ? { maxWidth: 120, paddingRight: 6 } : { width: 30 }), height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+          {hostName ? <text testId="sidebar-host-name" style={{ color: colors.textMuted, fontSize: 9, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{hostName}</text> : null}
+          <div style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: connectionColor, flexShrink: 0 }} />
         </div>
       </div>
     </div>
@@ -305,7 +314,8 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   && previous.state.connection === next.state.connection
   && previous.state.threadLifecycle === next.state.threadLifecycle
   && previous.state.workspacePath === next.state.workspacePath
-  && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch)
+  && previous.state.workspaceDiff.branch === next.state.workspaceDiff.branch
+  && previous.hostSwitcher === next.hostSwitcher)
 
 function ProjectFilter({ value, options, onChange }: { value: string; options: Array<{ value: string; label: string }>; onChange(value: string): void }) {
   const dropdown = useDropdownState()

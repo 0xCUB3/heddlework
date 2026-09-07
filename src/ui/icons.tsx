@@ -45,6 +45,10 @@ export type IconName =
   | 'panelBottom'
   | 'pin'
   | 'moreHorizontal'
+  | 'laptop'
+  | 'monitor'
+  | 'server'
+  | 'cloud'
 
 const ICONS: Record<IconName, string> = {
   search: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><path fill="#000" d="M23.957 41.77a18.02 18.02 0 0 0 10.477-3.376l11.109 11.11a2.66 2.66 0 0 0 1.898.773c1.524 0 2.625-1.172 2.625-2.672c0-.703-.234-1.359-.75-1.874L38.277 34.668c2.32-3.047 3.703-6.82 3.703-10.922c0-9.914-8.109-18.023-18.023-18.023c-9.937 0-18.023 8.109-18.023 18.023S14.02 41.77 23.957 41.77m0-3.891c-7.758 0-14.133-6.398-14.133-14.133S16.2 9.613 23.957 9.613c7.734 0 14.133 6.399 14.133 14.133c0 7.735-6.399 14.133-14.133 14.133"/></svg>',
@@ -91,6 +95,10 @@ const ICONS: Record<IconName, string> = {
   panelBottom: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/>'),
   pin: svg('<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11-2.31l.64-3.51A3 3 0 0 1 11.44 2h1.12a3 3 0 0 1 2.91 2.94l.64 3.52A2 2 0 0 1 15 10.76V13a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1z"/><path d="M7 13h10"/>'),
   moreHorizontal: svg('<circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none"/>'),
+  laptop: svg('<path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/>'),
+  monitor: svg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>'),
+  server: svg('<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/>'),
+  cloud: svg('<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>'),
 }
 
 const ICON_SOURCES = Object.fromEntries(

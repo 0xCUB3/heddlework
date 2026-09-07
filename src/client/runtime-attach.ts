@@ -93,6 +93,7 @@ export interface RemoteClientServicesOptions {
   pluginHost?: PluginHost | undefined
   control?: RuntimeSettingsControl | undefined
   terminals?: TerminalSessionService | undefined
+  timeoutMs?: number | undefined
 }
 
 export interface RemoteClientServices {
@@ -116,7 +117,7 @@ export async function createRemoteServices(
   descriptor: RuntimeAttachDescriptor,
   options: RemoteClientServicesOptions,
 ): Promise<RemoteClientServices> {
-  await waitForWorkspaceClientOpen(client)
+  await waitForWorkspaceClientOpen(client, { timeoutMs: options.timeoutMs })
   const control = options.control ?? new RuntimeSettingsControl({
     baseUrl: descriptor.controlUrl ?? descriptor.workspaceUrl,
     token: descriptor.token,

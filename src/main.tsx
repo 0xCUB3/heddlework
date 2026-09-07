@@ -1,9 +1,11 @@
 import { attachOrStartRuntime, runtimeControl } from './runtime/bootstrap.ts'
-import { attachRuntimeWorkspaceClient, createRemoteServices } from './client/runtime-attach.ts'
+import { attachRuntimeWorkspaceClient, createRemoteServices, type RemoteClientServices, type RuntimeAttachDescriptor } from './client/runtime-attach.ts'
+import { DesktopHostSwitcher, fileSavedHostsBackend } from './client/desktop-host-switcher.ts'
+import { SavedHostsStore } from './client/saved-hosts.ts'
 import { workbenchLayoutStorage } from './ui/layout-storage.ts'
 import React from 'react'
-import { render, resetRender } from '@gpuix/react'
-import { resolve } from 'node:path'
+import { render, resetRender, type Root } from '@gpuix/react'
+import { dirname, join, resolve } from 'node:path'
 import { createWindowOptions } from './window-options.ts'
 import { WorkbenchKernel } from './core/kernel.ts'
 import { WorkbenchApp } from './ui/app.tsx'
@@ -94,17 +96,61 @@ kernel.mount(workbenchUiHostPlugin)
 if (attached) {
   kernel.mount({ id: 'core-workbench-ui-client', activate(ctx) { return ctx.get(workbenchUiRegistryToken).register(createCoreUiExtension(attached.controller)) } })
 } else kernel.mount(createCoreUiExtensionPlugin())
-const pluginHost = attached?.pluginHost ?? (attached ? undefined : await startExternalPlugins(kernel, workspacePath, { trustPath: false }))
-const controller = attached?.controller ?? kernel.get(workbenchControllerToken)
-const flows = attached?.flows ?? kernel.get(flowRuntimeToken)
+
+let currentServices = attached
+let hostSwitcher: DesktopHostSwitcher | undefined
+let root: Root | undefined
+if (attached && descriptor) {
+  const localDescriptor: RuntimeAttachDescriptor = {
+    workspaceUrl: descriptor.url,
+    controlUrl: descriptor.controlUrl,
+    token: descriptor.token,
+  }
+  hostSwitcher = new DesktopHostSwitcher({
+    local: { descriptor: localDescriptor },
+    savedHosts: new SavedHostsStore(fileSavedHostsBackend(join(dirname(hostTokenPath()), 'saved-hosts.json'))),
+    lastHostPath: join(dirname(hostTokenPath()), 'last-host.json'),
+    buildServices: async (next) => {
+      const client = attachRuntimeWorkspaceClient({
+        workspaceUrl: next.workspaceUrl,
+        controlUrl: next.controlUrl ?? next.workspaceUrl,
+        token: next.token,
+        hostUrls: next.hostUrls,
+      })
+      try {
+        return await createRemoteServices(client, next, {
+          browsers,
+          updates,
+          terminals,
+          timeoutMs: next.origin === 'remote' ? 15_000 : undefined,
+        })
+      } catch (error) {
+        client.disconnect()
+        throw error
+      }
+    },
+    onServices(services) {
+      currentServices = services
+      root?.render(renderApp(services))
+    },
+  })
+  await hostSwitcher.start(attached)
+  currentServices = hostSwitcher.services() ?? attached
+}
+
+const pluginHost = currentServices?.pluginHost ?? (currentServices ? undefined : await startExternalPlugins(kernel, workspacePath, { trustPath: false }))
+const controller = currentServices?.controller ?? kernel.get(workbenchControllerToken)
+const flows = currentServices?.flows ?? kernel.get(flowRuntimeToken)
 const ui = kernel.get(workbenchUiRegistryToken)
-const remoteAccess = attached?.remoteAccess ?? kernel.get(remoteAccessToken)
-const tailnetServe = attached?.tailnetServe ?? kernel.get(tailnetServeToken)
-const terminalsForApp = attached?.terminals ?? terminals
-const sleepPrevention = attached?.sleepPrevention ?? kernel.get(sleepPreventionToken)
-const presenceTimer = attached ? setInterval(() => {
-  const sessionPath = controller.getSnapshot().session.sessionFile
-  void attached.client.send({ type: 'reportPresence', clientId: 'desktop', surface: 'desktop', visibility: 'visible', ...(sessionPath ? { sessionPath } : {}) }).catch(() => undefined)
+const remoteAccess = currentServices?.remoteAccess ?? kernel.get(remoteAccessToken)
+const tailnetServe = currentServices?.tailnetServe ?? kernel.get(tailnetServeToken)
+const terminalsForApp = currentServices?.terminals ?? terminals
+const sleepPrevention = currentServices?.sleepPrevention ?? kernel.get(sleepPreventionToken)
+const presenceTimer = currentServices ? setInterval(() => {
+  const services = currentServices
+  if (!services) return
+  const sessionPath = services.controller.getSnapshot().session.sessionFile
+  void services.client.send({ type: 'reportPresence', clientId: 'desktop', surface: 'desktop', visibility: 'visible', ...(sessionPath ? { sessionPath } : {}) }).catch(() => undefined)
 }, 15_000) : undefined
 let disposed = false
 const handleUncaughtException = (error: unknown): void => {
@@ -122,7 +168,8 @@ const runtime: RuntimeHandle = {
     process.off('SIGTERM', shutdown)
     process.off('uncaughtException', handleUncaughtException)
     process.off('unhandledRejection', handleUnhandledRejection)
-    await attached?.dispose()
+    if (hostSwitcher) await hostSwitcher.dispose()
+    else await attached?.dispose()
     if (presenceTimer) clearInterval(presenceTimer)
     browserIntegrations.dispose()
     themeManager.dispose()
@@ -172,8 +219,32 @@ process.prependListener('unhandledRejection', handleUnhandledRejection)
 process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
-render(
-  <WorkbenchApp layoutStorage={workbenchLayoutStorage} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} controller={controller} flows={flows} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} terminals={terminalsForApp} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} onStopAllAndQuit={descriptor ? async () => { await runtimeControl(descriptor, "/stop", {}); shutdown() } : undefined} />,
+function renderApp(services: RemoteClientServices | undefined) {
+  return (
+    <WorkbenchApp
+      layoutStorage={workbenchLayoutStorage}
+      browserIntegrations={services?.browserIntegrations ?? browserIntegrations}
+      sleepPrevention={services?.sleepPrevention ?? sleepPrevention}
+      controller={services?.controller ?? controller}
+      flows={services?.flows ?? flows}
+      remoteAccess={services?.remoteAccess ?? remoteAccess}
+      tailnetServe={services?.tailnetServe ?? tailnetServe}
+      pluginHost={services?.pluginHost ?? pluginHost}
+      terminals={services?.terminals ?? terminalsForApp}
+      browsers={browsers}
+      presenters={kernel.contributions(toolPresenterSlot)}
+      ui={ui}
+      themeManager={themeManager}
+      updates={updates}
+      onQuit={shutdown}
+      onStopAllAndQuit={descriptor ? async () => { await runtimeControl(descriptor, '/stop', {}); shutdown() } : undefined}
+      hostSwitcher={hostSwitcher}
+    />
+  )
+}
+
+root = render(
+  renderApp(currentServices),
   {
     ...createWindowOptions(
       process.platform,

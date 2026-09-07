@@ -42,6 +42,8 @@ import { ResizeHandle } from './resize-handle.tsx'
 import { adjacentSession, orderedActiveSessions } from './session-order.ts'
 import { applyShortcutAction, resolveShortcut, shortcutBus } from './shortcuts.ts'
 import { DESKTOP_CLIENT_ID } from '../workbench/presence.ts'
+import type { HostSwitcherSurface } from '../client/host-switcher.ts'
+import { hostDisplayName, useHostSwitcherSnapshot } from './host-badge.tsx'
 
 type Surface = 'chat' | 'flows' | 'settings'
 type RightPanel = 'notifications' | 'surfaces' | `surface:${string}`
@@ -71,6 +73,7 @@ export function WorkbenchApp({
   onQuit,
   onStopAllAndQuit,
   layoutStorage,
+  hostSwitcher,
 }: {
   controller: WorkbenchControllerSurface
   presenters: ReadonlyMap<string, ToolPresenter>
@@ -88,10 +91,12 @@ export function WorkbenchApp({
   onQuit?(): void
   onStopAllAndQuit?: (() => Promise<void>) | undefined
   layoutStorage?: LayoutStorage
+  hostSwitcher?: HostSwitcherSurface | undefined
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const theme = useSyncExternalStore(themeManager.subscribe, themeManager.getSnapshot)
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
+  const hostSnapshot = useHostSwitcherSnapshot(hostSwitcher)
   const renderer = useGpuixRequired()
   const windowSize = useWindowSize({ intervalMs: 50 })
   const windowInsets = useWindowInsets({ intervalMs: 50 })
@@ -136,8 +141,9 @@ export function WorkbenchApp({
   }, [layout.navigationOverlay, setLeftSidebarVisibility])
 
   useEffect(() => {
-    renderer.setWindowTitle?.(state.windowTitle)
-  }, [renderer, state.windowTitle])
+    const remoteName = hostSnapshot?.current.origin === 'remote' ? hostDisplayName(hostSnapshot.current) : undefined
+    renderer.setWindowTitle?.(remoteName ? `${remoteName} — ${state.windowTitle}` : state.windowTitle)
+  }, [renderer, state.windowTitle, hostSnapshot])
 
   useEffect(() => {
     if (previousNavigationOverlay.current === layout.navigationOverlay) return
@@ -492,6 +498,7 @@ export function WorkbenchApp({
             setSurface((current) => current === 'settings' ? 'chat' : 'settings')
           }}
           onNotifications={toggleNotifications}
+          hostSwitcher={hostSwitcher}
         />
       </div>
       {!layout.navigationOverlay && animatedSidebarProgress > 0 && <ResizeHandle testId="left-sidebar-resize" edge="right" onStart={x => beginResize('sidebar', x, layout.sidebarWidth)} onStep={delta => resizeByKey('sidebar', layout.sidebarWidth, delta)} />}
@@ -511,12 +518,12 @@ export function WorkbenchApp({
           {surface === 'flows' && flows ? (
             <FlowsView state={state} controller={controller} runtime={flows} presenters={presenters} titlebarInset={flowsTitlebarInset} onClose={closeFlows} onOpenSession={openFlowSession} />
           ) : surface === 'settings' ? (
-            <SettingsView onStopAllAndQuit={onStopAllAndQuit} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} state={state} controller={controller} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} onFontsChange={(fonts) => themeManager.setFonts(fonts)} onFontsReset={() => themeManager.resetFonts()} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} />
+            <SettingsView onStopAllAndQuit={onStopAllAndQuit} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} state={state} controller={controller} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} updates={updates} theme={theme} titlebarInset={settingsTitlebarInset} onThemeModeChange={(mode) => themeManager.setMode(mode)} onFontsChange={(fonts) => themeManager.setFonts(fonts)} onFontsReset={() => themeManager.resetFonts()} terminals={terminals} browsers={browsers} onClose={() => setSurface('chat')} hostSwitcher={hostSwitcher} />
           ) : (
             <div testId="workbench-main" style={{ position: 'relative', display: 'flex', flexDirection: 'row', flexGrow: 1, minWidth: 0, height: '100%', backgroundColor: colors.background, overflow: 'hidden' }}>
               <MotionDiv initial={false} animate={{ flexGrow: conversationFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} style={{ display: 'flex', flexDirection: 'column', width: 0, flexGrow: conversationFlexGrow, minWidth: 0, height: '100%', overflow: 'hidden' }}>
                 <MotionDiv initial={false} animate={{ height: chatHeaderHeight }} transition={LAYOUT_MOTION_TRANSITION} style={{ height: chatHeaderHeight, flexShrink: 0, overflow: 'hidden' }}>
-                  <ChatHeader state={state} controller={controller} diffOpen={diffOpen} terminalOpen={bottomTerminalOpen} leftSidebarProgress={layout.navigationOverlay ? 0 : animatedSidebarProgress} onToggleDiff={toggleDiff} {...(terminals ? { onToggleTerminal: toggleBottomTerminal } : {})} />
+                  <ChatHeader state={state} controller={controller} diffOpen={diffOpen} terminalOpen={bottomTerminalOpen} leftSidebarProgress={layout.navigationOverlay ? 0 : animatedSidebarProgress} onToggleDiff={toggleDiff} {...(terminals ? { onToggleTerminal: toggleBottomTerminal } : {})} hostSwitcher={hostSwitcher} />
                 </MotionDiv>
                 <MotionDiv initial={false} animate={{ flexGrow: conversationBodyFlexGrow }} transition={LAYOUT_MOTION_TRANSITION} testId="conversation-body" style={{ position: 'relative', display: 'flex', flexDirection: 'column', flexGrow: conversationBodyFlexGrow, minHeight: 0, overflow: 'hidden' }}>
                   {draft ? (
@@ -533,7 +540,7 @@ export function WorkbenchApp({
                       <ComposerNotificationStack notices={toasts} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => {
                         for (const notice of toasts) controller.dismissNotice(notice.id)
                       }} />
-                      <Composer state={state} controller={controller} onPickerOpenChange={setComposerPickerOpen} />
+                      <Composer state={state} controller={controller} onPickerOpenChange={setComposerPickerOpen} attaching={hostSnapshot?.busy === true} />
                     </>
                   )}
                   <ConversationExtensionOverlay state={state} controller={controller} />

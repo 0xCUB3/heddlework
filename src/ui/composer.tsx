@@ -19,7 +19,7 @@ export { extensionSurfaceRailReserveHeight, questionnaireWaitingDockReserveHeigh
 export const QUEUE_HINT_DURATION_MS = 1_700
 const PRIMARY_ACTION_SIZE = 34
 
-export function Composer({ state, controller, draft = false, onPickerOpenChange }: { state: WorkbenchState; controller: WorkbenchControllerSurface; draft?: boolean; onPickerOpenChange?(open: boolean): void }) {
+export function Composer({ state, controller, draft = false, onPickerOpenChange, attaching = false }: { state: WorkbenchState; controller: WorkbenchControllerSurface; draft?: boolean; onPickerOpenChange?(open: boolean): void; attaching?: boolean }) {
   const layout = useResponsiveLayout()
   const [pastingImage, setPastingImage] = useState(false)
   const [contextPopoverMounted, setContextPopoverMounted] = useState(false)
@@ -77,7 +77,7 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange 
     if (contextPopoverOpen) hideContextPopover()
     else showContextPopover()
   }
-  const connected = state.connection === 'connected'
+  const connected = state.connection === 'connected' && !attaching
   const modelOptions: SelectOption[] = state.models.map((model) => ({
     value: modelKey(model),
     label: model.name ?? model.id,
