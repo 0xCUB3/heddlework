@@ -60,11 +60,17 @@ try {
   if (!live) throw new Error('Pi live bridge did not provide its atomic startup snapshot')
   if (live.state?.sessionName) writeVisible(`session: ${boundedTerminalText(String(live.state.sessionName))}`)
   for (const line of boundedInitialHistoryLines(live.messages ?? [])) writeVisible(line)
-  if (live.assistant) {
+  // During tool execution Pi may retain the just-completed assistant in its
+  // live snapshot as well as its history. Display that message only once.
+  const assistantInHistory = live.assistant?.timestamp !== undefined && live.messages?.some((message) => message.role === 'assistant' && message.timestamp === live.assistant!.timestamp)
+  if (live.assistant && !assistantInHistory) {
     const text = messageText(live.assistant)
     if (text) writeVisible(`assistant: ${text}`)
   }
-  for (const tool of live.tools) formatter.handle(tool)
+  for (const tool of live.tools) {
+    if (tool.type === 'tool_execution_end' && live.messages?.some((message) => message.role === 'toolResult' && message.toolCallId === tool.toolCallId)) continue
+    formatter.handle(tool)
+  }
   hydrated = true
   for (const event of bufferedEvents) {
     if (event === live) continue

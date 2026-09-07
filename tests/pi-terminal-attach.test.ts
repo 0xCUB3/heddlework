@@ -120,9 +120,13 @@ describe('Pi terminal attach client', () => {
             respond({
               state: { sessionId: 'same-owner', sessionFile, sessionName: 'Attached', isStreaming: true },
               cwd: root,
-              messages: [{ role: 'user', content: 'history' }],
-              assistant: { role: 'assistant', content: [{ type: 'text', text: 'in flight' }] },
-              tools: [],
+              messages: [
+                { role: 'user', content: 'history' },
+                { role: 'assistant', timestamp: 1, content: [{ type: 'text', text: 'in flight' }] },
+                { role: 'toolResult', toolCallId: 'completed', content: [{ type: 'text', text: 'already completed tool' }] },
+              ],
+              assistant: { role: 'assistant', timestamp: 1, content: [{ type: 'text', text: 'in flight' }] },
+              tools: [{ type: 'tool_execution_end', toolCallId: 'completed', result: { content: [{ type: 'text', text: 'already completed tool' }] } }],
               sequence: 10,
             })
             socket.write(`${JSON.stringify({ type: 'message_update', sequence: 9, assistantMessageEvent: { type: 'text_delta', delta: 'stale' } })}\n`)
@@ -168,6 +172,8 @@ describe('Pi terminal attach client', () => {
     expect(stdout).toContain('Heddlework terminal attach client')
     expect(stdout).toContain('user: history')
     expect(stdout).toContain('assistant: in flight')
+    expect(stdout.split('in flight')).toHaveLength(2)
+    expect(stdout.split('already completed tool')).toHaveLength(2)
     expect(stdout).toContain('assistant: after snapshot')
     expect(stdout).not.toContain('stale')
     expect(stdout).toContain('user: hello owner')
