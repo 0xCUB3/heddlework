@@ -62,7 +62,9 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
     const base = (snapshot ?? this.#hostSnapshot) as WorkbenchSnapshot | undefined
     if (!base) return this.#snapshot ?? ({} as WorkbenchState)
     const editorImages = base.editorImages.map((image) => ({ ...image, data: typeof image.data === 'string' ? image.data : EMPTY_IMAGE_DATA })) as ComposerImage[]
-    return { ...base, editorImages, ...(this.#localEditorText !== undefined ? { editorText: this.#localEditorText } : {}) } as WorkbenchState
+    // Hosts that predate thread titles omit the key; the UI reads it unconditionally.
+    const threadTitles = base.threadTitles ?? { autoTitles: true }
+    return { ...base, editorImages, threadTitles, ...(this.#localEditorText !== undefined ? { editorText: this.#localEditorText } : {}) } as WorkbenchState
   }
 
   #emit(): void { for (const listener of this.#listeners) listener() }
