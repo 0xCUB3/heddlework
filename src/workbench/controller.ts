@@ -42,6 +42,7 @@ import {
   createInitialState,
   type NoticeKind,
   type NoticeOptions,
+  type ThreadLifecycle,
   type ThreadPriority,
   type WorkbenchState,
   type WorkbenchUiRequest,
@@ -104,6 +105,7 @@ export interface ThreadTitleGeneratorService {
 export interface ThreadTitleSettingsStoreService {
   load(): ThreadTitleSettings
   save(settings: ThreadTitleSettings): void
+  subscribe?(listener: () => void): () => void
 }
 
 export class WorkbenchController {
@@ -148,6 +150,9 @@ export class WorkbenchController {
   #pauseAfterTools = false
   #unsubscribeEvent: () => void
   #unsubscribeStatus: () => void
+  #unsubscribeSharedStores: (() => void)[] = []
+  // True while a store change from another controller is being applied, so #setState does not echo it back.
+  #applyingSharedStore = false
 
   constructor(transport: AgentTransport, workspacePath: string, dependencies: WorkbenchControllerDependencies) {
     this.#transport = transport
@@ -158,6 +163,22 @@ export class WorkbenchController {
     this.#titleGenerator = dependencies.titleGenerator
     this.#titleSettingsStore = dependencies.titleSettingsStore
     this.#stopTransportOnDispose = dependencies.transportOwnership !== 'provider'
+    // Stores are shared by every thread's controller in the background runtime. Without this, a settle or
+    // title toggle in one thread is invisible in the next until restart, and the stale copy clobbers it on save.
+    if (dependencies.threadMetadataStore?.subscribe) {
+      this.#unsubscribeSharedStores.push(dependencies.threadMetadataStore.subscribe(() => {
+        const shared = this.#threadMetadataStore!.load()
+        if (sameLifecycleMap(shared, this.#state.threadLifecycle)) return
+        this.#applySharedStore(() => this.#patch({ threadLifecycle: shared }))
+      }))
+    }
+    if (dependencies.titleSettingsStore?.subscribe) {
+      this.#unsubscribeSharedStores.push(dependencies.titleSettingsStore.subscribe(() => {
+        const shared = this.#titleSettingsStore!.load()
+        if (JSON.stringify(shared) === JSON.stringify(this.#state.threadTitles)) return
+        this.#applySharedStore(() => this.#patch({ threadTitles: shared }))
+      }))
+    }
     this.#state = {
       ...createInitialState(workspacePath),
       queue: dependencies.queueStore?.load(workspacePath) ?? createQueueState(),
@@ -985,7 +1006,7 @@ export class WorkbenchController {
     if ('instructions' in settings && settings.instructions === undefined) delete merged.instructions
     const next = normalizeThreadTitleSettings(merged)
     this.#patch({ threadTitles: next })
-    this.#titleSettingsStore?.save(next)
+    if (!this.#applyingSharedStore) this.#titleSettingsStore?.save(next)
   }
 
   // Explicit request from the user: reads the whole thread and replaces the title even when it was set by hand.
@@ -1137,6 +1158,8 @@ export class WorkbenchController {
     this.#fabricPeerRequests.clear()
     this.#unsubscribeEvent()
     this.#unsubscribeStatus()
+    for (const unsubscribe of this.#unsubscribeSharedStores) unsubscribe()
+    this.#unsubscribeSharedStores = []
     if (this.#stopTransportOnDispose) await this.#transport.stop()
     this.#notifier.cancel()
     this.#listeners.clear()
@@ -1871,9 +1894,23 @@ export class WorkbenchController {
     if (next === previous) return
     this.#state = next
     if (next.queue !== previous.queue || next.workspacePath !== previous.workspacePath) this.#queueStore?.save(next.workspacePath, next.queue)
-    if (next.threadLifecycle !== previous.threadLifecycle) this.#threadMetadataStore?.save(next.threadLifecycle)
+    if (next.threadLifecycle !== previous.threadLifecycle && !this.#applyingSharedStore) this.#threadMetadataStore?.save(next.threadLifecycle)
     this.#notifier.notify(liveFieldsOnlyChanged(previous, next) ? false : true)
   }
+
+  #applySharedStore(apply: () => void): void {
+    this.#applyingSharedStore = true
+    try { apply() } finally { this.#applyingSharedStore = false }
+  }
+}
+
+function sameLifecycleMap(a: Record<string, ThreadLifecycle>, b: Record<string, ThreadLifecycle>): boolean {
+  const keysA = Object.keys(a)
+  if (keysA.length !== Object.keys(b).length) return false
+  for (const key of keysA) {
+    if (!(key in b) || JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false
+  }
+  return true
 }
 
 function resolveModelReference(models: readonly PiModel[], reference: string): { provider: string; modelId: string } | undefined {

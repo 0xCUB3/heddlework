@@ -6,15 +6,23 @@ import { normalizeThreadTitleSettings, type ThreadTitleSettings } from './thread
 export interface ThreadTitleSettingsStoreService {
   load(): ThreadTitleSettings
   save(settings: ThreadTitleSettings): void
+  // Fires after every save so controllers sharing one store stay in step.
+  subscribe?(listener: () => void): () => void
 }
 
 // Per-machine title preferences. Lives beside threads.json so both travel together.
 export class FileThreadTitleSettingsStore implements ThreadTitleSettingsStoreService {
   readonly #path: string | false
   #settings: ThreadTitleSettings | undefined
+  readonly #listeners = new Set<() => void>()
 
   constructor(path: string | false = threadTitleSettingsPath()) {
     this.#path = path
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener)
+    return () => { this.#listeners.delete(listener) }
   }
 
   load(): ThreadTitleSettings {
@@ -29,6 +37,7 @@ export class FileThreadTitleSettingsStore implements ThreadTitleSettingsStoreSer
 
   save(settings: ThreadTitleSettings): void {
     this.#settings = normalizeThreadTitleSettings(settings)
+    for (const listener of this.#listeners) listener()
     if (!this.#path) return
     try {
       mkdirSync(dirname(this.#path), { recursive: true })

@@ -142,5 +142,56 @@ describe('session runtime routing', () => {
       await runtime.dispose()
     }
   }, 20_000)
+
+  it('shows the clicked thread before its bundle is ready', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-preview-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-preview-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const createSession = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await createSession({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
+      const preview = await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
+      const result = await client.next((message) => message.kind === 'result' && message.id === 1)
+      // The preview patch arrives before the command completes, so the UI never waits on Pi startup.
+      expect(client.messages.indexOf(preview)).toBeLessThan(client.messages.indexOf(result))
+      expect(preview.kind === 'patch' && preview.patch.changed.connection).toBe('connecting')
+      const transcript = await client.next((message) => message.kind === 'patch' && Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.length > 0)
+      expect(transcript.kind).toBe('patch')
+      // Once the bundle lands the socket is fully connected to beta, not stuck on the preview.
+      await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connected')
+    } finally {
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
+  it('shares thread lifecycle across session bundles', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-lifecycle-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-lifecycle-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const createSession = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await createSession({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    try {
+      const beta = await runtime.ensureSession(files.beta.path)
+      // Settle alpha from the beta bundle, then switch back to alpha's bundle: it must already know.
+      beta.controller.settleThread(files.alpha.path)
+      expect(initial.controller.getSnapshot().threadLifecycle[files.alpha.path]?.settledAt).toBeDefined()
+      initial.controller.wakeThread(files.alpha.path)
+      expect(beta.controller.getSnapshot().threadLifecycle[files.alpha.path]?.settledAt).toBeUndefined()
+      expect(beta.controller.getSnapshot().threadLifecycle[files.alpha.path]?.unsettledAt).toBeDefined()
+    } finally {
+      await runtime.dispose()
+    }
+  }, 20_000)
 })
 

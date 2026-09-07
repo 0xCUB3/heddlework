@@ -6,6 +6,8 @@ import type { ThreadLifecycle, ThreadPriority } from './state.ts'
 export interface ThreadMetadataStoreService {
   load(): Record<string, ThreadLifecycle>
   save(threads: Record<string, ThreadLifecycle>): void
+  // Fires after every save so controllers sharing one store stay in step.
+  subscribe?(listener: () => void): () => void
 }
 
 interface ThreadMetadataDocument {
@@ -16,10 +18,16 @@ interface ThreadMetadataDocument {
 export class FileThreadMetadataStore implements ThreadMetadataStoreService {
   readonly #path: string | false
   #threads: Record<string, ThreadLifecycle>
+  readonly #listeners = new Set<() => void>()
 
   constructor(path: string | false = threadMetadataStorePath()) {
     this.#path = path
     this.#threads = readDocument(path).threads
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener)
+    return () => { this.#listeners.delete(listener) }
   }
 
   load(): Record<string, ThreadLifecycle> {
@@ -28,6 +36,7 @@ export class FileThreadMetadataStore implements ThreadMetadataStoreService {
 
   save(threads: Record<string, ThreadLifecycle>): void {
     this.#threads = restoreThreadMetadata(threads)
+    for (const listener of this.#listeners) listener()
     if (!this.#path) return
     try {
       mkdirSync(dirname(this.#path), { recursive: true })
