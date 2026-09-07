@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'bun:test'
-import type { HarnessAdapter, HarnessCapabilities } from '../src/pi/transport.ts'
-import type { PiMessage, PiSessionState, RpcRecord } from '../src/pi/types.ts'
+import type { AgentTransport } from '../src/pi/transport.ts'
+import type { PiMessage, PiSessionState, RpcCommand, RpcRecord } from '../src/pi/types.ts'
 import { PiSessionCatalog } from '../src/pi/session-catalog.ts'
 import { WorkbenchController, type ThreadTitleGeneratorService } from '../src/workbench/controller.ts'
 import { testControllerDependencies } from './helpers/workbench.ts'
 
 // Minimal harness: one session with a file path and a model, so the auto-title guards have something to look at.
-class TitleTransport implements HarnessAdapter {
-  readonly id = 'title-test'
-  readonly displayName = 'Title test'
-  readonly capabilities: HarnessCapabilities = { steering: true, followUp: true, compaction: false, forking: false, treeNavigation: false, sessionSwitching: true, sessionNaming: true, extensionUi: false } as HarnessCapabilities
+class TitleTransport implements AgentTransport {
   readonly listeners = new Set<(event: RpcRecord) => void>()
   readonly requests: RpcRecord[] = []
   sessionName: string | undefined
@@ -19,8 +16,9 @@ class TitleTransport implements HarnessAdapter {
   onEvent(listener: (event: RpcRecord) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   onStatus(): () => void { return () => undefined }
   send(): void {}
+  getStderr(): string { return '' }
   emit(event: RpcRecord): void { for (const listener of this.listeners) listener(event) }
-  async request<T>(command: RpcRecord): Promise<T> {
+  async request<T>(command: RpcCommand): Promise<T> {
     this.requests.push(command)
     switch (command.type) {
       case 'get_state': return { model: { provider: 'demo', id: 'big' }, thinkingLevel: 'off', isStreaming: false, sessionId: 'title', sessionFile: '/tmp/title-session.jsonl', ...(this.sessionName ? { sessionName: this.sessionName } : {}) } satisfies PiSessionState as T

@@ -51,11 +51,11 @@
           "sessionId": "01a07d28-72a1-70b8-82cc-5867a42da322"
         },
         "startedAt": 1788810741281,
-        "updatedAt": 1788811966209,
-        "expiresAt": 1788811981209
+        "updatedAt": 1788811991525,
+        "expiresAt": 1788812006525
       },
-      "version": 1835,
-      "updatedAt": 1788811966210,
+      "version": 1868,
+      "updatedAt": 1788811991525,
       "updatedBy": {
         "id": "session:01a07d28-72a1-70b8-82cc-5867a42da322",
         "name": "main",
@@ -78,12 +78,12 @@
         "model": "claude-code/claude-fable-5-1",
         "thinking": "medium",
         "startedAt": 1788810741281,
-        "updatedAt": 1788811966209,
+        "updatedAt": 1788811991525,
         "pendingMessages": false,
         "local": false
       },
-      "version": 1834,
-      "updatedAt": 1788811966210,
+      "version": 1867,
+      "updatedAt": 1788811991527,
       "updatedBy": {
         "id": "session:01a07d28-72a1-70b8-82cc-5867a42da322",
         "name": "main",
@@ -114,13 +114,13 @@
         "model": "claude-code/claude-fable-5-1",
         "thinking": "medium",
         "startedAt": 1788810741281,
-        "updatedAt": 1788811966209,
+        "updatedAt": 1788811991525,
         "pendingMessages": false,
         "controlProtocol": "v1",
         "label": "HED-11"
       },
-      "version": 1835,
-      "updatedAt": 1788811966211,
+      "version": 1868,
+      "updatedAt": 1788811991527,
       "updatedBy": {
         "id": "session:01a07d28-72a1-70b8-82cc-5867a42da322",
         "name": "main",
@@ -153,20 +153,20 @@
         "model": "xai/grok-4.6",
         "thinking": "high",
         "startedAt": 1788811950632,
-        "updatedAt": 1788811963963,
-        "turns": 2,
-        "toolCalls": 2,
+        "updatedAt": 1788811985528,
+        "turns": 7,
+        "toolCalls": 7,
         "usage": {
-          "input": 6447,
-          "output": 512,
-          "cacheRead": 7424,
+          "input": 34244,
+          "output": 1683,
+          "cacheRead": 76288,
           "cacheWrite": 0,
-          "cost": 0.019677999999999998
+          "cost": 0.11672999999999999
         },
         "controlProtocol": "v1"
       },
-      "version": 6,
-      "updatedAt": 1788811964190,
+      "version": 16,
+      "updatedAt": 1788811985575,
       "updatedBy": {
         "id": "session:01a07d28-72a1-70b8-82cc-5867a42da322",
         "name": "main",
@@ -199,20 +199,20 @@
         "model": "xai/grok-4.6",
         "thinking": "high",
         "startedAt": 1788811950632,
-        "updatedAt": 1788811965986,
-        "turns": 3,
-        "toolCalls": 3,
+        "updatedAt": 1788811990045,
+        "turns": 9,
+        "toolCalls": 9,
         "usage": {
-          "input": 11439,
-          "output": 682,
-          "cacheRead": 9728,
+          "input": 69580,
+          "output": 1917,
+          "cacheRead": 82432,
           "cacheWrite": 0,
-          "cost": 0.031833999999999994
+          "cost": 0.191878
         },
         "controlProtocol": "v1"
       },
-      "version": 8,
-      "updatedAt": 1788811966211,
+      "version": 17,
+      "updatedAt": 1788811990145,
       "updatedBy": {
         "id": "session:01a07d28-72a1-70b8-82cc-5867a42da322",
         "name": "main",
@@ -233,11 +233,11 @@
           "sessionId": "01a07d80-3ac3-7469-9dfb-e0085a864f92"
         },
         "startedAt": 1788811958325,
-        "updatedAt": 1788811965947,
-        "expiresAt": 1788811980947
+        "updatedAt": 1788811990022,
+        "expiresAt": 1788812005022
       },
-      "version": 12,
-      "updatedAt": 1788811965947,
+      "version": 35,
+      "updatedAt": 1788811990022,
       "updatedBy": {
         "id": "102f0e6382b1454ab0ebd28df51ee83e",
         "name": "title-ios",
@@ -258,11 +258,11 @@
           "sessionId": "01a07d80-3ad7-71f7-902f-8c1efee0cbd4"
         },
         "startedAt": 1788811959045,
-        "updatedAt": 1788811964052,
-        "expiresAt": 1788811979052
+        "updatedAt": 1788811989054,
+        "expiresAt": 1788812004054
       },
-      "version": 9,
-      "updatedAt": 1788811964052,
+      "version": 51,
+      "updatedAt": 1788811989055,
       "updatedBy": {
         "id": "cadce1ccdfaa4341b5f8ce3d8cda5885",
         "name": "title-ui",
@@ -345,9 +345,9 @@
     "topology/hosts/9e69f683d172376b350dc6eeef1e57ef0df8efdbe749eb9e1e7401e4a06a0faa": 37,
     "topology/hosts/b742d0915b2079d03a9232e54f3e3b61368d647ca3bfcca701aca540943a743a": 41,
     "topology/control-seen/0dbb92b68eb828128022101df3f1a686db1316a1a24a046a433762171fed11a6": 2,
-    "topology/hosts/6642632988bce59a21718cee69c972a94588498c54b1835b75d280e00164b574": 1835,
-    "sessions/01a07d28-72a1-70b8-82cc-5867a42da322": 1834,
-    "topology/participants/6642632988bce59a21718cee69c972a94588498c54b1835b75d280e00164b574": 1835,
+    "topology/hosts/6642632988bce59a21718cee69c972a94588498c54b1835b75d280e00164b574": 1868,
+    "sessions/01a07d28-72a1-70b8-82cc-5867a42da322": 1867,
+    "topology/participants/6642632988bce59a21718cee69c972a94588498c54b1835b75d280e00164b574": 1868,
     "topology/participants/309acd4b73da5ebbd291e73b02d098fa2d582184eab9ca7e698d2d3d3495f2a6": 78,
     "topology/participants/333476110ba77998131ea230d66460aa97c3fd2370641c66ad2700ce2a0b6767": 110,
     "topology/hosts/5a71218688c6c0c9c829e6f3eb6d1c0f7f236ba19d9a037f5d121e720087193f": 408,
@@ -358,10 +358,10 @@
     "topology/hosts/75d46e33128e55d3fd55d9f965afdfd7c20be72e4bf9e6e5bc82db57f70f9b6e": 357,
     "topology/hosts/12e129adc92eeac883287f44ce4d8eb4722cfb4112ddd9dcde61db13e81b879d": 375,
     "topology/hosts/0c0f3112a1ee17ac6a34a60f44c49dd64f0e48168f361e3d528b0a7453d48292": 288,
-    "topology/participants/ddc8769d1550c90d6284a3ba01889d91b0ba41bb37b1988ba3e9c8b0886b3bdd": 6,
-    "topology/participants/5aa8d6318da5bc654e0ea6ec2e4633000862b21ae300072587c65ec56b19d189": 8,
-    "topology/hosts/b46e93a9fc636f8faaef29ee03bbb9a4b6f01202e157463914578e3c98a177e2": 12,
-    "topology/hosts/d754b80978b0631b332fef4c5283b7bfa56082692262857c72df36efe5aa340f": 9
+    "topology/participants/ddc8769d1550c90d6284a3ba01889d91b0ba41bb37b1988ba3e9c8b0886b3bdd": 16,
+    "topology/participants/5aa8d6318da5bc654e0ea6ec2e4633000862b21ae300072587c65ec56b19d189": 17,
+    "topology/hosts/b46e93a9fc636f8faaef29ee03bbb9a4b6f01202e157463914578e3c98a177e2": 35,
+    "topology/hosts/d754b80978b0631b332fef4c5283b7bfa56082692262857c72df36efe5aa340f": 51
   },
   "tombstoneOrder": [
     "topology/participants/099991a56f3a93bd417fdd5e3c2295ab9f3a6efc7897a516eae204f681cbc176",
