@@ -26,6 +26,7 @@ import type { UpdateService, UpdateState } from '../updates/service.ts'
 import { osNotificationCapability, requestOsNotifications } from './os-notifications.ts'
 import type { UpdateChannel } from '../updates/feed.ts'
 import { openExternal } from './open-external.ts'
+import { formatShortcut, SHORTCUTS } from './shortcuts.ts'
 
 
 
@@ -114,6 +115,14 @@ export function SettingsView({
           {terminals ? <TerminalSettings service={terminals} /> : null}
           {browserIntegrations ? <BrowserIntegrationSettings service={browserIntegrations} onUseResult={(text) => controller.setEditorText(text)} /> : null}
           {browsers ? <BrowserSettings service={browsers} /> : null}
+
+          <SettingsSection title="Keyboard" description="Default shortcuts for navigation, threads, and the command palette.">
+            {SHORTCUTS.map((binding) => (
+              <SettingsControlRow key={`${binding.action}:${binding.key}`} label={binding.label}>
+                <text style={{ color: colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{formatShortcut(binding.key)}</text>
+              </SettingsControlRow>
+            ))}
+          </SettingsSection>
 
           <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
             <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />

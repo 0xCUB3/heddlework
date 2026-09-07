@@ -138,8 +138,8 @@ function ActionMenu({ state, controller, compact, onRename }: { state: Workbench
         testId="add-action"
         style={(_trigger: SelectTriggerState) => ({ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, width: compact ? 30 : 'auto', height: 28, paddingLeft: compact ? 0 : 9, paddingRight: compact ? 0 : 9, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: dropdown.open ? colors.hover : colors.raised, cursor: 'pointer', hover: { backgroundColor: colors.hover } })}
       >
-        <Icon name="plus" size={13} color={colors.text} />
-        {!compact && <text style={{ color: colors.text, fontSize: 11, fontWeight: 550 }}>Add action</text>}
+        <Icon name="moreHorizontal" size={13} color={colors.text} />
+        {!compact && <text style={{ color: colors.text, fontSize: 11, fontWeight: 550 }}>Thread</text>}
       </SelectTrigger>
       <SelectContent testId="add-action-content" side="bottom" sideOffset={7} align="end" style={{ width: 254, padding: 0, borderWidth: 0, borderRadius: 0, backgroundColor: colors.background, overflow: 'visible', pointerEvents: dropdown.open ? 'auto' : 'none' }}>
         <DropdownSurface testId="add-action-menu" open={dropdown.open} style={{ width: '100%', padding: 5 }}>

@@ -4,6 +4,7 @@ import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import type { FlowRuntimeSurface } from '../flows/runtime.ts'
 import { ChatHeader } from './chat-header.tsx'
+import { CommandPalette, type PaletteAction } from './command-palette.tsx'
 import { Composer } from './composer.tsx'
 import { ConversationExtensionOverlay } from './conversation-overlay.tsx'
 import { copyTextToClipboard } from './clipboard-media.ts'
@@ -38,6 +39,8 @@ import type { UpdateService } from '../updates/service.ts'
 import { isLedgerNotice, toastNotices, unreadLedgerNotices } from '../workbench/notices.ts'
 import { clampPanelSize, draggedPanelSize, type LayoutStorage, type PanelSizes, type ResizePanel } from './panel-layout.ts'
 import { ResizeHandle } from './resize-handle.tsx'
+import { adjacentSession, orderedActiveSessions } from './session-order.ts'
+import { applyShortcutAction, resolveShortcut, shortcutBus } from './shortcuts.ts'
 import { DESKTOP_CLIENT_ID } from '../workbench/presence.ts'
 
 type Surface = 'chat' | 'flows' | 'settings'
@@ -106,6 +109,7 @@ export function WorkbenchApp({
   const [bottomTerminalMounted, setBottomTerminalMounted] = useState(false)
   const [bottomTerminalFullscreen, setBottomTerminalFullscreen] = useState(false)
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const layout = { ...baseLayout, sidebarWidth: baseLayout.navigationOverlay ? baseLayout.sidebarWidth : clampPanelSize(panelSizes.sidebar ?? baseLayout.sidebarWidth, 220, Math.min(440, safeWidth - 360 - (rightPanel ? 320 : 0))) }
   const [displayedRightPanel, setDisplayedRightPanel] = useState<RightPanel | undefined>()
   const [panelFullscreen, setPanelFullscreen] = useState(false)
@@ -304,6 +308,84 @@ export function WorkbenchApp({
     if (diffOpen) closeRightPanel()
     else openDiff()
   }
+
+  const orderedSessions = orderedActiveSessions(state.sessions, state.threadLifecycle)
+  const handlePaletteAction = (action: PaletteAction) => {
+    if (action === 'compact') {
+      void controller.compact()
+      return
+    }
+    if (action === 'export') {
+      void controller.exportSession()
+      return
+    }
+    if (action === 'reconnect') {
+      void controller.reconnect()
+      return
+    }
+    applyShortcutAction({ action }, {
+      'sidebar.toggle': () => setLeftSidebarVisibility(!leftSidebarOpen),
+      'terminal.toggle': toggleBottomTerminal,
+      'diff.toggle': toggleDiff,
+      'thread.new': () => {
+        returnToConversation()
+        void controller.newSession()
+      },
+      'settings.open': () => {
+        closeRightPanel()
+        closeOverlayNavigation()
+        setSurface((current) => current === 'settings' ? 'chat' : 'settings')
+      },
+      'notifications.toggle': toggleNotifications,
+    })
+  }
+
+  useEffect(() => shortcutBus.subscribe((event) => {
+    const resolved = resolveShortcut(event)
+    if (!resolved) return false
+    if (resolved.action !== 'palette.toggle') setPaletteOpen(false)
+    applyShortcutAction(resolved, {
+      'sidebar.toggle': () => setLeftSidebarVisibility(!leftSidebarOpen),
+      'terminal.toggle': toggleBottomTerminal,
+      'diff.toggle': toggleDiff,
+      'palette.toggle': () => setPaletteOpen((open) => !open),
+      'thread.new': () => {
+        returnToConversation()
+        void controller.newSession()
+      },
+      'thread.previous': () => {
+        const session = adjacentSession(orderedSessions, state.session.sessionFile, -1)
+        if (session) void controller.switchSession(session)
+      },
+      'thread.next': () => {
+        const session = adjacentSession(orderedSessions, state.session.sessionFile, 1)
+        if (session) void controller.switchSession(session)
+      },
+      'thread.jump': (index) => {
+        const session = orderedSessions[index]
+        if (session) void controller.switchSession(session)
+      },
+      'settings.open': () => {
+        closeRightPanel()
+        closeOverlayNavigation()
+        setSurface((current) => current === 'settings' ? 'chat' : 'settings')
+      },
+      'notifications.toggle': toggleNotifications,
+    })
+    return true
+  }), [
+    controller,
+    leftSidebarOpen,
+    orderedSessions,
+    setLeftSidebarVisibility,
+    state.session.sessionFile,
+    bottomTerminalOpen,
+    rightPanel,
+    surface,
+    notificationsOpen,
+    layout.navigationOverlay,
+    latestNoticeId,
+  ])
 
   const openSurfacePicker = () => {
     setSurface('chat')
@@ -540,6 +622,17 @@ export function WorkbenchApp({
             </div>
           ) : null}
         </div>
+        {paletteOpen ? (
+          <CommandPalette
+            sessions={orderedSessions}
+            onClose={() => setPaletteOpen(false)}
+            onAction={handlePaletteAction}
+            onSwitchSession={(session) => {
+              returnToConversation()
+              void controller.switchSession(session)
+            }}
+          />
+        ) : null}
       </div>
     </ResponsiveLayoutProvider>
     </BrowserServiceProvider>

@@ -14,6 +14,7 @@ import { colors } from './theme.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { SessionRow, sessionLifecycleBucket, sortActiveSessions } from './sidebar-session-row.tsx'
 import type { ThreadActionId } from './thread-actions.ts'
+import { compareSessionsByRecency, orderedActiveSessions } from './session-order.ts'
 import { trafficLightInset } from './window-chrome.ts'
 
 export { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket, sortActiveSessions } from './sidebar-session-row.tsx'
@@ -69,7 +70,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   const sessionListRef = useRef<NativeElementHandle | null>(null)
   const initialSessionScrollApplied = useRef(false)
   const activePath = state.session.sessionFile
-  const persistedSessions = useMemo(() => state.sessions.filter((session) => session.messageCount > 0), [state.sessions])
+  const persistedSessions = useMemo(() => orderedActiveSessions(state.sessions), [state.sessions])
   const activeSummary = useMemo(
     () => persistedSessions.find((session) => session.path === activePath) ?? syntheticActiveSession(state),
     [activePath, persistedSessions, state],
@@ -93,7 +94,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     const unique = new Map<string, PiSessionSummary>()
     if (activeSummary) unique.set(activeSummary.path, activeSummary)
     for (const session of persistedSessions) unique.set(session.path, session)
-    const sorted = [...unique.values()].sort((left, right) => right.modifiedAt - left.modifiedAt)
+    const sorted = [...unique.values()].sort(compareSessionsByRecency)
     const scoped = projectScope === ALL_PROJECTS_SCOPE
       ? sorted
       : sorted.filter((session) => resolve(session.cwd) === projectScope)

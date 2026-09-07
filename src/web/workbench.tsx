@@ -9,6 +9,8 @@ import { createCoreUiExtension } from '../ui/core-extension-surfaces.tsx'
 import { coreToolPresentersPlugin, toolPresenterSlot } from '../ui/tool-presenters.ts'
 import { defaultThemeManager } from '../ui/theme-manager.ts'
 import { colors } from '../ui/theme.ts'
+import { shortcutBus, type ShortcutKeyEvent } from '../ui/shortcuts.ts'
+import { keyName } from '../dom/events.ts'
 import { RemoteWorkbenchController } from '../dom/remote-controller.ts'
 import { domRenderer, GpuixContext } from '../dom/host.tsx'
 import { fontStack } from '../dom/rich.tsx'
@@ -41,6 +43,18 @@ export function WebWorkbench() {
   }, [controller])
 
   useEffect(() => { defaultThemeManager.start() }, [])
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const payload: ShortcutKeyEvent = {
+        key: keyName(event),
+        modifiers: { shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, cmd: event.metaKey },
+        ...(event.key.length === 1 ? { keyChar: event.key } : {}),
+      }
+      if (shortcutBus.dispatch(payload)) event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
   useEffect(() => watchWorkspaceNotifications(client), [client])
   useEffect(() => {
     document.documentElement.style.setProperty('--gx-font-sans', fontStack(theme.fonts.fontSans))
