@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { WorkbenchCommand } from '../protocol/commands.ts'
@@ -32,6 +33,44 @@ interface RegistryDocument {
   version: 1
   workspacePath: string
   sessions: RegistryEntry[]
+}
+
+function sessionStateDirectories(registryPath: string, entry: Pick<RegistryEntry, 'id' | 'sessionPath'>): string[] {
+  const identities = new Set([entry.sessionPath, entry.id].filter((value): value is string => Boolean(value)))
+  return [...identities].map((identity) => {
+    const storageKey = createHash('sha256').update(identity).digest('hex').slice(0, 24)
+    return join(dirname(registryPath), 'sessions', storageKey)
+  })
+}
+
+function hasPersistedBackgroundWork(registryPath: string, entry: RegistryEntry): boolean {
+  for (const stateDirectory of sessionStateDirectories(registryPath, entry)) {
+    try {
+      const flows = JSON.parse(readFileSync(join(stateDirectory, 'flows.json'), 'utf8')) as Record<string, unknown>
+      const schedules = Array.isArray(flows.schedules) ? flows.schedules : []
+      if (schedules.some((value) => value && typeof value === 'object' && (value as Record<string, unknown>).enabled === true)) return true
+      if (Array.isArray(flows.pending) && flows.pending.length > 0) return true
+      const runs = Array.isArray(flows.runs) ? flows.runs : []
+      if (runs.some((value) => value && typeof value === 'object' && Array.isArray((value as Record<string, unknown>).tasks)
+        && ((value as Record<string, unknown>).tasks as unknown[]).some((task) => task && typeof task === 'object'
+          && ['pending', 'dispatched'].includes(String((task as Record<string, unknown>).status))))) return true
+    } catch {
+      // Missing or malformed flow state has no durable work to resume.
+    }
+    try {
+      const queue = JSON.parse(readFileSync(join(stateDirectory, 'queue.json'), 'utf8')) as Record<string, unknown>
+      const workspaces = queue.workspaces
+      if (workspaces && typeof workspaces === 'object' && !Array.isArray(workspaces)) {
+        for (const value of Object.values(workspaces as Record<string, unknown>)) {
+          if (value && typeof value === 'object' && Array.isArray((value as Record<string, unknown>).items)
+            && ((value as Record<string, unknown>).items as unknown[]).length > 0) return true
+        }
+      }
+    } catch {
+      // Missing or malformed queue state has nothing to resume.
+    }
+  }
+  return false
 }
 
 export interface SessionAttachment {
@@ -75,6 +114,8 @@ export class SessionRuntime {
   readonly #registryPath: string
   readonly #journal: CommandJournal
   readonly #sessions = new Map<string, RuntimeSessionBundle>()
+  // Remember unopened sessions without spawning one Pi process per historical tab.
+  readonly #restored = new Map<string, RegistryEntry>()
   readonly #started = new Set<string>()
   readonly #creating = new Map<string, Promise<RuntimeSessionBundle>>()
   readonly #workspacePath: string
@@ -147,18 +188,20 @@ export class SessionRuntime {
 
   async ensureSession(sessionPath: string, summary?: PiSessionSummary): Promise<RuntimeSessionBundle> {
     const key = resolve(sessionPath)
-    const existing = this.#sessions.get(key) ?? this.#findSessionByPath(key)
-    if (existing) return existing
     const pending = this.#creating.get(key)
     if (pending) return pending
+    const existing = this.#sessions.get(key) ?? this.#findSessionByPath(key)
+    if (existing) return existing
+    const restored = this.#restored.get(key)
     const task = this.#createSession({
-      workspacePath: summary?.cwd ? resolve(summary.cwd) : this.#workspacePath,
+      workspacePath: resolve(summary?.cwd || restored?.workspacePath || this.#workspacePath),
       sessionPath: key,
-      id: summary?.id ?? key,
+      id: summary?.id ?? restored?.id ?? key,
     }).then(async (bundle) => {
       this.#sessions.set(key, bundle)
       this.#wireSession(key, bundle)
       await this.#start(key, bundle)
+      this.#restored.delete(key)
       this.#persistRegistry()
       return bundle
     }).finally(() => {
@@ -236,6 +279,7 @@ export class SessionRuntime {
     this.#sessions.clear()
     this.#started.clear()
     this.#creating.clear()
+    this.#restored.clear()
   }
 
   #findSessionByPath(sessionPath: string | undefined): RuntimeSessionBundle | undefined {
@@ -309,12 +353,14 @@ export class SessionRuntime {
   #wireSession(sessionKey: string, bundle: RuntimeSessionBundle): void {
     if (!this.#snapshotUnsubs.has(sessionKey)) {
       this.#snapshotUnsubs.set(sessionKey, bundle.controller.subscribe(() => {
-        for (const listener of this.#snapshotListeners) listener(sessionKey)
+        const currentKey = this.#keyForBundle(bundle) ?? sessionKey
+        for (const listener of this.#snapshotListeners) listener(currentKey)
       }))
     }
     if (!this.#flowUnsubs.has(sessionKey)) {
       this.#flowUnsubs.set(sessionKey, bundle.flows.subscribe(() => {
-        for (const listener of this.#flowListeners) listener(sessionKey)
+        const currentKey = this.#keyForBundle(bundle) ?? sessionKey
+        for (const listener of this.#flowListeners) listener(currentKey)
       }))
     }
   }
@@ -336,23 +382,25 @@ export class SessionRuntime {
     if (document.version !== 1 || !Array.isArray(document.sessions)) return
     for (const entry of document.sessions) {
       try {
-        if (!entry.sessionPath || isAliasRegistryKey(entry.sessionPath)) continue
+        if (typeof entry.sessionPath !== 'string' || !entry.sessionPath || isAliasRegistryKey(entry.sessionPath)) continue
         const key = resolve(entry.sessionPath)
         if (this.#sessions.has(key)) continue
         if (initialSessionPath && key === resolve(initialSessionPath)) continue
         if (entry.key && isAliasRegistryKey(entry.key) && !entry.sessionPath) continue
-        void this.ensureSession(entry.sessionPath, {
-          id: entry.id,
-          path: entry.sessionPath,
-          cwd: entry.workspacePath ?? document.workspacePath,
-          title: entry.id,
-          firstMessage: '',
-          messageCount: 0,
-          createdAt: Date.now(),
-          modifiedAt: Date.now(),
-        }).catch(() => {
-          // Restored sessions stay unavailable; the default session remains live.
+        this.#restored.set(key, {
+          key,
+          id: typeof entry.id === 'string' ? entry.id : key,
+          sessionPath: key,
+          workspacePath: typeof entry.workspacePath === 'string' ? entry.workspacePath : document.workspacePath,
+          // In-flight work cannot be assumed to have survived a host restart.
+          status: entry.status === 'interrupted' ? 'interrupted' : 'active',
         })
+        const restored = this.#restored.get(key)!
+        if (hasPersistedBackgroundWork(this.#registryPath, restored)) {
+          void this.ensureSession(key).catch(() => {
+            // Keep failed background restores lazy so opening the thread can retry later.
+          })
+        }
       } catch {
         // Skip malformed registry rows.
       }
@@ -377,6 +425,10 @@ export class SessionRuntime {
         ...(sessionPath ? { sessionPath: resolve(sessionPath) } : {}),
       })
     }
+    const livePaths = new Set(sessions.map((entry) => entry.sessionPath))
+    for (const entry of this.#restored.values()) {
+      if (!livePaths.has(entry.sessionPath)) sessions.push(entry)
+    }
     writePrivateJson(this.#registryPath, {
       version: 1,
       workspacePath: this.#workspacePath,
@@ -384,5 +436,3 @@ export class SessionRuntime {
     } satisfies RegistryDocument)
   }
 }
-
-
