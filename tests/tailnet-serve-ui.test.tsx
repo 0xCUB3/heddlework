@@ -92,7 +92,7 @@ describeNative('tailnet serve settings', () => {
       expect(root.renderer.getPaintedText().join('\n')).toContain('Tailnet HTTPS')
       expect(root.renderer.getPaintedText().join('\n')).toContain('8443')
       expect(await automation.getByTestId('settings-tailnet-setup').count()).toBe(1)
-      const scroller = root.renderer.findByTestId('settings-scroll')!
+      const scroller = root.renderer.findByTestId('settings-scroll-native')!
       const viewport = await automation.getByTestId('settings-scroll').bounds()
       const setup = await automation.getByTestId('settings-tailnet-setup').bounds()
       const overflow = setup.y + setup.height - viewport.y - viewport.height
@@ -124,6 +124,7 @@ describeNative('tailnet serve settings', () => {
       root.unmount()
       await tailnetServe.dispose()
       await remoteAccess.close()
+      await controller.dispose()
       theme.dispose()
     }
   }, 20_000)
