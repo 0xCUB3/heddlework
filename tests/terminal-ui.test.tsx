@@ -194,12 +194,14 @@ describeNative('terminal panels', () => {
 
       const scrollToControl = async (testId: string) => {
         const scroller = root.renderer.findByTestId('settings-scroll')!
-        const viewport = await automation.getByTestId('settings-scroll').bounds()
+        // bounds() of the scroller reports its scrolled content box, not the fixed viewport,
+        // so measure against the root instead; otherwise each step over-scrolls and the later
+        // controls drift above the window on smaller CI displays.
         const control = await automation.getByTestId(testId).bounds()
-        const overflow = control.y + control.height - viewport.y - viewport.height
+        const overflow = control.y + control.height - 820 + 48
         if (overflow > 0) {
           const offset = root.renderer.getScrollOffset(scroller.id)?.[1] ?? 0
-          root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(overflow) - 48)
+          root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(overflow))
           root.renderer.flush()
         }
       }

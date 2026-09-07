@@ -18,6 +18,7 @@ import { coreToolPresentersPlugin, toolPresenterSlot } from './ui/tool-presenter
 import { sessionSidebarCachePath } from './pi/session-catalog.ts'
 import { createFlowRuntimePlugin, flowRuntimeToken } from './flows/plugin.ts'
 import { flowRuntimePath } from './flows/runtime.ts'
+import type { NoticeKind } from './workbench/notices.ts'
 import { FileQueueStore, queueStorePath } from './workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from './workbench/thread-metadata-store.ts'
 import { createReceiptPlugin } from './receipts/plugin.ts'
@@ -61,7 +62,8 @@ const themeManager = new ThemeManager()
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
-kernel.mount(createUpdatePlugin({ enabled: demoMode ? false : undefined }))
+// Update notices go to whichever controller is live: the local demo one, or the attached remote one, which can change on host switch.
+kernel.mount(createUpdatePlugin({ enabled: demoMode ? false : undefined, notify: (kind, message) => notifyFromActiveController(kind, message) }))
 kernel.mount(createBrowserPlugin({
   ...(demoMode ? { statePath: false as const } : {}),
   cleanupOrphanedProfiles: coldStart,
@@ -98,6 +100,10 @@ if (attached) {
 } else kernel.mount(createCoreUiExtensionPlugin())
 
 let currentServices = attached
+function notifyFromActiveController(kind: NoticeKind, message: string): void {
+  const controller = currentServices?.controller ?? (kernel.has(workbenchControllerToken) ? kernel.get(workbenchControllerToken) : undefined)
+  controller?.notify(kind, message)
+}
 let hostSwitcher: DesktopHostSwitcher | undefined
 let root: Root | undefined
 if (attached && descriptor) {

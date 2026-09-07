@@ -1,4 +1,5 @@
 import { serviceToken, type WorkbenchPlugin } from '../core/kernel.ts'
+import type { NoticeKind } from '../workbench/notices.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { checkForUpdate, DEFAULT_UPDATE_REPOSITORY, type UpdateCheckOptions } from './check.ts'
 import type { UpdateChannel } from './feed.ts'
@@ -41,15 +42,18 @@ export function createUpdateCheckPlugin(options: UpdateCheckPluginOptions = {}):
 
 export interface UpdatePluginOptions extends Partial<UpdateServiceOptions> {
   preferencesPath?: string | false | undefined
+  // Where to post "update available" notices. The desktop passes a sink that follows the active
+  // controller, which may be remote; the plugin must not require a local controller because
+  // attached windows never mount one.
+  notify?: ((kind: NoticeKind, message: string) => void) | undefined
 }
 
 // Provides the in-place updater: polls the release feed, downloads and verifies the platform asset, and posts a notice when a restart will install it.
 export function createUpdatePlugin(options: UpdatePluginOptions = {}): WorkbenchPlugin {
   return {
     id: 'updates',
-    requires: [workbenchControllerToken],
     activate(ctx) {
-      const controller = ctx.get(workbenchControllerToken)
+      const notify = options.notify ?? ((kind: NoticeKind, message: string) => { if (kind === 'error') console.error(message) })
       const enabled = options.enabled ?? process.env.HEDDLEWORK_UPDATE_CHECK !== '0'
       const channel: UpdateChannel = options.channel ?? readUpdateChannel(options.preferencesPath) ?? (currentAppVersion().includes('-') ? 'prerelease' : 'stable')
       const service = new UpdateService({
@@ -66,10 +70,10 @@ export function createUpdatePlugin(options: UpdatePluginOptions = {}): Workbench
         const state = service.getSnapshot()
         if (state.status === 'downloaded' && state.downloadedVersion && announced !== state.downloadedVersion) {
           announced = state.downloadedVersion
-          controller.notify('info', `Heddlework ${state.downloadedVersion} is downloaded. Restart from Settings to install it.`)
+          notify('info', `Heddlework ${state.downloadedVersion} is downloaded. Restart from Settings to install it.`)
         } else if (state.status === 'available' && state.install.managedCommand && announced !== state.availableVersion) {
           announced = state.availableVersion
-          controller.notify('info', `Heddlework ${state.availableVersion} is available. Run: ${state.install.managedCommand}`)
+          notify('info', `Heddlework ${state.availableVersion} is available. Run: ${state.install.managedCommand}`)
         }
       }))
       ctx.effect(() => {

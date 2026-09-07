@@ -81,6 +81,10 @@ export class WorkbenchKernel {
     return record.value as T
   }
 
+  has(token: ServiceToken<unknown>): boolean {
+    return this.#services.has(token.key)
+  }
+
   contributions<T>(slot: SlotToken<T>): ReadonlyMap<string, T> {
     const keyed = this.#contributions.get(slot.key)
     const visible = new Map<string, T>()
