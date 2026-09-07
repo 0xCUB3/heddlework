@@ -33,6 +33,23 @@ describe('workbench snapshot protocol', () => {
     expect(Object.keys(patch.changed)).toEqual(['activity'])
   })
 
+  it('sends an older history page as a prepend instead of the whole transcript', () => {
+    const base = serializeSnapshot(createInitialState('/tmp/snap'))
+    const tail = [{ role: 'user' as const, content: 'first', workbenchEntryId: 'b' }, { role: 'assistant' as const, content: 'second', workbenchEntryId: 'c' }]
+    const withTail = { ...base, messages: tail }
+    const older = { role: 'user' as const, content: 'older', workbenchEntryId: 'a' }
+    const paged = { ...withTail, messages: [older, ...tail], messagesLoadingEarlier: false }
+    const patch = diffSnapshots(withTail, paged)
+    expect(patch.changed.messages).toBeUndefined()
+    expect(patch.messagesPrepend).toEqual([older])
+    expect(isPatchEmpty(patch)).toBe(false)
+    const wire = JSON.parse(JSON.stringify(patch))
+    expect(applySnapshotPatch(withTail, wire).messages).toEqual([older, ...tail])
+    const replaced = { ...withTail, messages: [older, { ...tail[0]! }, tail[1]!] }
+    expect(diffSnapshots(withTail, replaced).messagesPrepend).toBeUndefined()
+    expect(diffSnapshots(withTail, replaced).changed.messages).toEqual(replaced.messages)
+  })
+
   it('clears optional state after a JSON wire roundtrip', () => {
     const base = { ...serializeSnapshot(createInitialState('/tmp/snap')), dialog: { id: 'dialog-1', method: 'confirm' as const, title: 'Continue?', createdAt: 1 } }
     const patch = diffSnapshots(base, { ...base, dialog: undefined })

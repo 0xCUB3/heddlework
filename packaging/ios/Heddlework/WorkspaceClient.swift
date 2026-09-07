@@ -322,6 +322,11 @@ actor WorkspaceWireEngine {
         case "patch":
             guard var raw = rawSnapshot, let patch = envelope.patch else { return }
             raw = mergeSnapshotJSON(raw, patch: patch.changed, removing: patch.removed ?? [])
+            if let prepend = patch.messagesPrepend, !prepend.isEmpty {
+                var messages: [JSONValue] = []
+                if case .array(let existing)? = raw["messages"] { messages = existing }
+                raw["messages"] = .array(prepend + messages)
+            }
             rawSnapshot = raw
             dirty = true
             scheduleFlush()

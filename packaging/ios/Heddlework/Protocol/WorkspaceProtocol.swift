@@ -74,6 +74,7 @@ struct SnapshotPatch: Decodable, Equatable {
     let version: Int
     let changed: [String: JSONValue]
     let removed: [String]?
+    let messagesPrepend: [JSONValue]?
 }
 
 enum CommandFactory {
