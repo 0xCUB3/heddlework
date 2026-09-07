@@ -1,6 +1,6 @@
 import { serviceToken, type WorkbenchPlugin } from '../core/kernel.ts'
 import { DemoTransport } from '../pi/demo-transport.ts'
-import { PiRpcTransport, type PiRpcTransportOptions } from '../pi/rpc-transport.ts'
+import { createPiTransport, type PiRpcTransportOptions } from '../pi/rpc-transport.ts'
 import { PiSessionCatalog, type SessionCatalogOptions } from '../pi/session-catalog.ts'
 import type { AgentTransport } from '../pi/transport.ts'
 import { loadWorkspaceDiff } from '../workspace/git-diff.ts'
@@ -20,7 +20,7 @@ export function createAgentTransportPlugin(options: PiRpcTransportOptions & { de
   return {
     id: options.demo ? 'demo-agent-transport' : 'pi-rpc-agent-transport',
     activate(ctx) {
-      const transport: AgentTransport = options.demo ? new DemoTransport() : new PiRpcTransport(options)
+      const transport: AgentTransport = options.demo ? new DemoTransport() : createPiTransport(options)
       ctx.provide(agentTransportToken, transport)
       ctx.effect(() => async () => transport.stop())
       ctx.effect(() => transport.onEvent((event) => ctx.emit('agent/event', event)))

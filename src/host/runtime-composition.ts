@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { WorkbenchKernel } from '../core/kernel.ts'
 import { createFlowRuntimePlugin, flowRuntimeToken } from '../flows/plugin.ts'
 import { PiSessionCatalog, sessionSidebarCachePath } from '../pi/session-catalog.ts'
+import { ensureHeddleworkLiveBridgeInstalled, piLiveBridgeDirectory } from '../pi/live-bridge.ts'
 import { createReceiptPlugin } from '../receipts/plugin.ts'
 import { FileReceiptStore, receiptStorePath } from '../receipts/store.ts'
 import { coreToolPresentersPlugin } from '../ui/tool-presenters.ts'
@@ -21,7 +22,13 @@ export function createRuntimeSessionFactory(directory: string, demo = false) {
   const receipts = new FileReceiptStore(isolated ? false : receiptStorePath())
   const metadata = new FileThreadMetadataStore(isolated ? false : threadMetadataStorePath())
   const titleSettings = new FileThreadTitleSettingsStore(isolated ? false : threadTitleSettingsPath())
-  const sessionCatalog = new PiSessionCatalog({ cachePath: isolated ? false : sessionSidebarCachePath() })
+  const sessionCatalog = new PiSessionCatalog({ cachePath: isolated ? false : sessionSidebarCachePath(), liveBridgeDirectory: isolated ? false : piLiveBridgeDirectory() })
+  let bridgeInstallError: string | undefined
+  if (!isolated) {
+    try { ensureHeddleworkLiveBridgeInstalled() } catch (error) {
+      bridgeInstallError = error instanceof Error ? error.message : String(error)
+    }
+  }
   // Demo sessions have no real model behind them, so titles stay off there.
   const titleGenerator = demo ? undefined : createPiTitleGenerator({ ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}) })
   return async ({ workspacePath, sessionPath, id }: SessionFactoryInput) => {
@@ -43,6 +50,10 @@ export function createRuntimeSessionFactory(directory: string, demo = false) {
     kernel.mount(createAgentTransportPlugin({ cwd: workspacePath, demo, ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}), piArgs }))
     const plugins = await startExternalPlugins(kernel, workspacePath, { trustPath: isolated ? false : undefined })
     const controller = kernel.get(workbenchControllerToken)
+    if (bridgeInstallError) {
+      controller.notify('warning', `Could not enable Pi TUI live sync: ${bridgeInstallError}`)
+      bridgeInstallError = undefined
+    }
     const flows = kernel.get(flowRuntimeToken)
     return { controller, flows, plugins, kernel, dispose: () => kernel.dispose() }
   }

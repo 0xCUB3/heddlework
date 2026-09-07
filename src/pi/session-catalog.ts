@@ -6,6 +6,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { dirname, join, resolve } from 'node:path'
 import { withSessionBranches } from './session-branches.ts'
 import { watchPiSessions } from './session-watch.ts'
+import { discoverPiLiveBridges, type PiLiveBridgeAdvertisement } from './live-bridge.ts'
 import { asRecord, contentText } from '../workbench/state.ts'
 
 export interface PiSessionSummary {
@@ -22,6 +23,7 @@ export interface PiSessionSummary {
   parentSession?: string | undefined
   lastAssistantText?: string | undefined
   lastAssistantStopReason?: string | undefined
+  live?: boolean | undefined
 }
 
 export interface SessionCatalogOptions {
@@ -30,6 +32,7 @@ export interface SessionCatalogOptions {
   scope?: 'all' | 'cwd'
   concurrency?: number
   cachePath?: string | false
+  liveBridgeDirectory?: string | false
 }
 
 interface SessionFileMeta {
@@ -91,7 +94,10 @@ export class PiSessionCatalog {
       // Limits affect presentation, not the shared cache. A second thread asking
       // for a different page must not repeat the same directory scan.
       const { limit: _limit, ...options } = this.#options
-      scan = listPiSessionsCached(cwd, options, this.#cache).then(async (sessions) => {
+      scan = listPiSessionsCached(cwd, options, this.#cache).then(async (persisted) => {
+        const sessions = this.#options.liveBridgeDirectory
+          ? mergeLiveSessionSummaries(persisted, discoverPiLiveBridges(this.#options.liveBridgeDirectory), this.#options.scope === 'cwd' ? cwd : undefined)
+          : persisted
         const previous = new Map(this.#persisted.map((session) => [session.path, session]))
         const stable = sessions.map((session) => {
           const old = previous.get(session.path)
@@ -113,12 +119,18 @@ export class PiSessionCatalog {
   subscribe(cwd: string, listener: () => void): () => void {
     const scoped = this.#options.scope === 'cwd'
     const root = scoped ? getPiSessionDirectory(cwd, this.#options.agentDir) : getPiSessionRoot(this.#options.agentDir)
+    const closeSessions = this.#subscribeDirectory(root, listener, !scoped)
+    const closeLive = this.#options.liveBridgeDirectory ? this.#subscribeDirectory(this.#options.liveBridgeDirectory, listener, false) : undefined
+    return () => { closeSessions(); closeLive?.() }
+  }
+
+  #subscribeDirectory(root: string, listener: () => void, recursive: boolean): () => void {
     let entry = this.#watches.get(root)
     if (!entry) {
       const listeners = new Set<() => void>()
       entry = { listeners, close: watchPiSessions(root, () => {
         for (const callback of listeners) callback()
-      }, { recursive: !scoped }) }
+      }, { recursive }) }
       this.#watches.set(root, entry)
     }
     entry.listeners.add(listener)
@@ -141,6 +153,28 @@ export class PiSessionCatalog {
     await writeFile(path, `${JSON.stringify({ type: 'session', version: 3, id, timestamp, cwd: workspace })}\n`, { encoding: 'utf8', flag: 'wx' })
     return { id, path, cwd: workspace, title: '(no messages)', firstMessage: '', messageCount: 0, createdAt: Date.parse(timestamp), modifiedAt: Date.parse(timestamp) }
   }
+}
+
+/** Project public session metadata only; local bridge credentials never reach clients or caches. */
+export function mergeLiveSessionSummaries(persisted: PiSessionSummary[], bridges: readonly PiLiveBridgeAdvertisement[], cwd?: string): PiSessionSummary[] {
+  const byPath = new Map(persisted.map((session) => [resolve(session.path), session]))
+  const seen = new Set<string>()
+  for (const bridge of bridges) {
+    if (!bridge.sessionFile || (bridge.mode !== 'tui' && bridge.mode !== 'rpc')) continue
+    if (cwd && resolve(bridge.cwd) !== resolve(cwd)) continue
+    const path = resolve(bridge.sessionFile)
+    if (seen.has(path)) continue
+    seen.add(path)
+    const existing = byPath.get(path)
+    const name = bridge.sessionName?.trim()
+    byPath.set(path, {
+      ...(existing ?? { id: bridge.sessionId, path, cwd: bridge.cwd, firstMessage: '', messageCount: 0, createdAt: bridge.updatedAt, modifiedAt: bridge.updatedAt }),
+      title: name || existing?.title || 'New thread',
+      ...(name ? { name } : {}),
+      live: true,
+    })
+  }
+  return [...byPath.values()].sort((left, right) => right.modifiedAt - left.modifiedAt)
 }
 
 function sameSummary(left: PiSessionSummary, right: PiSessionSummary): boolean {

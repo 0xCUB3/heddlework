@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DemoTransport } from '../src/pi/demo-transport.ts'
 import { getPiSessionDirectory, PiSessionCatalog } from '../src/pi/session-catalog.ts'
+import type { PiLiveBridgeAdvertisement } from '../src/pi/live-bridge.ts'
 import { watchPiSessions } from '../src/pi/session-watch.ts'
 import { WorkbenchController } from '../src/workbench/controller.ts'
 
@@ -28,6 +29,32 @@ async function waitFor(predicate: () => boolean) {
 const header = (id: string, cwd: string) => JSON.stringify({ type: 'session', version: 3, id, cwd, timestamp: '2026-09-01T00:00:00Z' }) + '\n'
 
 describe('live session discovery', () => {
+  it('discovers an advertised TUI before its first JSONL write without exposing bridge credentials', async () => {
+    const { root, agentDir, cwd, directory } = await fixture()
+    const liveDirectory = join(root, 'pi-live')
+    await mkdir(liveDirectory)
+    const cachePath = join(root, 'live-cache.json')
+    const catalog = new PiSessionCatalog({ agentDir, cachePath, liveBridgeDirectory: liveDirectory })
+    const advertisement: PiLiveBridgeAdvertisement = {
+      version: 1, pid: process.pid, port: 12345, token: 'private-token-that-must-not-leak'.repeat(3),
+      mode: 'tui', cwd, sessionFile: join(directory, 'not-written-yet.jsonl'),
+      sessionId: 'new-live-session', sessionName: 'Live terminal thread', updatedAt: Date.now(),
+    }
+    let sessions = await catalog.list(cwd)
+    const close = catalog.subscribe(cwd, () => { void catalog.list(cwd).then((next) => { sessions = next }) })
+    try {
+      await writeFile(join(liveDirectory, `${process.pid}.json`), JSON.stringify(advertisement))
+      await waitFor(() => sessions.some((session) => session.id === 'new-live-session'))
+      expect(sessions[0]).toMatchObject({ title: 'Live terminal thread', live: true })
+      expect(JSON.stringify(sessions)).not.toContain(advertisement.token)
+      expect(await readFile(cachePath, 'utf8')).not.toContain(advertisement.token)
+      await writeFile(advertisement.sessionFile!, header(advertisement.sessionId, cwd))
+      const persisted = await catalog.list(cwd)
+      expect(persisted).toHaveLength(1)
+      expect(persisted[0]?.title).toBe('Live terminal thread')
+    } finally { close() }
+  })
+
   it('shares overlapping scans, preserves stable rows, and does not rewrite an unchanged disk cache', async () => {
     const { root, agentDir, cwd, directory } = await fixture()
     await Promise.all(Array.from({ length: 8 }, (_, i) => writeFile(join(directory, `${i}.jsonl`), header(String(i), cwd))))

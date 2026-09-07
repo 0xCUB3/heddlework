@@ -38,6 +38,7 @@ import {
 import {
   addNotice,
   applyRpcEvent,
+  asRecord,
   contentText,
   createInitialState,
   type NoticeKind,
@@ -1842,6 +1843,26 @@ export class WorkbenchController {
 
   #handleEvent(event: RpcRecord): void {
     if (this.#disposed) return
+    if (event.type === 'heddlework_live_snapshot') {
+      this.#acceptLiveSessionState(event)
+      this.#setState((state) => {
+        let next = { ...state, liveAssistant: undefined, liveTools: [] } as WorkbenchState
+        const assistant = asRecord(event.assistant)
+        if (assistant.role === 'assistant') next = applyRpcEvent(next, { type: 'message_start', message: assistant })
+        if (Array.isArray(event.tools)) {
+          for (const tool of event.tools) {
+            const record = asRecord(tool)
+            if (record.type === 'tool_execution_start' || record.type === 'tool_execution_update') next = applyRpcEvent(next, record as RpcRecord)
+          }
+        }
+        return next
+      })
+      return
+    }
+    if (event.type === 'session_switched' || event.type === 'heddlework_session_state') {
+      this.#acceptLiveSessionState(event)
+      return
+    }
     if (event.type === 'agent_start' || event.type === 'agent_settled') ++this.#streamRevision
     const fabricEvent = parseFabricBridgeEvent(event)
     if (fabricEvent) {
@@ -1853,6 +1874,7 @@ export class WorkbenchController {
       return
     }
     this.#setState((state) => applyRpcEvent(state, event))
+    if (['model_select', 'thinking_level_select', 'session_info_changed', 'session_tree', 'session_compact'].includes(event.type)) this.#scheduleRefresh(true)
     if (event.type === 'compaction_start') this.#compactionHold = true
     if (event.type === 'compaction_end') {
       this.#compactionHold = false
@@ -1892,6 +1914,48 @@ export class WorkbenchController {
         ...(sessionTitle ? { sessionTitle } : {}),
       }))
     }
+  }
+
+  #acceptLiveSessionState(event: RpcRecord): void {
+    const value = asRecord(event.state)
+    if (typeof value.isStreaming !== 'boolean' || (typeof value.sessionId !== 'string' && typeof value.sessionFile !== 'string')) return
+    // Locally requested transitions have their own generation-guarded bootstrap.
+    if (this.#sessionTransitionDepth > 0) return
+    const session = value as unknown as PiSessionState
+    const previous = this.#state.session
+    const changed = Boolean(previous.sessionId || previous.sessionFile) && (previous.sessionId !== session.sessionId || previous.sessionFile !== session.sessionFile)
+    ++this.#streamRevision
+    if (changed) {
+      ++this.#sessionSwitchGeneration
+      ++this.#bootstrapGeneration
+      ++this.#transcriptRefreshGeneration
+      if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
+      this.#refreshTimer = undefined
+      this.#refreshFull = false
+      this.#historyPager = undefined
+      this.#sessionTree = undefined
+      this.#pauseAfterTools = false
+      this.#compactionHold = false
+      const summary = this.#state.sessions.find((candidate) => candidate.path === session.sessionFile)
+      const workspacePath = typeof event.cwd === 'string' && event.cwd ? resolve(event.cwd) : summary?.cwd ? resolve(summary.cwd) : this.#state.workspacePath
+      const queue = workspacePath === this.#state.workspacePath ? this.#state.queue : (this.#queueStore?.load(workspacePath) ?? createQueueState())
+      // A terminal-side /new or /resume must never dispatch old queued prompts
+      // into its new conversation. Keep them available for explicit review.
+      const heldQueue = queue.items.length ? { ...queue, paused: true, pauseReason: 'manual' as const, dispatchingId: undefined, blockingActivity: undefined, blockingNote: undefined } : createQueueState()
+      this.#patch({
+        workspacePath, session, queue: heldQueue,
+        messages: [], messagesHasOlder: false, messagesLoadingEarlier: false,
+        liveAssistant: undefined, liveTools: [], forkMessages: [], stats: undefined,
+        dialog: undefined, dialogQueue: [], statusItems: {}, widgets: {},
+        editorText: '', editorImages: [],
+        connection: 'connecting', connectionMessage: 'Synchronizing Pi session…',
+        activity: session.isStreaming ? 'Working' : 'Ready',
+      })
+      if (queue.items.length) this.#setState((state) => addNotice(state, 'warning', 'Pi changed sessions; queued work was paused for review.'))
+    } else {
+      this.#patch({ session, activity: session.isStreaming ? this.#state.activity : 'Ready' })
+    }
+    if (this.#started) this.#scheduleRefresh(true)
   }
 
   #scheduleReconnect(): void {

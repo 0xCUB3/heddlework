@@ -56,6 +56,51 @@ async function waitFor(predicate: () => boolean) {
 }
 
 describe('live transcript reconciliation', () => {
+  it('hydrates an in-progress assistant and tools before applying newer streamed deltas', async () => {
+    const transport = new LiveTransport()
+    const controller = createController(transport)
+    await controller.start()
+    try {
+      transport.state = { ...transport.state, isStreaming: true }
+      transport.emit({
+        type: 'heddlework_live_snapshot', state: transport.state, cwd: '/tmp/live-refresh-test', sequence: 10,
+        assistant: { role: 'assistant', timestamp: 99, content: [{ type: 'text', text: 'prefix' }] },
+        tools: [{ type: 'tool_execution_update', toolCallId: 'tool', toolName: 'read', args: { path: 'file' }, partialResult: { content: [{ type: 'text', text: 'partial' }] } }],
+      })
+      transport.emit({ type: 'message_update', sequence: 11, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: ' suffix' } })
+      expect(controller.getSnapshot().liveAssistant?.blocks[0]?.text).toBe('prefix suffix')
+      expect(controller.getSnapshot().liveTools[0]).toMatchObject({ name: 'read', args: { path: 'file' }, output: 'partial' })
+    } finally { await controller.dispose() }
+  })
+
+  it('follows a terminal-side session change and holds old queued work for review', async () => {
+    const transport = new LiveTransport()
+    const controller = createController(transport)
+    await controller.start()
+    try {
+      controller.queueInput('intended for the old session')
+      transport.state = { ...transport.state, sessionId: 'new-from-tui', sessionName: 'TUI thread' }
+      transport.messages = [{ role: 'user', content: 'new session context', timestamp: 30 }]
+      transport.emit({ type: 'session_switched', state: transport.state, cwd: '/tmp/live-refresh-test' })
+      await waitFor(() => controller.getSnapshot().connection === 'connected' && controller.getSnapshot().messages.length === 1)
+      expect(controller.getSnapshot().session.sessionId).toBe('new-from-tui')
+      expect(controller.getSnapshot().messages[0]?.content).toBe('new session context')
+      expect(controller.getSnapshot().queue.items[0]?.text).toBe('intended for the old session')
+      expect(controller.getSnapshot().queue.paused).toBe(true)
+    } finally { await controller.dispose() }
+  })
+
+  it('accepts owner-side metadata updates without waiting for a new assistant turn', async () => {
+    const transport = new LiveTransport()
+    const controller = createController(transport)
+    await controller.start()
+    try {
+      transport.state = { ...transport.state, sessionName: 'Renamed in terminal', thinkingLevel: 'high', model: { id: 'live-model', provider: 'test' } }
+      transport.emit({ type: 'heddlework_session_state', state: transport.state })
+      expect(controller.getSnapshot().session).toMatchObject({ sessionName: 'Renamed in terminal', thinkingLevel: 'high', model: { id: 'live-model' } })
+    } finally { await controller.dispose() }
+  })
+
   it('keeps the next response and running tool when an older transcript refresh finishes late', async () => {
     const transport = new LiveTransport()
     const controller = createController(transport)
