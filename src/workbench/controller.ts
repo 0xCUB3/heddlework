@@ -61,6 +61,7 @@ import {
 } from './queue.ts'
 import type { QueueStoreService } from './queue-store.ts'
 import { normalizeThreadLabels, type ThreadMetadataStoreService } from './thread-metadata-store.ts'
+import { buildTitleContext, canApplyAutoTitle, firstUserMessageText, normalizeThreadTitleSettings, pickTitleModel, type ThreadTitleSettings } from './thread-titles.ts'
 import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import { WorkbenchDialogCoordinator } from './dialog-coordinator.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
@@ -91,6 +92,18 @@ export interface WorkbenchControllerDependencies {
   transportOwnership?: 'controller' | 'provider'
   queueStore?: QueueStoreService | undefined
   threadMetadataStore?: ThreadMetadataStoreService | undefined
+  // Optional: produces thread titles from a transcript. Absent on clients that only mirror a host.
+  titleGenerator?: ThreadTitleGeneratorService | undefined
+  titleSettingsStore?: ThreadTitleSettingsStoreService | undefined
+}
+
+export interface ThreadTitleGeneratorService {
+  generate(request: { model: string; context: string; previousTitle?: string | undefined; cwd?: string | undefined; settings?: Pick<ThreadTitleSettings, 'instructions'> | undefined }): Promise<string>
+}
+
+export interface ThreadTitleSettingsStoreService {
+  load(): ThreadTitleSettings
+  save(settings: ThreadTitleSettings): void
 }
 
 export class WorkbenchController {
@@ -115,6 +128,10 @@ export class WorkbenchController {
   #disposed = false
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
+  readonly #titleGenerator: ThreadTitleGeneratorService | undefined
+  readonly #titleSettingsStore: ThreadTitleSettingsStoreService | undefined
+  // Threads whose first settled turn already triggered a title, so retries and later turns stay quiet.
+  readonly #autoTitled = new Set<string>()
   #sessionTransitionDepth = 0
   #sessionSwitch: Promise<void> | undefined
   #sessionPreview: WorkbenchState | undefined
@@ -138,11 +155,14 @@ export class WorkbenchController {
     this.#workspaceDiff = dependencies.workspaceDiff
     this.#queueStore = dependencies.queueStore
     this.#threadMetadataStore = dependencies.threadMetadataStore
+    this.#titleGenerator = dependencies.titleGenerator
+    this.#titleSettingsStore = dependencies.titleSettingsStore
     this.#stopTransportOnDispose = dependencies.transportOwnership !== 'provider'
     this.#state = {
       ...createInitialState(workspacePath),
       queue: dependencies.queueStore?.load(workspacePath) ?? createQueueState(),
       threadLifecycle: dependencies.threadMetadataStore?.load() ?? {},
+      ...(dependencies.titleSettingsStore ? { threadTitles: dependencies.titleSettingsStore.load() } : {}),
     }
     this.#dialogs = new WorkbenchDialogCoordinator({
       getState: () => this.#state,
@@ -950,10 +970,93 @@ export class WorkbenchController {
     try {
       await this.#transport.request({ type: 'set_session_name', name: trimmed })
       this.#patch({ session: { ...this.#state.session, sessionName: trimmed } })
+      const sessionPath = this.#state.session.sessionFile
+      if (sessionPath) this.#setThreadTitleMeta(sessionPath, { titleSource: 'manual' })
       void this.refreshSessions()
       this.#setState((state) => addNotice(state, 'info', `Session name set: ${trimmed}`))
     } catch (error) {
       this.#setState((state) => addNotice(state, 'error', errorMessage(error)))
+    }
+  }
+
+  setThreadTitleSettings(settings: Partial<ThreadTitleSettings>): void {
+    const next = normalizeThreadTitleSettings({ ...this.#state.threadTitles, ...settings })
+    this.#patch({ threadTitles: next })
+    this.#titleSettingsStore?.save(next)
+  }
+
+  // Explicit request from the user: reads the whole thread and replaces the title even when it was set by hand.
+  async regenerateThreadTitle(path: string): Promise<void> {
+    if (!this.#titleGenerator) {
+      this.#setState((state) => addNotice(state, 'warning', 'Title generation is not available on this connection'))
+      return
+    }
+    if (path !== this.#state.session.sessionFile) {
+      this.#setState((state) => addNotice(state, 'warning', 'Open the thread to regenerate its title'))
+      return
+    }
+    const previous = this.#state.session.sessionName ?? this.#state.sessions.find((session) => session.path === path)?.title
+    await this.#generateTitle(path, { context: buildTitleContext(this.#state.messages), previousTitle: previous, force: true })
+  }
+
+  #setThreadTitleMeta(path: string, patch: { titleSource?: 'auto' | 'manual' | undefined; titleGeneratingAt?: number | undefined }): void {
+    const current = this.#state.threadLifecycle[path] ?? {}
+    const { titleSource: _source, titleGeneratingAt: _generating, ...retained } = current
+    const titleSource = patch.titleSource ?? current.titleSource
+    const next = {
+      ...retained,
+      ...(titleSource !== undefined ? { titleSource } : {}),
+      ...(patch.titleGeneratingAt !== undefined ? { titleGeneratingAt: patch.titleGeneratingAt } : {}),
+    }
+    this.#patch({ threadLifecycle: { ...this.#state.threadLifecycle, [path]: next } })
+  }
+
+  // Runs after the first turn of an unnamed thread settles. Never throws; failures become a quiet notice.
+  #maybeAutoTitle(): void {
+    const path = this.#state.session.sessionFile
+    if (!path || !this.#titleGenerator || !this.#state.threadTitles.autoTitles) return
+    if (this.#autoTitled.has(path)) return
+    const lifecycle = this.#state.threadLifecycle[path]
+    if (lifecycle?.titleGeneratingAt) return
+    if (!canApplyAutoTitle({ titleSource: lifecycle?.titleSource, sessionName: this.#state.session.sessionName })) return
+    const first = firstUserMessageText(this.#state.messages)
+    if (!first) return
+    this.#autoTitled.add(path)
+    void this.#generateTitle(path, { context: buildTitleContext(this.#state.messages), force: false })
+  }
+
+  async #generateTitle(path: string, input: { context: string; previousTitle?: string | undefined; force: boolean }): Promise<void> {
+    const generator = this.#titleGenerator
+    if (!generator || !input.context.trim()) return
+    const model = pickTitleModel({ settings: this.#state.threadTitles, sessionModel: this.#state.session.model, available: this.#state.models })
+    if (!model) {
+      if (input.force) this.#setState((state) => addNotice(state, 'warning', 'Pick a title model in Settings > Threads first'))
+      return
+    }
+    this.#setThreadTitleMeta(path, { titleGeneratingAt: Date.now() })
+    try {
+      const title = await generator.generate({
+        model,
+        context: input.context,
+        previousTitle: input.previousTitle,
+        cwd: this.#state.workspacePath,
+        settings: { instructions: this.#state.threadTitles.instructions },
+      })
+      const stillCurrent = this.#state.session.sessionFile === path
+      const lifecycle = this.#state.threadLifecycle[path]
+      // A rename that landed while we were generating wins unless the user asked for this regeneration.
+      if (!input.force && !canApplyAutoTitle({ titleSource: lifecycle?.titleSource, sessionName: this.#state.session.sessionName })) return
+      if (!title || title === input.previousTitle) return
+      if (stillCurrent) {
+        await this.#transport.request({ type: 'set_session_name', name: title })
+        this.#patch({ session: { ...this.#state.session, sessionName: title } })
+      }
+      this.#setThreadTitleMeta(path, { titleSource: 'auto' })
+      void this.refreshSessions()
+    } catch (error) {
+      if (input.force) this.#setState((state) => addNotice(state, 'error', `Could not generate a title: ${errorMessage(error)}`))
+    } finally {
+      this.#setThreadTitleMeta(path, {})
     }
   }
 
@@ -1686,6 +1789,7 @@ export class WorkbenchController {
     if (event.type === 'agent_settled') {
       this.#scheduleRefresh(true)
       this.#drainQueue()
+      this.#maybeAutoTitle()
       const sessionPath = this.#state.session.sessionFile
       const sessionTitle = this.#state.session.sessionName
         ?? this.#state.sessions.find((session) => session.path === sessionPath)?.title

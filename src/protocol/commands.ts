@@ -10,6 +10,7 @@ import type { WorkbenchControllerSurface } from '../workbench/controller-surface
 import { isPresenceSurface, isPresenceVisibility, type PresenceSurface, type PresenceVisibility } from '../workbench/presence.ts'
 import type { QueueLane } from '../workbench/queue.ts'
 import type { ThreadPriority } from '../workbench/state.ts'
+import type { ThreadTitleSettings } from '../workbench/thread-titles.ts'
 import { applyTerminalCommand, isTerminalCommand, TERMINAL_COMMAND_TYPES, type TerminalCommand, type TerminalCommandTarget } from './terminal.ts'
 
 export type SleepPreventionCommand = { type: 'setSleepPreventionPolicy'; when: SleepPreventionPolicy['when']; keepDisplayAwake: boolean }
@@ -55,6 +56,8 @@ export type WorkbenchCommand =
   | { type: 'unpinThread'; path: string }
   | { type: 'renameThread'; name: string }
   | { type: 'setThreadPriority'; path: string; priority: ThreadPriority | undefined }
+  | { type: 'regenerateThreadTitle'; path: string }
+  | { type: 'setThreadTitleSettings'; settings: Partial<ThreadTitleSettings> }
   | { type: 'setThreadLabels'; path: string; labels: string[] }
   | { type: 'markThreadRead'; path: string; updatedAt: number }
   | { type: 'refreshWorkspaceDiff' }
@@ -95,7 +98,7 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   'toggleQueuedInputPause', 'steerQueuedInput', 'resumeQueue', 'pause', 'abort', 'newSession', 'switchSession',
   'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
-  'wakeThread', 'pinThread', 'unpinThread', 'renameThread', 'setThreadPriority', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
+  'wakeThread', 'pinThread', 'unpinThread', 'renameThread', 'setThreadPriority', 'regenerateThreadTitle', 'setThreadTitleSettings', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
   'markNoticeRead', 'markNoticesRead', 'activateNotice', 'clearNotices', 'reportPresence', 'createFlowSchedule', 'setFlowScheduleEnabled', 'removeFlowSchedule', 'launchFlow', 'runFlowScheduleNow', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
   'navigateTree', 'cloneSession', 'exportSession', 'switchWorkspace', 'markThreadsRead', 'drainQueueMessages', 'cancelBlockingQueueActivity',
   'queueFabricPeerGate', 'setAskUserQuestionnaireCollapsed', 'completeUiRequest', 'removeQueuedFlow', 'notify',
@@ -259,6 +262,12 @@ export async function applyWorkbenchCommand(controller: WorkbenchControllerSurfa
       return
     case 'setThreadPriority':
       controller.setThreadPriority(command.path, command.priority)
+      return
+    case 'regenerateThreadTitle':
+      await controller.regenerateThreadTitle(command.path)
+      return
+    case 'setThreadTitleSettings':
+      controller.setThreadTitleSettings(command.settings)
       return
     case 'setThreadLabels':
       controller.setThreadLabels(command.path, command.labels)

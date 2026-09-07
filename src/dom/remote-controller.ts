@@ -4,6 +4,7 @@
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import type { NavigateTreeOptions } from '../workbench/controller.ts'
 import type { WorkbenchState, ThreadPriority } from '../workbench/state.ts'
+import type { ThreadTitleSettings } from '../workbench/thread-titles.ts'
 import type { WorkbenchSnapshot, WorkbenchCommand } from '../protocol/index.ts'
 import type { ComposerImage, PiModel, ThinkingLevel } from '../pi/types.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
@@ -153,6 +154,8 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   pinThread(path: string): void { void this.#send({ type: 'pinThread', path }) }
   unpinThread(path: string): void { void this.#send({ type: 'unpinThread', path }) }
   async renameThread(name: string): Promise<void> { await this.#send({ type: 'renameThread', name }) }
+  async regenerateThreadTitle(path: string): Promise<void> { await this.#send({ type: 'regenerateThreadTitle', path }) }
+  setThreadTitleSettings(settings: Partial<ThreadTitleSettings>): void { void this.#send({ type: 'setThreadTitleSettings', settings }) }
   setThreadPriority(path: string, priority: ThreadPriority | undefined): void { void this.#send({ type: 'setThreadPriority', path, priority }) }
   setThreadLabels(path: string, labels: readonly string[]): void { void this.#send({ type: 'setThreadLabels', path, labels: [...labels] }) }
   markThreadRead(path: string, updatedAt: number): void { void this.#send({ type: 'markThreadRead', path, updatedAt }) }

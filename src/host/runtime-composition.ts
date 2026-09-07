@@ -9,6 +9,8 @@ import { coreToolPresentersPlugin } from '../ui/tool-presenters.ts'
 import { createAgentTransportPlugin, createSessionCatalogPlugin, createWorkbenchControllerPlugin, localWorkspaceDiffPlugin, workbenchControllerToken } from '../workbench/plugins.ts'
 import { FileQueueStore } from '../workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from '../workbench/thread-metadata-store.ts'
+import { FileThreadTitleSettingsStore, threadTitleSettingsPath } from '../workbench/thread-title-settings-store.ts'
+import { createPiTitleGenerator } from './title-generator.ts'
 import { createCheckoutLanePlugin } from '../workspace/checkout-lanes.ts'
 import { startExternalPlugins } from '../plugins/host.ts'
 
@@ -18,12 +20,15 @@ export function createRuntimeSessionFactory(directory: string, demo = false) {
   const isolated = demo || process.env.HEDDLEWORK_RUNTIME_TEST === '1'
   const receipts = new FileReceiptStore(isolated ? false : receiptStorePath())
   const metadata = new FileThreadMetadataStore(isolated ? false : threadMetadataStorePath())
+  const titleSettings = new FileThreadTitleSettingsStore(isolated ? false : threadTitleSettingsPath())
+  // Demo sessions have no real model behind them, so titles stay off there.
+  const titleGenerator = demo ? undefined : createPiTitleGenerator({ ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}) })
   return async ({ workspacePath, sessionPath, id }: SessionFactoryInput) => {
     const storageKey = createHash('sha256').update(sessionPath ?? id).digest('hex').slice(0, 24)
     const stateDirectory = join(directory, 'sessions', storageKey)
     const kernel = new WorkbenchKernel()
     kernel.mount(coreToolPresentersPlugin)
-    kernel.mount(createWorkbenchControllerPlugin(workspacePath, { queueStore: new FileQueueStore(join(stateDirectory, 'queue.json')), threadMetadataStore: metadata }))
+    kernel.mount(createWorkbenchControllerPlugin(workspacePath, { queueStore: new FileQueueStore(join(stateDirectory, 'queue.json')), threadMetadataStore: metadata, titleGenerator, titleSettingsStore: titleSettings }))
     kernel.mount(createCheckoutLanePlugin())
     kernel.mount(createFlowRuntimePlugin({ path: join(stateDirectory, 'flows.json'), lanesFromKernel: true }))
     kernel.mount(createSessionCatalogPlugin({ cachePath: isolated ? false : sessionSidebarCachePath() }))

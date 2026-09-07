@@ -14,6 +14,8 @@ import {
 } from '../workbench/plugins.ts'
 import { FileQueueStore, queueStorePath } from '../workbench/queue-store.ts'
 import { FileThreadMetadataStore, threadMetadataStorePath } from '../workbench/thread-metadata-store.ts'
+import { FileThreadTitleSettingsStore, threadTitleSettingsPath } from '../workbench/thread-title-settings-store.ts'
+import { createPiTitleGenerator } from './title-generator.ts'
 import { createReceiptPlugin } from '../receipts/plugin.ts'
 import { createCheckoutLanePlugin } from '../workspace/checkout-lanes.ts'
 import { receiptStorePath } from '../receipts/store.ts'
@@ -77,6 +79,8 @@ export async function createHeadlessWorkspace(options: HeadlessWorkspaceOptions 
   kernel.mount(createWorkbenchControllerPlugin(workspacePath, {
     queueStore: new FileQueueStore(demoMode ? false : queueStorePath()),
     threadMetadataStore: new FileThreadMetadataStore(demoMode ? false : threadMetadataStorePath()),
+    titleSettingsStore: new FileThreadTitleSettingsStore(demoMode ? false : threadTitleSettingsPath()),
+    ...(demoMode ? {} : { titleGenerator: createPiTitleGenerator() }),
   }))
   kernel.mount(createCheckoutLanePlugin())
   kernel.mount(createFlowRuntimePlugin({ path: demoMode ? false : flowRuntimePath(), lanesFromKernel: true }))

@@ -79,6 +79,7 @@ export function restoreThreadMetadata(value: unknown): Record<string, ThreadLife
     if (pinnedAt !== undefined) thread.pinnedAt = pinnedAt
     if (priority !== undefined) thread.priority = priority
     if (labels.length > 0) thread.labels = labels
+    if (source.titleSource === 'auto' || source.titleSource === 'manual') thread.titleSource = source.titleSource
     if (Object.keys(thread).length > 0) restored[key] = thread
   }
   return restored

@@ -9,6 +9,7 @@ import './events.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
 import type { QueueStoreService } from './queue-store.ts'
 import type { ThreadMetadataStoreService } from './thread-metadata-store.ts'
+import type { ThreadTitleGeneratorService, ThreadTitleSettingsStoreService } from './controller.ts'
 
 export const agentTransportToken = serviceToken<AgentTransport>('agent-transport')
 export const sessionCatalogToken = serviceToken<SessionCatalogService>('session-catalog')
@@ -44,7 +45,7 @@ export const localWorkspaceDiffPlugin: WorkbenchPlugin = {
   },
 }
 
-export function createWorkbenchControllerPlugin(workspacePath: string, options: { queueStore?: QueueStoreService | undefined; threadMetadataStore?: ThreadMetadataStoreService | undefined } = {}): WorkbenchPlugin {
+export function createWorkbenchControllerPlugin(workspacePath: string, options: { queueStore?: QueueStoreService | undefined; threadMetadataStore?: ThreadMetadataStoreService | undefined; titleGenerator?: ThreadTitleGeneratorService | undefined; titleSettingsStore?: ThreadTitleSettingsStoreService | undefined } = {}): WorkbenchPlugin {
   return {
     id: 'workbench-controller',
     requires: [agentTransportToken, sessionCatalogToken, workspaceDiffToken],
@@ -56,6 +57,8 @@ export function createWorkbenchControllerPlugin(workspacePath: string, options: 
         transportOwnership: 'provider',
         ...(options.queueStore ? { queueStore: options.queueStore } : {}),
         ...(options.threadMetadataStore ? { threadMetadataStore: options.threadMetadataStore } : {}),
+        ...(options.titleGenerator ? { titleGenerator: options.titleGenerator } : {}),
+        ...(options.titleSettingsStore ? { titleSettingsStore: options.titleSettingsStore } : {}),
       })
       ctx.provide(workbenchControllerToken, controller)
       ctx.effect(() => async () => controller.dispose())

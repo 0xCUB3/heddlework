@@ -5,6 +5,7 @@ import type { ComposerImage, PiForkMessage, PiMessage, PiModel, PiSessionState, 
 import { createQueueState, type WorkbenchQueueState } from './queue.ts'
 import type { MutationReceipt } from '../receipts/types.ts'
 import { appendNotice, classifyNotice, type Notice, type NoticeKind, type NoticeOptions } from './notices.ts'
+import { DEFAULT_THREAD_TITLE_SETTINGS, type ThreadTitleSettings, type ThreadTitleSource } from './thread-titles.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error'
 export type { Notice, NoticeKind, NoticeOptions } from './notices.ts'
@@ -19,6 +20,10 @@ export interface ThreadLifecycle {
   pinnedAt?: number
   priority?: ThreadPriority
   labels?: string[]
+  // Who set the current name: an auto title may be replaced by a later auto title; a manual one never is.
+  titleSource?: ThreadTitleSource
+  // Set while a title generation is in flight for this thread; cleared on completion.
+  titleGeneratingAt?: number
 }
 
 export interface WorkspaceDiffFile {
@@ -117,6 +122,7 @@ export interface WorkbenchState {
   editorImages: ComposerImage[]
   receipts: MutationReceipt[]
   windowTitle: string
+  threadTitles: ThreadTitleSettings
 }
 
 let noticeId = 0
@@ -156,6 +162,7 @@ export function createInitialState(workspacePath: string): WorkbenchState {
     editorText: '',
     editorImages: [],
     windowTitle: 'Heddlework',
+    threadTitles: { ...DEFAULT_THREAD_TITLE_SETTINGS },
   }
 }
 

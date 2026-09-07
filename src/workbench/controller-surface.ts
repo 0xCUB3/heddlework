@@ -3,6 +3,7 @@ import type { ComposerImage, PiModel, RpcRecord, ThinkingLevel } from '../pi/typ
 import type { AgentTransport, TransportStatus } from '../pi/transport.ts'
 import type { AskUserSubmissionAnswer } from './ask-user.ts'
 import type { NoticeKind, NoticeOptions, ThreadPriority, WorkbenchState } from './state.ts'
+import type { ThreadTitleSettings } from './thread-titles.ts'
 import type { QueuedInput, QueueInputDraft, QueueLane } from './queue.ts'
 import type { MutationReceipt } from '../receipts/types.ts'
 import type { PresenceRegistry } from './presence.ts'
@@ -67,6 +68,9 @@ export interface WorkbenchControllerSurface {
   pinThread(path: string): void
   unpinThread(path: string): void
   renameThread(name: string): Promise<void>
+  // Asks the title model for a fresh name based on the whole thread; a no-op when generation is unavailable.
+  regenerateThreadTitle(path: string): Promise<void>
+  setThreadTitleSettings(settings: Partial<ThreadTitleSettings>): void
   setThreadPriority(path: string, priority: ThreadPriority | undefined): void
   setThreadLabels(path: string, labels: readonly string[]): void
   markThreadRead(path: string, updatedAt: number): void
