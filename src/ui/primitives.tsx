@@ -95,7 +95,7 @@ export function IconButton({
         backgroundColor: active ? colors.sidebarActive : colors.transparent,
         opacity: disabled ? 0.35 : 1,
         userSelect: 'none',
-        ...(disabled ? {} : { cursor: 'pointer', hover: { backgroundColor: colors.hover } }),
+        ...(disabled ? {} : { cursor: 'pointer', hover: { backgroundColor: active ? colors.sidebarActive : colors.hover } }),
       }}
       {...handlers}
     >

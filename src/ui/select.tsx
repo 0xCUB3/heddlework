@@ -195,7 +195,7 @@ function ComboboxOptionRow({ option, testId }: { option: SelectOption; testId?: 
       value={option.value}
       style={(state: ComboboxItemState) => optionStyle(state.highlighted || state.selected, Boolean(option.detail))}
     >
-      {(state: ComboboxItemState) => <OptionText option={option} active={state.selected} />}
+      {(state: ComboboxItemState) => <OptionText option={option} active={state.highlighted || state.selected} />}
     </ComboboxItem>
   )
 }
@@ -203,8 +203,8 @@ function ComboboxOptionRow({ option, testId }: { option: SelectOption; testId?: 
 function OptionText({ option, active }: { option: SelectOption; active: boolean }) {
   return (
     <>
-      <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, fontWeight: active ? 650 : 500, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
-      {option.detail && <text style={{ color: colors.textFaint, fontSize: 10, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.detail}</text>}
+      <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, fontWeight: 500, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
+      {option.detail && <text style={{ color: active ? colors.sidebarActiveMuted : colors.textFaint, fontSize: 10, minWidth: 0, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.detail}</text>}
     </>
   )
 }
@@ -244,7 +244,7 @@ function optionStyle(active: boolean, detailed: boolean) {
     paddingLeft: 9,
     paddingRight: 9,
     borderRadius: 7,
-    backgroundColor: active ? colors.hover : colors.popover,
+    backgroundColor: active ? colors.sidebarActive : colors.popover,
     cursor: 'pointer' as const,
   }
 }

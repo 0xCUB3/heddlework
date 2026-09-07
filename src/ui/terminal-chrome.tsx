@@ -46,7 +46,7 @@ export function TerminalSessionTabs({
             onKeyDown={(event) => { if (event.key === 'enter') onSelect(session.id) }}
           >
             <Icon name="terminal" size={11} color={session.status.kind === 'running' ? colors.success : colors.textFaint} />
-            <text style={{ minWidth: 0, flexGrow: 1, color: colors.text, fontSize: 10, fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{label}</text>
+            <text style={{ minWidth: 0, flexGrow: 1, color: colors.text, fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{label}</text>
             <div
               testId={'terminal-tab-close-' + session.id}
               tabIndex={-1}

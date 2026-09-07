@@ -10,6 +10,7 @@ export interface ColorPalette {
   sidebarControl: string
   sidebarHover: string
   sidebarActive: string
+  sidebarActiveMuted: string
   settledText: string
   settledMeta: string
   settledIcon: string

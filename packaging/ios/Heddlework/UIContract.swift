@@ -16,6 +16,7 @@ struct UIContract: Decodable {
         let background: String?
         let sidebar: String?
         let sidebarActive: String?
+        let sidebarActiveMuted: String?
         let sidebarHover: String?
         let card: String?
         let raised: String?
@@ -89,7 +90,8 @@ enum AppColors {
 
     static var window: Color { color(\.window, fallbackLight: "#FDFDFD", fallbackDark: "#0A0A0A") }
     static var sidebar: Color { color(\.sidebar, fallbackLight: "#FAFAFA", fallbackDark: "#090A0B") }
-    static var sidebarActive: Color { color(\.sidebarActive, fallbackLight: "#FFFFFF", fallbackDark: "#1B1C1D") }
+    static var sidebarActive: Color { color(\.sidebarActive, fallbackLight: "#DCE6F3", fallbackDark: "#283B52") }
+    static var sidebarActiveMuted: Color { color(\.sidebarActiveMuted, fallbackLight: "#46566B", fallbackDark: "#BBC9DC") }
     static var card: Color { color(\.card, fallbackLight: "#FFFFFF", fallbackDark: "#111212") }
     static var raised: Color { color(\.raised, fallbackLight: "#ECECEF", fallbackDark: "#151616") }
     static var border: Color { color(\.border, fallbackLight: "#E4E4E7", fallbackDark: "#1D1E1E") }
@@ -97,7 +99,7 @@ enum AppColors {
     static var muted: Color { color(\.textMuted, fallbackLight: "#71717A", fallbackDark: "#A0A0A3") }
     static var primary: Color { color(\.primary, fallbackLight: "#1B4ED8", fallbackDark: "#346BF1") }
     static var background: Color { color(\.background, fallbackLight: "#FDFDFD", fallbackDark: "#0A0A0A") }
-    static var sidebarHover: Color { color(\.sidebarHover, fallbackLight: "#FDFDFD", fallbackDark: "#151617") }
+    static var sidebarHover: Color { color(\.sidebarHover, fallbackLight: "#ECEEF2", fallbackDark: "#1B2028") }
     static var textFaint: Color { color(\.textFaint, fallbackLight: "#85868D", fallbackDark: "#66676A") }
     static var borderStrong: Color { color(\.borderStrong, fallbackLight: "#D0D0D5", fallbackDark: "#2A2B2B") }
     static var info: Color { color(\.info, fallbackLight: "#2563B8", fallbackDark: "#60A5FA") }

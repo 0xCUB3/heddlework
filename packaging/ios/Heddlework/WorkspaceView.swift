@@ -378,7 +378,7 @@ struct SidebarView: View {
                 .font(.workbench(size: 15))
                 .foregroundStyle(active ? AppColors.text : AppColors.textFaint)
                 .frame(width: 30, height: 30)
-                .background(active ? AppColors.sidebarHover : Color.clear)
+                .background(active ? AppColors.sidebarActive : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
         }
         .accessibilityLabel(label)
@@ -395,20 +395,23 @@ private struct NativeSessionCard: View {
     let onSnooze: () -> Void
     let onSchedule: (Double) -> Void
 
+    private var selected: Bool { SessionCatalog.isCurrentSession(session, state: snapshot?.session) }
+    private var metadataColor: Color { selected ? AppColors.sidebarActiveMuted : AppColors.textFaint }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 5) {
-                        Image(systemName: "folder").font(.workbench(size: 11)).foregroundStyle(AppColors.textFaint)
-                        Text(SessionCatalog.projectName(for: session)).font(.workbench(size: 10, weight: .medium)).foregroundStyle(AppColors.muted).lineLimit(1)
+                        Image(systemName: "folder").font(.workbench(size: 11)).foregroundStyle(metadataColor)
+                        Text(SessionCatalog.projectName(for: session)).font(.workbench(size: 10, weight: .medium)).foregroundStyle(selected ? AppColors.sidebarActiveMuted : AppColors.muted).lineLimit(1)
                         Spacer(minLength: 70)
                     }
-                    Text(session.title).font(.workbench(size: 12, weight: SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? .semibold : .medium)).foregroundStyle(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? AppColors.text : AppColors.muted).lineLimit(1)
+                    Text(session.title).font(.workbench(size: 12, weight: .medium)).foregroundStyle(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? AppColors.text : AppColors.muted).lineLimit(1)
                     if let branch = SessionCatalog.footerLabel(session: session) {
                         HStack(spacing: 5) {
-                            Image(systemName: "arrow.triangle.branch").font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
-                            Text(branch).font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint).lineLimit(1)
+                            Image(systemName: "arrow.triangle.branch").font(.workbench(size: 9)).foregroundStyle(metadataColor)
+                            Text(branch).font(.workbench(size: 9)).foregroundStyle(metadataColor).lineLimit(1)
                         }
                     }
                 }
@@ -418,7 +421,7 @@ private struct NativeSessionCard: View {
             }
             Text(SessionCatalog.relativeTime(from: session.modifiedAt ?? session.updatedAt))
                 .font(.workbench(size: 9))
-                .foregroundStyle(AppColors.textFaint)
+                .foregroundStyle(metadataColor)
                 .padding(.top, 9)
                 .padding(.trailing, 6)
                 .allowsHitTesting(false)

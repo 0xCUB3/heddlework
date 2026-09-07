@@ -149,7 +149,7 @@ function QuestionTabs({ questionnaire, currentTab, drafts, onChange }: { questio
         return (
           <div key={`${index}-${question.header}`} testId={`ask-user-tab-${index}`} tabIndex={0} style={{ minWidth: 118, height: 46, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 10, paddingRight: 10, borderRadius: 0, borderWidth: 0, borderBottomWidth: active ? 2 : 0, borderColor: active ? colors.primary : colors.transparent, backgroundColor: colors.transparent, cursor: 'pointer' }} onClick={() => onChange(index)} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onChange(index) }}>
             <text style={{ color: answered ? colors.success : colors.textFaint, fontSize: 10 }}>{answered ? '✓' : String(index + 1)}</text>
-            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{question.header}</text>
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{question.header}</text>
           </div>
         )
       })}
@@ -371,7 +371,7 @@ function SessionTreeViewControls({
 function TreeControl({ label, testId, active = false, onClick }: { label: string; testId: string; active?: boolean; onClick(): void }) {
   return (
     <div testId={testId} tabIndex={0} style={{ height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 7, paddingRight: 7, borderRadius: 6, borderWidth: 1, borderColor: active ? colors.borderStrong : colors.transparent, backgroundColor: active ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: active ? colors.raised : colors.hover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
-      <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 9, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{label}</text>
+      <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap' }}>{label}</text>
     </div>
   )
 }
@@ -478,7 +478,7 @@ function SessionTreeChoiceRow({ row, index, showLabelTimestamp, onClick }: { row
       </div>
       <text testId={`session-tree-path-${index}`} style={{ width: 9, flexShrink: 0, color: colors.primary, fontSize: 10 }}>{row.onActivePath ? '•' : ''}</text>
       <text testId={`session-tree-kind-${index}`} style={{ width: 78, flexShrink: 0, color: entryColor, fontSize: 10, fontWeight: row.onActivePath ? 650 : 550, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.title}</text>
-      <text testId={`session-tree-detail-${index}`} style={{ minWidth: 0, flexGrow: 1, color: row.active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: row.active ? 600 : 400, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.detail || row.title}</text>
+      <text testId={`session-tree-detail-${index}`} style={{ minWidth: 0, flexGrow: 1, color: row.active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: 400, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{row.detail || row.title}</text>
       {row.label && <text testId={`session-tree-label-${index}`} style={{ maxWidth: 150, flexShrink: 1, marginLeft: 8, paddingLeft: 6, paddingRight: 6, color: colors.warning, fontSize: 9, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{`[${row.label}]`}</text>}
       {labelTimestamp && <text testId={`session-tree-label-time-${index}`} style={{ flexShrink: 0, marginLeft: 4, color: colors.textFaint, fontSize: 9, whiteSpace: 'nowrap' }}>{labelTimestamp}</text>}
       {row.active && <text testId="session-tree-active" style={{ marginLeft: 8, flexShrink: 0, color: colors.primary, fontSize: 9, fontWeight: 700 }}>ACTIVE</text>}

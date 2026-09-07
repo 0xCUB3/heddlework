@@ -499,7 +499,7 @@ describeNative('WorkbenchApp', () => {
     const sessionCardAfterHover = await automation.getByTestId('sidebar-session-card-active').bounds()
     expect(sessionCardAfterHover).toEqual(sessionCardBeforeHover)
     expect(root.renderer.findByTestId('sidebar-settle')?.style.backgroundColor ?? colors.transparent).toBe(colors.transparent)
-    expect(root.renderer.findByTestId('sidebar-settle-label')?.style.color).toBe(colors.textFaint)
+    expect(root.renderer.findByTestId('sidebar-settle-label')?.style.color).toBe(colors.sidebarActiveMuted)
     const settleBounds = await automation.getByTestId('sidebar-settle').bounds()
     await automation.call('mouseMove', { x: settleBounds.x + settleBounds.width / 2, y: settleBounds.y + settleBounds.height / 2 })
     await Bun.sleep(30)

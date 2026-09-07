@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { connectTest } from '@gpuix/react/automation'
 import { createTestRoot, hasNativeTestRenderer } from '@gpuix/react/testing'
 import { SidebarAudit } from './fixtures/sidebar-audit.tsx'
+import { colors } from '../src/ui/theme.ts'
 
 const native = hasNativeTestRenderer ? describe : describe.skip
 native('sidebar card hit targets', () => {
@@ -13,10 +14,13 @@ native('sidebar card hit targets', () => {
     root.renderer.flush()
     const app = await connectTest(root.renderer)
     try {
+      expect(root.renderer.findByTestId('sidebar-session-title')?.style?.fontWeight).toBe(500)
+      expect(root.renderer.findByTestId('sidebar-session-card-active')?.style?.backgroundColor).toBe(colors.sidebarActive)
       const box = await app.getByTestId('audit-plain').bounds()
       expect(box.height).toBe(60)
       await app.mouse.click({ x: box.x + 11, y: box.y + box.height - 7 })
       expect(await app.getByTestId('audit-events').textContent()).toBe('open:plain')
+      expect(root.renderer.findByTestId('sidebar-session-title')?.style?.fontWeight).toBe(500)
       await app.getByTestId('audit-git').getByTestId('sidebar-session-footer').click()
       expect(await app.getByTestId('audit-events').textContent()).toBe('open:plain,open:git')
       const card = app.getByTestId('audit-git').getByTestId('sidebar-session-card-active')

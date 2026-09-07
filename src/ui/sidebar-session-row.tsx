@@ -51,6 +51,7 @@ export function SessionRow({
 }) {
   const { compact } = useResponsiveLayout()
   const height = session.branch ? 74 : 56
+  const metadataColor = active ? colors.sidebarActiveMuted : colors.textFaint
   const activation = disabled ? {} : {
     onClick,
     onKeyDown: (event: { key?: string }) => {
@@ -85,14 +86,14 @@ export function SessionRow({
       <div testId={active ? 'sidebar-session-card-active' : 'sidebar-session-card'} style={{ position: 'relative', height, minHeight: height, maxHeight: height, flexShrink: 0, borderRadius: 8, backgroundColor: active ? colors.sidebarActive : hovered || actionsHovered || focused ? colors.sidebarHover : colors.transparent, opacity: disabled ? 0.45 : 1, overflow: 'visible' }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
         <div testId="sidebar-session-open" tabIndex={disabled ? -1 : 0} {...activation} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} style={{ width: '100%', height: '100%', padding: 9, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 4, cursor: disabled ? 'default' : 'pointer' }}>
           <div style={{ minWidth: 0, height: 16, minHeight: 16, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, paddingRight: 78 }}>
-            <Icon name="folder" size={13} color={colors.textFaint} />
-            <text style={{ color: colors.textMuted, fontSize: 10, lineHeight: 14, fontWeight: 550, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
+            <Icon name="folder" size={13} color={metadataColor} />
+            <text style={{ color: active ? colors.sidebarActiveMuted : colors.textMuted, fontSize: 10, lineHeight: 14, fontWeight: 500, minWidth: 0, flexGrow: 1, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{projectName}</text>
           </div>
           <div testId={active ? 'sidebar-session-active' : 'sidebar-session-row'} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
-            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, lineHeight: 16, fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
+            <text testId="sidebar-session-title" style={{ color: active ? colors.text : colors.textMuted, fontSize: 12, lineHeight: 16, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.title}</text>
             {session.branch ? <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 12 }}>
-              <Icon name="gitBranch" size={11} color={colors.textFaint} />
-              <text testId="sidebar-session-footer" style={{ color: colors.textFaint, fontSize: 9, lineHeight: 12, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.branch}</text>
+              <Icon name="gitBranch" size={11} color={metadataColor} />
+              <text testId="sidebar-session-footer" style={{ color: metadataColor, fontSize: 9, lineHeight: 12, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{session.branch}</text>
             </div> : null}
           </div>
         </div>
@@ -100,18 +101,18 @@ export function SessionRow({
           <>
             <div style={{ position: 'relative', display: 'flex', flexDirection: 'row' }}>
               <div testId="sidebar-snooze" tabIndex={disabled ? -1 : 0} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onClick={() => { if (!disabled) onSnooze() }} onKeyDown={event => { if (!disabled && (event.key === 'enter' || event.key === 'space')) onSnooze() }}>
-                <Icon name="clock" size={12} color={colors.textFaint} />
+                <Icon name="clock" size={12} color={metadataColor} />
               </div>
               {snoozeMounted && <SnoozeMenu open={snoozeOpen} onSchedule={onSchedule} onClose={onSnooze} />}
             </div>
             <div testId="sidebar-settle" tabIndex={disabled ? -1 : 0} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} style={{ height: 26, minWidth: 48, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingLeft: 3, paddingRight: 3, cursor: 'pointer', borderRadius: 5, hover: { backgroundColor: colors.hover } }} onMouseEnter={() => setSettleHovered(true)} onMouseLeave={() => setSettleHovered(false)} onClick={() => { if (!disabled) onSettle() }} onKeyDown={event => { if (!disabled && (event.key === 'enter' || event.key === 'space')) onSettle() }}>
-              <Icon name="check" size={11} color={settleHovered ? colors.text : colors.textFaint} />
-              <text testId="sidebar-settle-label" style={{ color: settleHovered ? colors.text : colors.textFaint, fontSize: 9 }}>Settle</text>
+              <Icon name="check" size={11} color={settleHovered ? colors.text : metadataColor} />
+              <text testId="sidebar-settle-label" style={{ color: settleHovered ? colors.text : metadataColor, fontSize: 9 }}>Settle</text>
             </div>
           </>
         </div>
         <div style={{ position: 'absolute', top: 6, right: 9, height: 26, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, opacity: showActions ? 0 : 1, pointerEvents: 'none' }}>
-          <text style={{ color: running ? colors.info : colors.textFaint, fontSize: 9 }}>{running ? 'Working' : relativeTime(session.modifiedAt)}</text>
+          <text style={{ color: running ? colors.info : metadataColor, fontSize: 9 }}>{running ? 'Working' : relativeTime(session.modifiedAt)}</text>
           <text style={{ color: '#E9705A', fontSize: 10, fontWeight: 700 }}>π</text>
         </div>
       </div>

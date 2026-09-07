@@ -189,7 +189,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, paddingTop: 6 }}>
         {flowsAvailable && (
-          <div testId="sidebar-flows" tabIndex={0} style={{ height: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 8, backgroundColor: flowsActive ? colors.sidebarActive : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onFlows}>
+          <div testId="sidebar-flows" tabIndex={0} style={{ height: 32, alignSelf: 'stretch', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 8, backgroundColor: flowsActive ? colors.sidebarActive : colors.transparent, cursor: 'pointer', hover: { backgroundColor: flowsActive ? colors.sidebarActive : colors.sidebarHover } }} onClick={onFlows}>
             <Icon name="gitBranch" size={15} color={flowsActive ? colors.text : colors.textMuted} />
             <text style={{ color: flowsActive ? colors.text : colors.textMuted, fontSize: 12, fontWeight: flowsActive ? 650 : 550 }}>Flows</text>
           </div>
@@ -312,12 +312,12 @@ function ProjectFilter({ value, options, onChange }: { value: string; options: A
               testId={`sidebar-project-option-${index}`}
               value={option.value}
               textValue={option.label}
-              style={(item: SelectItemState) => ({ height: 34, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 7, backgroundColor: item.highlighted || item.selected ? colors.hover : colors.popover, cursor: 'pointer' })}
+              style={(item: SelectItemState) => ({ height: 34, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, borderRadius: 7, backgroundColor: item.selected ? colors.sidebarActive : item.highlighted ? colors.hover : colors.popover, cursor: 'pointer' })}
             >
               {(item: SelectItemState) => (
                 <>
                   <Icon name="folder" size={14} color={item.selected ? colors.text : colors.textFaint} />
-                  <text style={{ minWidth: 0, flexGrow: 1, color: item.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: item.selected ? 650 : 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
+                  <text style={{ minWidth: 0, flexGrow: 1, color: item.selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{option.label}</text>
                   {item.selected && <Icon name="check" size={12} color={colors.textMuted} />}
                 </>
               )}

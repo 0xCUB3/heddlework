@@ -190,7 +190,7 @@ function ChannelPicker({ channel, onChange, disabled }: { channel: UpdateChannel
             onClick={() => { if (!disabled) onChange(value) }}
             onKeyDown={(event) => { if (!disabled && (event.key === 'enter' || event.key === 'space')) onChange(value) }}
           >
-            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{label}</text>
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>{label}</text>
           </div>
         )
       })}
@@ -381,7 +381,7 @@ function SegmentedPicker<T extends string>({ value, options, disabled, testIdPre
             onClick={() => { if (!disabled) onChange(option.value) }}
             onKeyDown={(event) => { if (!disabled && (event.key === 'enter' || event.key === 'space')) onChange(option.value) }}
           >
-            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{option.label}</text>
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>{option.label}</text>
           </div>
         )
       })}
@@ -507,7 +507,7 @@ function SettingsToggle({ enabled, testId, onChange }: { enabled: boolean; testI
         const active = enabled === value
         return (
           <div key={String(value)} testId={`${testId}-${value ? 'on' : 'off'}`} tabIndex={0} style={{ minHeight: 26, minWidth: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 8, paddingRight: 8, borderRadius: 7, borderWidth: 1, borderColor: active ? colors.borderStrong : colors.transparent, backgroundColor: active ? colors.card : colors.transparent, cursor: 'pointer', userSelect: 'none', hover: { backgroundColor: active ? colors.card : colors.hover } }} onClick={() => onChange(value)} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onChange(value) }}>
-            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500 }}>{value ? 'On' : 'Off'}</text>
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: 500 }}>{value ? 'On' : 'Off'}</text>
           </div>
         )
       })}
@@ -534,7 +534,7 @@ function ThemeModePicker({ theme, onChange }: { theme: ThemeSnapshot; onChange(m
             onClick={() => onChange(mode)}
             onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onChange(mode) }}
           >
-            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: active ? 650 : 500, whiteSpace: 'nowrap' }}>{label}</text>
+            <text style={{ color: active ? colors.text : colors.textMuted, fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>{label}</text>
           </div>
         )
       })}
