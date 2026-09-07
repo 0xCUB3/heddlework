@@ -1610,10 +1610,13 @@ export class WorkbenchController {
       ])
       if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
       if (sessionTree) this.#sessionTree = sessionTree
-      if (sessionFile) {
-        const latestPager = new PiSessionHistoryPager(sessionFile, sessionTree?.leafId)
-        const page = await latestPager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)
-        if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
+      // Pi announces the session file before it writes it (the first user message creates it),
+      // so a missing file means the transcript still lives only in pi's memory. Fall through to
+      // get_messages and attach the pager on the next refresh once the file exists.
+      const loaded = sessionFile ? await this.#tryLoadTranscriptPage(sessionFile, sessionTree?.leafId) : undefined
+      if (this.#disposed || generation !== this.#sessionSwitchGeneration || this.#sessionSwitch) return
+      if (loaded) {
+        const { pager: latestPager, ...page } = loaded
         const branchChanged = previousTree !== undefined
           && sessionTree !== undefined
           && !sessionTreeLeafDescendsFrom(sessionTree, previousTree.leafId)
@@ -1634,6 +1637,16 @@ export class WorkbenchController {
       this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), liveAssistant: undefined, liveTools: [] })
     } catch (error) {
       this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
+    }
+  }
+
+  async #tryLoadTranscriptPage(sessionFile: string, leafId: string | null | undefined): Promise<(Awaited<ReturnType<PiSessionHistoryPager['loadEarlier']>> & { pager: PiSessionHistoryPager }) | undefined> {
+    const pager = new PiSessionHistoryPager(sessionFile, leafId)
+    try {
+      return { ...(await pager.loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, HISTORY_NAVIGATION_LOAD_OPTIONS)), pager }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
     }
   }
 

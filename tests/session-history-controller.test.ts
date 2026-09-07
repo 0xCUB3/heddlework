@@ -110,4 +110,39 @@ describe('controller-backed persisted history', () => {
       await controller.dispose()
     }
   })
+
+  it('serves the live transcript while the announced session file does not exist yet, then attaches the pager', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'heddlework-history-controller-'))
+    fixtures.push(directory)
+    const sessionPath = join(directory, 'not-yet-written.jsonl')
+    const live: PiMessage[] = [{ role: 'user', content: 'first ask', timestamp: 1 } as PiMessage]
+    const transport = new TailOnlyTransport(sessionPath, live)
+    const summary: PiSessionSummary = { id: 'paged-session', path: sessionPath, cwd: directory, title: 'Fresh', firstMessage: 'first ask', messageCount: 1, createdAt: 1, modifiedAt: 1 }
+    const controller = new WorkbenchController(transport, directory, testControllerDependencies(new OneSessionCatalog(summary)))
+    try {
+      await controller.start()
+      expect(controller.getSnapshot().messages.map((message) => message.content)).toEqual(['first ask'])
+      expect(controller.getSnapshot().notices.filter((notice) => notice.message.includes('Could not refresh transcript'))).toEqual([])
+      expect(controller.getSnapshot().messagesHasOlder).toBe(false)
+
+      // Pi flushes the file on the first reply; the next refresh should read it and expose the older page.
+      const records: Record<string, unknown>[] = [{ type: 'session', version: 3, id: 'paged-session', timestamp: '2026-01-01T00:00:00.000Z', cwd: directory }]
+      let parentId: string | null = null
+      for (let index = 0; index < 90; index += 1) {
+        const id = `message-${index}`
+        const role = index % 2 === 0 ? 'user' : 'assistant'
+        records.push({ type: 'message', id, parentId, timestamp: new Date(index + 1).toISOString(), message: { role, content: `${role} ${index}`, timestamp: index + 1 } })
+        parentId = id
+      }
+      await writeFile(sessionPath, records.map((record) => JSON.stringify(record)).join('\n') + '\n')
+      for (const listener of transport.events) listener({ type: 'message_end' })
+      await new Promise((resolve) => setTimeout(resolve, 150))
+
+      expect(controller.getSnapshot().messages).toHaveLength(80)
+      expect(controller.getSnapshot().messagesHasOlder).toBe(true)
+      expect(controller.getSnapshot().notices.filter((notice) => notice.message.includes('Could not refresh transcript'))).toEqual([])
+    } finally {
+      await controller.dispose()
+    }
+  })
 })
