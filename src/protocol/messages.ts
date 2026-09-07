@@ -4,6 +4,7 @@ import type { SleepPreventionSnapshot } from '../power/types.ts'
 import type { WorkbenchCommand } from './commands.ts'
 import type { SnapshotPatch, WorkbenchSnapshot } from './snapshot.ts'
 import type { RemoteTerminalFrame, RemoteTerminalSnapshot } from './terminal.ts'
+import type { HostIdentity } from './host-identity.ts'
 
 export type ClientMessage =
   | { kind: 'hello'; protocol: number }
@@ -19,7 +20,7 @@ export interface AttentionEvent {
 }
 
 export type ServerMessage =
-  | { kind: 'welcome'; protocol: number; workspacePath: string; snapshot: WorkbenchSnapshot; flows: FlowRuntimeSnapshot; hostUrls?: string[]; browserIntegrations?: BrowserIntegrationSnapshot; sleepPrevention?: SleepPreventionSnapshot; terminal?: RemoteTerminalSnapshot }
+  | { kind: 'welcome'; protocol: number; workspacePath: string; snapshot: WorkbenchSnapshot; flows: FlowRuntimeSnapshot; hostUrls?: string[]; host?: HostIdentity; browserIntegrations?: BrowserIntegrationSnapshot; sleepPrevention?: SleepPreventionSnapshot; terminal?: RemoteTerminalSnapshot }
   | { kind: 'browserIntegrations'; browserIntegrations: BrowserIntegrationSnapshot }
   | { kind: 'sleepPrevention'; sleepPrevention: SleepPreventionSnapshot }
   | { kind: 'terminal'; snapshot: RemoteTerminalSnapshot }

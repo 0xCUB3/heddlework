@@ -13,6 +13,7 @@ import { createRuntimeSettingsCoordinator } from '../runtime/settings-coordinato
 import { createWorkspaceHost, remoteConnectUrls, hostConnectUrl } from './server.ts'
 import { hostOptionsFromEnvironment } from './plugin.ts'
 import { hostTokenPath, loadOrCreateHostToken } from './token.ts'
+import { hostIdentityPath, loadOrCreateHostIdentity } from './identity.ts'
 import { RemoteAccessService } from './remote-access.ts'
 import { TailnetServeService } from './tailnet-serve.ts'
 import { resolveStaticRoot } from './static-root.ts'
@@ -28,6 +29,7 @@ const demo = process.env.HEDDLEWORK_DEMO === '1'
 const isolated = demo || process.env.HEDDLEWORK_RUNTIME_TEST === '1'
 const preferencePath = isolated ? false : themePreferencePath()
 const token = loadOrCreateHostToken(isolated ? join(directory, 'host-token') : hostTokenPath())
+const identity = loadOrCreateHostIdentity({ path: isolated ? false : hostIdentityPath() })
 const createSession = createRuntimeSessionFactory(directory, demo)
 const initial = await createSession({ workspacePath, id: 'default', ...(process.env.HEDDLEWORK_SESSION ? { sessionPath: process.env.HEDDLEWORK_SESSION } : {}) })
 const runtime = new SessionRuntime({ initial, createSession, path: join(directory, 'registry.json') })
@@ -44,6 +46,7 @@ const common = {
   runtime,
   workspacePath,
   token,
+  identity,
   browserIntegrations,
   sleepPrevention,
   terminals,

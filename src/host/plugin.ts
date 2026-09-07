@@ -6,6 +6,7 @@ import { terminalSessionToken } from '../terminal/plugin.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import { workbenchControllerToken } from '../workbench/plugins.ts'
 import { createWorkspaceHost, DEFAULT_HOST_BIND, DEFAULT_HOST_PORT, type WorkspaceHost } from './server.ts'
+import { loadOrCreateHostIdentity } from './identity.ts'
 import { TailnetServeService } from './tailnet-serve.ts'
 import type { TailscaleCli } from './tailscale-cli.ts'
 import { loadOrCreateHostToken } from './token.ts'
@@ -58,6 +59,7 @@ export function createWorkspaceHostPlugin(options: WorkspaceHostPluginOptions): 
           port,
           hostname: mode === 'network' ? '0.0.0.0' : DEFAULT_HOST_BIND,
           token: options.token ?? loadOrCreateHostToken(options.tokenPath ?? false),
+          identity: loadOrCreateHostIdentity({ path: options.tokenPath ? undefined : false }),
           staticRoot: options.staticRoot,
           extraHostUrls: () => tailnet?.advertisedHostUrls() ?? [],
         }),

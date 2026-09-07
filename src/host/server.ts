@@ -26,6 +26,7 @@ import { advertiseCandidates, type AdvertiseCandidate } from './advertise.ts'
 import { executeSocketCommand, HostCommandSignal, socketAttachment } from './server-runtime.ts'
 import { SessionAdmissionError, type SessionRuntime } from './session-runtime.ts'
 import { timingSafeEqualToken } from './token.ts'
+import type { HostIdentity } from '../protocol/host-identity.ts'
 
 export interface WorkspaceHostOptions {
   browserIntegrations?: BrowserIntegrationService | undefined
@@ -40,6 +41,8 @@ export interface WorkspaceHostOptions {
   staticRoot?: string | undefined
   extraHostUrls?: (() => readonly string[]) | undefined
   runtime?: SessionRuntime | undefined
+  // Who this machine is, sent in every welcome and on /health so clients can label and distinguish hosts.
+  identity?: HostIdentity | undefined
 }
 
 export interface WorkspaceHost {
@@ -116,7 +119,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
         return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 426 })
       }
       if (url.pathname === '/health') {
-        return Response.json({ ok: true, protocol: PROTOCOL_VERSION, workspacePath: options.workspacePath })
+        return Response.json({ ok: true, protocol: PROTOCOL_VERSION, workspacePath: options.workspacePath, ...(options.identity ? { host: options.identity } : {}) })
       }
       if (staticRoot && request.method === 'GET') return serveStatic(staticRoot, url.pathname)
       return new Response('Heddlework workspace host', { status: 404 })
@@ -144,6 +147,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
           ...(options.sleepPrevention ? { sleepPrevention: options.sleepPrevention.getSnapshot() } : {}),
           ...(options.terminals ? { terminal: serializeRemoteTerminal(options.terminals) } : {}),
           hostUrls: [...(options.extraHostUrls?.() ?? []), ...remoteHostUrls(hostname, server.port ?? options.port)],
+          ...(options.identity ? { host: options.identity } : {}),
         })
         sendCurrentTerminal(socket)
       },

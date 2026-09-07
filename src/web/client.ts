@@ -1,5 +1,5 @@
 import type { BrowserIntegrationSnapshot } from '../browser/integration-types.ts'
-import { applySnapshotPatch, FrameAssembler, parseServerMessage, type AttentionEvent, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
+import { applySnapshotPatch, FrameAssembler, normalizeHostIdentity, parseServerMessage, type AttentionEvent, type HostIdentity, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
 import type { FlowRuntimeSnapshot } from '../flows/types.ts'
 import type { SleepPreventionSnapshot } from '../power/types.ts'
 
@@ -10,6 +10,10 @@ export interface WorkspaceClientView {
   sleepPrevention?: SleepPreventionSnapshot | undefined
   status: WorkspaceClientStatus
   workspacePath: string
+  // Identity of the host that sent the last welcome; undefined for hosts that predate it.
+  host?: HostIdentity | undefined
+  // The URL this client is currently connected through (may rotate among advertised candidates).
+  url?: string | undefined
   state: WorkbenchSnapshot | undefined
   flows: FlowRuntimeSnapshot | undefined
   lastError?: string | undefined
@@ -136,7 +140,7 @@ export class WorkspaceClient {
         this.#candidates = mergeCandidates(this.#url, message.hostUrls)
         // A fresh welcome supersedes any error from the previous socket (rejected sends, socket errors), otherwise the
         // red status line outlives the outage it described.
-        this.#set({ status: 'open', lastError: undefined, workspacePath: message.workspacePath, state: normalizeSettledSnapshot(message.snapshot), flows: message.flows, browserIntegrations: message.browserIntegrations, sleepPrevention: message.sleepPrevention })
+        this.#set({ status: 'open', lastError: undefined, workspacePath: message.workspacePath, host: normalizeHostIdentity(message.host), url: this.#url, state: normalizeSettledSnapshot(message.snapshot), flows: message.flows, browserIntegrations: message.browserIntegrations, sleepPrevention: message.sleepPrevention })
         return
       }
       if (message.kind === 'patch' && this.#view.state) {

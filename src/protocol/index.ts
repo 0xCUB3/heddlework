@@ -1,4 +1,5 @@
 export { PROTOCOL_VERSION, type ProtocolVersion } from './version.ts'
+export { HOST_MACHINE_KINDS, hostMachineKindFromHints, hostMachineLabel, isHostIdentity, isHostMachineKind, normalizeHostIdentity, shortHostName, type HostArch, type HostIdentity, type HostMachineKind, type HostOs } from './host-identity.ts'
 export { describePiAdapter, isHarnessAdapter, type HarnessAdapter, type HarnessCapabilities } from './adapter.ts'
 export {
   applyWorkbenchCommand,
