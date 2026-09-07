@@ -64,6 +64,19 @@ A heddle guides one thread inside a loom harness. Heddlework applies that model 
 
 Heddlework currently launches Pi as an RPC sidecar. The transport boundary in `src/pi/transport.ts` is intentionally small; future harness adapters can implement the same application-facing contract while preserving their own execution semantics.
 
+### Live Pi terminal sessions
+
+The app can also attach to an existing Pi TUI process and show its streaming response and tool activity. Start Heddlework once to install the user extension, then start Pi normally—or use `/reload` in an already-running TUI before opening its thread in the app. Prompts and supported controls from either frontend go to the same authoritative process. Closing an attached frontend does not terminate that process.
+
+To access an app-owned session from a terminal, run the Heddlework terminal attach client from this checkout:
+
+```sh
+bun run pi:attach -- --list
+bun run pi:attach -- --session /absolute/path/to/session.jsonl
+```
+
+This is a terminal frontend, not a second stock Pi TUI. Do not start another `pi --session` writer for the same live session. See [Pi live synchronization](docs/pi-live-sync.md) for setup, ownership, reconnect behavior, and limits.
+
 ## Install today: source preview
 
 Requirements:
