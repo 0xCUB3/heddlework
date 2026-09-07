@@ -81,12 +81,13 @@ export class DesktopHostSwitcher implements HostSwitcherSurface {
     this.#unsubSaved = this.#savedHosts.subscribe(() => this.#emit())
   }
 
-  subscribe(listener: () => void): () => void {
+  // Arrow properties so React's useSyncExternalStore can take them unbound.
+  subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener)
     return () => { this.#listeners.delete(listener) }
   }
 
-  getSnapshot(): HostSwitcherSnapshot {
+  getSnapshot = (): HostSwitcherSnapshot => {
     return this.#snapshot
   }
 

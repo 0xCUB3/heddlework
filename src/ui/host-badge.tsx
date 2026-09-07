@@ -1,4 +1,4 @@
-import React, { useSyncExternalStore } from 'react'
+import React, { useCallback, useSyncExternalStore } from 'react'
 import type { HostMachineKind } from '../protocol/host-identity.ts'
 import { shortHostName } from '../protocol/host-identity.ts'
 import type { CurrentHost, HostLinkStatus, HostSwitcherSnapshot, HostSwitcherSurface } from '../client/host-switcher.ts'
@@ -12,10 +12,9 @@ const emptySubscribe = (_listener: () => void): (() => void) => () => undefined
 const noHostSnapshot = (): undefined => undefined
 
 export function useHostSwitcherSnapshot(switcher: HostSwitcherSurface | undefined): HostSwitcherSnapshot | undefined {
-  return useSyncExternalStore(
-    switcher ? switcher.subscribe : emptySubscribe,
-    switcher ? switcher.getSnapshot : noHostSnapshot,
-  )
+  const subscribe = useCallback((listener: () => void) => (switcher ? switcher.subscribe(listener) : emptySubscribe(listener)), [switcher])
+  const getSnapshot = useCallback(() => (switcher ? switcher.getSnapshot() : noHostSnapshot()), [switcher])
+  return useSyncExternalStore(subscribe, getSnapshot)
 }
 
 export function hostMachineIcon(machine: HostMachineKind | undefined): HostMachineIcon {

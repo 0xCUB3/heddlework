@@ -145,4 +145,21 @@ describe('DesktopHostSwitcher', () => {
     expect(disposed).toContain('local-initial')
     expect(currents.at(-1)?.origin).toBe('remote')
   })
+
+  it('exposes subscribe and getSnapshot as bound functions for useSyncExternalStore', () => {
+    const savedHosts = new SavedHostsStore(memorySavedHostsBackend())
+    const switcher = new DesktopHostSwitcher({
+      local: { descriptor: localDescriptor },
+      savedHosts,
+      buildServices: async () => fakeServices('bound'),
+      onServices: () => undefined,
+    })
+    // React calls these detached from the instance, exactly like app.tsx does.
+    const { subscribe, getSnapshot } = switcher
+    expect(getSnapshot().current.origin).toBe('local')
+    let notified = 0
+    const unsubscribe = subscribe(() => { notified += 1 })
+    expect(typeof unsubscribe).toBe('function')
+    unsubscribe()
+  })
 })
