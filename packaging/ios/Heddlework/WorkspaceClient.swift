@@ -15,6 +15,7 @@ final class WorkspaceClient: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var pendingCommands: [Int: String] = [:]
     @Published private(set) var candidates: [String] = []
+    @Published var host: HostIdentity?
 
     private var task: URLSessionWebSocketTask?
     private var url = ""
@@ -60,6 +61,7 @@ final class WorkspaceClient: ObservableObject {
         task = nil
         pendingCommands.removeAll()
         status = .closed
+        host = nil
         browserIntegrations = nil
         sleepPrevention = nil
         terminal = nil
@@ -159,7 +161,7 @@ final class WorkspaceClient: ObservableObject {
     fileprivate func apply(_ event: WorkspaceWireEvent, generation: Int, task: URLSessionWebSocketTask) {
         guard isCurrent(task: task, generation: generation) else { return }
         switch event {
-        case .welcome(let workspacePath, let snapshot, let flows, let browserIntegrations, let sleepPrevention, let terminal, let hostUrls, let protocolVersion):
+        case .welcome(let workspacePath, let snapshot, let flows, let browserIntegrations, let sleepPrevention, let terminal, let hostUrls, let host, let protocolVersion):
             guard protocolVersion == 1 else {
                 lastError = "Unsupported host protocol \(protocolVersion ?? -1)"
                 self.task?.cancel(with: .protocolError, reason: nil)
@@ -171,6 +173,7 @@ final class WorkspaceClient: ObservableObject {
             self.browserIntegrations = browserIntegrations
             self.sleepPrevention = sleepPrevention
             self.terminal = terminal
+            self.host = host
             lastError = nil
             status = .open
             candidates = mergeCandidates(current: url, advertised: hostUrls)
@@ -243,7 +246,7 @@ final class WorkspaceClient: ObservableObject {
 }
 
 enum WorkspaceWireEvent: @unchecked Sendable {
-    case welcome(workspacePath: String, snapshot: WorkbenchSnapshot, flows: FlowRuntimeSnapshot?, browserIntegrations: BrowserIntegrationSnapshot?, sleepPrevention: SleepPreventionSnapshot?, terminal: RemoteTerminalSnapshot?, hostUrls: [String]?, protocolVersion: Int?)
+    case welcome(workspacePath: String, snapshot: WorkbenchSnapshot, flows: FlowRuntimeSnapshot?, browserIntegrations: BrowserIntegrationSnapshot?, sleepPrevention: SleepPreventionSnapshot?, terminal: RemoteTerminalSnapshot?, hostUrls: [String]?, host: HostIdentity?, protocolVersion: Int?)
     case snapshot(WorkbenchSnapshot)
     case flows(FlowRuntimeSnapshot?)
     case browserIntegrations(BrowserIntegrationSnapshot?)
@@ -290,6 +293,7 @@ actor WorkspaceWireEngine {
                 sleepPrevention: envelope.sleepPrevention,
                 terminal: envelope.terminal,
                 hostUrls: envelope.hostUrls,
+                host: envelope.host,
                 protocolVersion: envelope.protocolVersion
             ))
         case "patch":

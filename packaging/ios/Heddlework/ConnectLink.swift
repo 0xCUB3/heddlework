@@ -8,6 +8,11 @@ struct ConnectLink: Equatable {
     let hostURL: URL
     let token: String
 
+    init(hostURL: URL, token: String) {
+        self.hostURL = hostURL
+        self.token = token
+    }
+
     init?(url: URL) {
         guard let parsed = Self.parse(url) else { return nil }
         hostURL = parsed.hostURL
