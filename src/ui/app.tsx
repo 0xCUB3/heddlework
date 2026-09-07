@@ -36,6 +36,8 @@ import type { PluginHost } from '../plugins/host.ts'
 import type { SleepPreventionService } from '../power/service.ts'
 import type { UpdateService } from '../updates/service.ts'
 import { isLedgerNotice, toastNotices, unreadLedgerNotices } from '../workbench/notices.ts'
+import { clampPanelSize, draggedPanelSize, type LayoutStorage, type PanelSizes, type ResizePanel } from './panel-layout.ts'
+import { ResizeHandle } from './resize-handle.tsx'
 import { DESKTOP_CLIENT_ID } from '../workbench/presence.ts'
 
 type Surface = 'chat' | 'flows' | 'settings'
@@ -64,6 +66,7 @@ export function WorkbenchApp({
   pluginHost,
   updates,
   onQuit,
+  layoutStorage,
 }: {
   controller: WorkbenchController
   presenters: ReadonlyMap<string, ToolPresenter>
@@ -79,6 +82,7 @@ export function WorkbenchApp({
   browsers?: BrowserSessionService
   themeManager?: ThemeManager
   onQuit?(): void
+  layoutStorage?: LayoutStorage
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const theme = useSyncExternalStore(themeManager.subscribe, themeManager.getSnapshot)
@@ -87,18 +91,20 @@ export function WorkbenchApp({
   const windowSize = useWindowSize({ intervalMs: 50 })
   const windowInsets = useWindowInsets({ intervalMs: 50 })
   const safeWidth = Math.max(1, windowSize.width - windowInsets.effective.left - windowInsets.effective.right)
-  const layout = resolveResponsiveLayout(safeWidth)
+  const baseLayout = resolveResponsiveLayout(safeWidth)
+  const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => layoutStorage?.read() ?? {})
+  const panelSizesRef = useRef(panelSizes)
+  const [resizeDrag, setResizeDrag] = useState<{ panel: ResizePanel; start: number; size: number; before: PanelSizes } | undefined>()
   const [surface, setSurface] = useState<Surface>('chat')
   const [composerPickerOpen, setComposerPickerOpen] = useState(false)
-  const [leftSidebarOpen, setLeftSidebarOpen] = useState(!layout.navigationOverlay)
-  const [leftSidebarMounted, setLeftSidebarMounted] = useState(!layout.navigationOverlay)
-  const previousNavigationOverlay = useRef(layout.navigationOverlay)
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(!baseLayout.navigationOverlay)
+  const [leftSidebarMounted, setLeftSidebarMounted] = useState(!baseLayout.navigationOverlay)
+  const previousNavigationOverlay = useRef(baseLayout.navigationOverlay)
   const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
   const [bottomTerminalMounted, setBottomTerminalMounted] = useState(false)
-  const [bottomTerminalHeight, setBottomTerminalHeight] = useState(TERMINAL_DOCK_DEFAULT_HEIGHT)
   const [bottomTerminalFullscreen, setBottomTerminalFullscreen] = useState(false)
-  const [bottomResizeDrag, setBottomResizeDrag] = useState<{ startY: number; startHeight: number } | undefined>()
   const [rightPanel, setRightPanel] = useState<RightPanel | undefined>()
+  const layout = { ...baseLayout, sidebarWidth: baseLayout.navigationOverlay ? baseLayout.sidebarWidth : clampPanelSize(panelSizes.sidebar ?? baseLayout.sidebarWidth, 220, Math.min(440, safeWidth - 360 - (rightPanel ? 320 : 0))) }
   const [displayedRightPanel, setDisplayedRightPanel] = useState<RightPanel | undefined>()
   const [panelFullscreen, setPanelFullscreen] = useState(false)
   const [panelFullscreenRendered, setPanelFullscreenRendered] = useState(false)
@@ -318,10 +324,10 @@ export function WorkbenchApp({
   const fullscreenVisible = panelFullscreenVisible || bottomFullscreenVisible
   const animatedSidebarProgress = leftSidebarOpen && !panelFullscreenTarget && !bottomFullscreenVisible ? 1 : 0
   const mainWidth = safeWidth - (layout.navigationOverlay ? 0 : layout.sidebarWidth * animatedSidebarProgress)
-  const standardPanelWidth = Math.min(mainWidth, Math.max(420, Math.floor(mainWidth * 0.44)))
-  const panelWidth = layout.panelOverlay ? safeWidth : displayedRightPanel === 'notifications' ? Math.min(422, mainWidth) : standardPanelWidth
+  const standardPanelWidth = displayedRightPanel === 'notifications' ? 422 : Math.max(420, Math.floor(mainWidth * 0.44))
+  const panelWidth = layout.panelOverlay ? safeWidth : clampPanelSize(panelSizes.right ?? standardPanelWidth, 320, Math.max(1, mainWidth - 320))
   const safeHeight = Math.max(1, windowSize.height - windowInsets.effective.top - windowInsets.effective.bottom)
-  const restDockHeight = Math.max(TERMINAL_DOCK_MIN_HEIGHT, Math.min(Math.floor(safeHeight * 0.7), bottomTerminalHeight))
+  const restDockHeight = clampPanelSize(panelSizes.terminal ?? TERMINAL_DOCK_DEFAULT_HEIGHT, TERMINAL_DOCK_MIN_HEIGHT, Math.max(1, safeHeight - 160))
   const dockHeight = !bottomTerminalOpen || panelFullscreenTarget ? 0 : bottomFullscreenVisible ? safeHeight : restDockHeight
   const showBottomDock = Boolean(terminals) && (bottomTerminalOpen || bottomTerminalMounted)
   const panelFullscreenProgress = panelFullscreenTarget ? 1 : 0
@@ -351,11 +357,28 @@ export function WorkbenchApp({
         ? <SurfaceComponent fullscreen={panelFullscreenVisible} fullscreenProgress={panelFullscreenProgress} fullscreenLocked={layout.panelOverlay} panelWidth={panelWidth} appearance={theme.resolved} onToggleFullscreen={togglePanelFullscreen} onNewSurface={openSurfacePicker} onClose={closeRightPanel} />
         : null
 
+  const maximumSize = (panel: ResizePanel) => panel === 'sidebar'
+    ? Math.min(440, safeWidth - 360 - (rightPanelOpen ? panelWidth : 0))
+    : panel === 'right' ? Math.min(800, mainWidth - 320) : Math.max(1, safeHeight - 160)
+  const updateSizes = (next: PanelSizes) => { panelSizesRef.current = next; setPanelSizes(next) }
+  const beginResize = (panel: ResizePanel, start: number, size: number) => setResizeDrag({ panel, start, size, before: panelSizesRef.current })
+  const finishResize = () => { if (resizeDrag) layoutStorage?.write(panelSizesRef.current); setResizeDrag(undefined) }
+  const resizeByKey = (panel: ResizePanel, size: number, delta: number) => {
+    const next = { ...panelSizesRef.current, [panel]: draggedPanelSize(panel, size, delta, maximumSize(panel)) }
+    updateSizes(next); layoutStorage?.write(next)
+  }
+  const moveResize = (event: { x?: number; y?: number }) => {
+    if (!resizeDrag) return
+    const position = resizeDrag.panel === 'terminal' ? event.y : event.x
+    if (position === undefined) return
+    updateSizes({ ...panelSizesRef.current, [resizeDrag.panel]: draggedPanelSize(resizeDrag.panel, resizeDrag.size, position - resizeDrag.start, maximumSize(resizeDrag.panel)) })
+  }
+
   const sidebarHost = (
     <MotionDiv
       initial={layout.navigationOverlay ? { width: 0 } : false}
       animate={{ width: layout.sidebarWidth * animatedSidebarProgress }}
-      transition={LAYOUT_MOTION_TRANSITION}
+      transition={resizeDrag ? { duration: 0 } : LAYOUT_MOTION_TRANSITION}
       testId="left-sidebar-host"
       style={layout.navigationOverlay
         ? { position: 'absolute', top: 0, bottom: 0, left: 0, width: layout.sidebarWidth * animatedSidebarProgress, height: '100%', flexShrink: 0, overflow: 'hidden' }
@@ -387,6 +410,7 @@ export function WorkbenchApp({
           onNotifications={toggleNotifications}
         />
       </div>
+      {!layout.navigationOverlay && animatedSidebarProgress > 0 && <ResizeHandle testId="left-sidebar-resize" edge="right" onStart={x => beginResize('sidebar', x, layout.sidebarWidth)} onStep={delta => resizeByKey('sidebar', layout.sidebarWidth, delta)} />}
     </MotionDiv>
   )
 
@@ -439,7 +463,9 @@ export function WorkbenchApp({
                     height={dockHeight}
                     width={dockWidth}
                     appearance={theme.resolved}
-                    onResizeStart={(y) => setBottomResizeDrag({ startY: y, startHeight: restDockHeight })}
+                    resizing={Boolean(resizeDrag)}
+                    onResizeStart={(y) => beginResize('terminal', y, restDockHeight)}
+                    onResizeStep={(delta) => resizeByKey('terminal', restDockHeight, delta)}
                     onToggleFullscreen={() => setBottomTerminalFullscreen((value) => !value)}
                     onClose={closeBottomTerminal}
                   />
@@ -452,7 +478,7 @@ export function WorkbenchApp({
                     width: layout.panelOverlay ? (rightPanelOpen ? safeWidth : 0) : rightPanelHostWidth,
                     flexGrow: layout.panelOverlay ? 0 : rightPanelHostFlexGrow,
                   }}
-                  transition={LAYOUT_MOTION_TRANSITION}
+                  transition={resizeDrag ? { duration: 0 } : LAYOUT_MOTION_TRANSITION}
                   testId="right-panel-host"
                   style={layout.panelOverlay
                     ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: rightPanelOpen ? safeWidth : 0, minWidth: 0, height: '100%', flexShrink: 0, overflow: 'hidden' }
@@ -466,6 +492,7 @@ export function WorkbenchApp({
                       {panel}
                     </TerminalProjectionSuspensionProvider>
                   </div>
+                  {!layout.panelOverlay && !panelFullscreenVisible && rightPanelOpen && <ResizeHandle testId="right-panel-resize" edge="left" onStart={x => beginResize('right', x, panelWidth)} onStep={delta => resizeByKey('right', panelWidth, delta)} />}
                 </MotionDiv>
               )}
             </div>
@@ -483,18 +510,11 @@ export function WorkbenchApp({
               {sidebarHost}
             </>
           )}
-          {bottomResizeDrag && (
-            <div
-              testId="terminal-dock-drag-overlay"
-              style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, cursor: 'ns-resize' }}
-              onMouseMove={(event) => {
-                const delta = bottomResizeDrag.startY - (event.y ?? 0)
-                setBottomTerminalHeight(Math.max(TERMINAL_DOCK_MIN_HEIGHT, Math.min(Math.floor(safeHeight * 0.75), bottomResizeDrag.startHeight + delta)))
-              }}
-              onMouseUp={() => setBottomResizeDrag(undefined)}
-            />
-          )}
-          {browsers && <BrowserNativeHost service={browsers} suspended={Boolean(bottomResizeDrag)} />}
+          {resizeDrag && <div testId={resizeDrag.panel === 'terminal' ? 'terminal-dock-drag-overlay' : 'panel-resize-overlay'} autoFocus tabIndex={0}
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, userSelect: 'none', cursor: resizeDrag.panel === 'terminal' ? 'ns-resize' : 'ew-resize' }}
+            onMouseMove={moveResize} onMouseUp={finishResize} onMouseLeave={finishResize}
+            onKeyDown={event => { if (event.key === 'escape') { updateSizes(resizeDrag.before); setResizeDrag(undefined) } }} />}
+          {browsers && <BrowserNativeHost service={browsers} suspended={Boolean(resizeDrag)} />}
           {!fullscreenVisible && (
             <MotionDiv
               initial={false}

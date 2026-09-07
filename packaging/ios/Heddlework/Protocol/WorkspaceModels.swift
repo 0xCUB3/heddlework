@@ -98,6 +98,7 @@ struct SessionSummary: Decodable, Equatable, Identifiable {
     var path: String
     var name: String? = nil
     var cwd: String? = nil
+    var branch: String? = nil
     var sessionTitle: String? = nil
     var updatedAt: Double? = nil
     var modifiedAt: Double? = nil
@@ -110,7 +111,7 @@ struct SessionSummary: Decodable, Equatable, Identifiable {
     }
     var displayTitle: String { title }
     enum CodingKeys: String, CodingKey {
-        case path, name, cwd, updatedAt, modifiedAt, messageCount
+        case path, name, cwd, branch, updatedAt, modifiedAt, messageCount
         case sessionTitle = "title"
     }
 }

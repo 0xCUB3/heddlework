@@ -405,26 +405,31 @@ private struct NativeSessionCard: View {
                         Spacer(minLength: 70)
                     }
                     Text(session.title).font(.workbench(size: 12, weight: SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? .semibold : .medium)).foregroundStyle(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? AppColors.text : AppColors.muted).lineLimit(1)
-                    HStack(spacing: 5) {
-                        Image(systemName: "folder").font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
-                        Text(SessionCatalog.footerLabel(session: session)).font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint).lineLimit(1)
+                    if let branch = SessionCatalog.footerLabel(session: session) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.triangle.branch").font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint)
+                            Text(branch).font(.workbench(size: 9)).foregroundStyle(AppColors.textFaint).lineLimit(1)
+                        }
                     }
                 }
                 .padding(9)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             Text(SessionCatalog.relativeTime(from: session.modifiedAt ?? session.updatedAt))
                 .font(.workbench(size: 9))
                 .foregroundStyle(AppColors.textFaint)
                 .padding(.top, 9)
                 .padding(.trailing, 6)
+                .allowsHitTesting(false)
         }
-        .frame(height: WorkbenchLayoutMetrics.sessionCardHeight)
+        .frame(height: SessionCatalog.footerLabel(session: session) == nil ? 56 : WorkbenchLayoutMetrics.sessionCardHeight - 4)
         .background(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? AppColors.sidebarActive : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 8)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier(SessionCatalog.isCurrentSession(session, state: snapshot?.session) ? "sidebar-session-card-active" : "sidebar-session-card")
+        .padding(.bottom, 4)
         .accessibilityLabel(session.title)
         .overlay(alignment: .topTrailing) {
             if snoozeOpen {

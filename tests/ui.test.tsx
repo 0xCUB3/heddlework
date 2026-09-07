@@ -487,7 +487,7 @@ describeNative('WorkbenchApp', () => {
     expect(await automation.getByTestId('right-panel-host').count()).toBe(0)
 
     const sessionCardBeforeHover = await automation.getByTestId('sidebar-session-card-active').bounds()
-    const sessionSurfaceBounds = await automation.getByTestId('sidebar-session-surface').bounds()
+    const sessionSurfaceBounds = sessionCardBeforeHover
     const cardLeftInset = sessionSurfaceBounds.x - sidebarBounds.x
     const cardRightInset = sidebarBounds.x + sidebarBounds.width - sessionSurfaceBounds.x - sessionSurfaceBounds.width
     expect(cardLeftInset).toBeGreaterThanOrEqual(8)

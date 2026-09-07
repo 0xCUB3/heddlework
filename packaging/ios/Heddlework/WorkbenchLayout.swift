@@ -111,9 +111,9 @@ enum SessionCatalog {
         return "New thread"
     }
 
-    static func footerLabel(session: SessionSummary) -> String {
-        guard let cwd = session.cwd else { return "" }
-        return cwd.replacingOccurrences(of: "^/Users/[^/]+", with: "~", options: .regularExpression)
+    static func footerLabel(session: SessionSummary) -> String? {
+        guard let branch = session.branch, !branch.isEmpty else { return nil }
+        return branch
     }
 
     static func relativeTime(from timestamp: Double?) -> String {

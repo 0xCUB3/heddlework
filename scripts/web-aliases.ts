@@ -17,6 +17,7 @@ export function webAliasPlugin(root: string): BunPlugin {
     'src/ui/clipboard-media.ts': dom('shims/clipboard-media.ts'),
     'src/ui/open-external.ts': dom('shims/open-external.ts'),
     'src/ui/theme-manager.ts': dom('shims/theme-manager.ts'),
+    'src/ui/layout-storage.ts': dom('shims/layout-storage.ts'),
     'src/ui/phone-pairing.tsx': dom('shims/phone-pairing.tsx'),
     'src/host/server.ts': dom('shims/host-server.ts'),
     'src/pi/rpc-transport.ts': dom('shims/rpc-transport.ts'),

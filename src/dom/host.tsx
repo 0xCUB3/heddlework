@@ -3,6 +3,7 @@
 // anchored, virtual-list, code, diff, markdown, shimmer, img) that packages/native draws with GPUI, so src/ui runs in a
 // browser unchanged. The web bundle aliases '@gpuix/react' and '@gpuix/react/jsx-runtime' to this module.
 
+import { popupViewportShift } from './popup-position.ts'
 import React, { createContext, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { jsx as domJsx, jsxs as domJsxs, Fragment as DomFragment } from 'react/jsx-runtime'
 import type { EventPayload, NativeRenderer, StyleDesc } from '@gpuix/react'
@@ -327,14 +328,8 @@ const Anchored = forwardRef(function Anchored(props: AnyProps, ref) {
   useLayoutEffect(() => {
     const node = inner.current
     if (!node) return
-    node.style.transform = ''
-    const rect = node.getBoundingClientRect()
-    let dx = 0, dy = 0
-    if (rect.right > window.innerWidth - margin) dx = window.innerWidth - margin - rect.right
-    if (rect.left + dx < margin) dx = margin - rect.left
-    if (rect.bottom > window.innerHeight - margin) dy = window.innerHeight - margin - rect.bottom
-    if (rect.top + dy < margin) dy = margin - rect.top
-    setShift((current) => current.x === dx && current.y === dy ? current : { x: dx, y: dy })
+    const next = popupViewportShift(node.getBoundingClientRect(), { width: window.innerWidth, height: window.innerHeight }, margin, shift)
+    setShift((current) => current.x === next.x && current.y === next.y ? current : next)
   })
   const base: React.CSSProperties = position
     ? { position: 'fixed', left: position.x, top: position.y }

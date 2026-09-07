@@ -1,5 +1,6 @@
 // The browser workbench is the desktop WorkbenchApp mounted on the DOM host, fed by a RemoteWorkbenchController.
 
+import { workbenchLayoutStorage } from '../ui/layout-storage.ts'
 import React, { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { WorkbenchKernel } from '../core/kernel.ts'
 import { WorkbenchApp } from '../ui/app.tsx'
@@ -89,6 +90,7 @@ export function WebWorkbench() {
   return (
     <GpuixContext.Provider value={{ renderer: domRenderer }}>
       <WorkbenchApp
+        layoutStorage={workbenchLayoutStorage}
         controller={asWorkbenchController(controller)}
         presenters={presenters}
         ui={registry}

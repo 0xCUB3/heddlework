@@ -1,3 +1,4 @@
+import { workbenchLayoutStorage } from './ui/layout-storage.ts'
 import React from 'react'
 import { render, resetRender } from '@gpuix/react'
 import { resolve } from 'node:path'
@@ -171,7 +172,7 @@ process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)
 
 render(
-  <WorkbenchApp browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} controller={controller} flows={flows} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
+  <WorkbenchApp layoutStorage={workbenchLayoutStorage} browserIntegrations={browserIntegrations} sleepPrevention={sleepPrevention} controller={controller} flows={flows} remoteAccess={remoteAccess} tailnetServe={tailnetServe} pluginHost={pluginHost} terminals={terminals} browsers={browsers} presenters={kernel.contributions(toolPresenterSlot)} ui={ui} themeManager={themeManager} updates={updates} onQuit={shutdown} />,
   {
     ...createWindowOptions(
       process.platform,

@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
-import { basename, dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { withSessionBranches } from './session-branches.ts'
 import { asRecord, contentText } from '../workbench/state.ts'
 
 export interface PiSessionSummary {
@@ -12,6 +13,7 @@ export interface PiSessionSummary {
   cwd: string
   title: string
   name?: string | undefined
+  branch?: string | undefined
   firstMessage: string
   messageCount: number
   createdAt: number
@@ -117,7 +119,7 @@ async function listPiSessionsCached(
   const sessions = (await mapConcurrent(metas, options.concurrency ?? DEFAULT_CONCURRENCY, (meta) => readPiSessionSummary(meta, cache)))
     .filter((session): session is PiSessionSummary => session !== null)
     .sort((left, right) => right.modifiedAt - left.modifiedAt)
-  return options.limit === undefined ? sessions : sessions.slice(0, Math.max(0, options.limit))
+  return withSessionBranches(options.limit === undefined ? sessions : sessions.slice(0, Math.max(0, options.limit)))
 }
 
 async function listSessionPaths(cwd: string, options: SessionCatalogOptions): Promise<string[]> {
@@ -395,14 +397,4 @@ function expandTilde(path: string): string {
   return path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
 }
 
-export function sessionProjectName(session: Pick<PiSessionSummary, 'cwd'>): string {
-  return basename(session.cwd) || session.cwd || 'Unknown project'
-}
-
-export function isCurrentPiSession(
-  session: Pick<PiSessionSummary, 'id' | 'path'>,
-  current: { sessionId?: string | undefined; sessionFile?: string | undefined },
-): boolean {
-  if (current.sessionFile) return session.path === current.sessionFile
-  return Boolean(current.sessionId) && session.id === current.sessionId
-}
+export { sessionProjectName, isCurrentPiSession } from './session-summary.ts'

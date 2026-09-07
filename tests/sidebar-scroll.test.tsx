@@ -24,6 +24,33 @@ const sessions = Array.from({ length: 40 }, (_, index): PiSessionSummary => ({
 }))
 
 describeNative('sidebar initial session position', () => {
+  it('keeps the row branch when the open workspace changes and leaves unknown branches empty', async () => {
+    const controller = new WorkbenchController(new DemoTransport(), '/tmp/project', testControllerDependencies())
+    const root = createTestRoot()
+    const automation = await connectTest(root.renderer)
+    const render = async (workspace: string, branch: string | undefined) => {
+      root.render(<WorkbenchSidebar
+        state={{ ...createInitialState(workspace), sessions: [{ ...sessions[0]!, branch }], sessionsLoading: false }}
+        controller={controller} settingsActive={false} notificationsActive={false} unreadCount={0}
+        onSelectSession={() => undefined} onSettings={() => undefined} onNotifications={() => undefined}
+      />)
+      await Bun.sleep(0)
+      root.renderer.flush()
+    }
+    try {
+      await render('/tmp/project', 'feature/session')
+      expect(await automation.getByTestId('sidebar-session-footer').textContent()).toBe('feature/session')
+      await render('/tmp/another-project', 'feature/session')
+      expect(await automation.getByTestId('sidebar-session-footer').textContent()).toBe('feature/session')
+      await render('/tmp/another-project', undefined)
+      expect(root.renderer.findByTestId('sidebar-session-footer')).toBeUndefined()
+    } finally {
+      await automation.close()
+      root.unmount()
+      await controller.dispose()
+    }
+  })
+
   it('resets to the top after initial hydration without disrupting later user scrolling', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/project', testControllerDependencies())
     const root = createTestRoot()

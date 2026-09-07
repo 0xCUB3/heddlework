@@ -19,6 +19,8 @@ export function TerminalDock({
   width,
   appearance,
   onResizeStart,
+  onResizeStep,
+  resizing = false,
   onToggleFullscreen,
   onClose,
 }: {
@@ -30,6 +32,8 @@ export function TerminalDock({
   width: number
   appearance: ResolvedTheme
   onResizeStart(y: number): void
+  onResizeStep?(delta: number): void
+  resizing?: boolean
   onToggleFullscreen(): void
   onClose(): void
 }) {
@@ -57,12 +61,14 @@ export function TerminalDock({
   const trafficLightInset = trafficLightInsetFor(fullscreenProgress)
 
   return (
-    <MotionDiv initial={{ height: 0 }} animate={{ height }} transition={LAYOUT_MOTION_TRANSITION} testId="terminal-dock" style={{ height, flexShrink: 0, display: 'flex', flexDirection: 'column', borderTopWidth: fullscreenProgress > 0.5 ? 0 : 1, borderColor: colors.border, backgroundColor: colors.panel, overflow: 'hidden' }}>
+    <MotionDiv initial={{ height: 0 }} animate={{ height }} transition={resizing ? { duration: 0 } : LAYOUT_MOTION_TRANSITION} testId="terminal-dock" style={{ height, flexShrink: 0, display: 'flex', flexDirection: 'column', borderTopWidth: fullscreenProgress > 0.5 ? 0 : 1, borderColor: colors.border, backgroundColor: colors.panel, overflow: 'hidden' }}>
       <div
         testId="terminal-dock-resize"
+        tabIndex={fullscreen ? -1 : 0}
+        onKeyDown={event => { if (fullscreen) return; if (event.key === 'up') onResizeStep?.(-16); if (event.key === 'down') onResizeStep?.(16) }}
         style={{ height: TERMINAL_DOCK_RESIZE, flexShrink: 0, marginTop: -4, cursor: fullscreen ? 'default' : 'ns-resize', backgroundColor: colors.transparent }}
         onMouseDown={(event) => {
-          if (fullscreen) return
+          if (fullscreen || (event.button !== undefined && event.button !== 0)) return
           onResizeStart(event.y ?? 0)
         }}
       />

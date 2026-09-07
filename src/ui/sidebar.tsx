@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, useGpuixRequired, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import { resolve } from 'node:path'
-import { isCurrentPiSession, sessionProjectName, type PiSessionSummary } from '../pi/session-catalog.ts'
+import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import { isCurrentPiSession, sessionProjectName } from '../pi/session-summary.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
@@ -369,6 +370,7 @@ function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null 
     id: state.session.sessionId ?? 'current',
     path: state.session.sessionFile ?? `current:${state.session.sessionId ?? 'new'}`,
     cwd: state.workspacePath,
+    branch: state.workspaceDiff.branch || undefined,
     title: state.session.sessionName ?? compactTitle(firstMessage || 'New thread'),
     ...(state.session.sessionName ? { name: state.session.sessionName } : {}),
     firstMessage: firstMessage || '(no messages)',
