@@ -87,7 +87,7 @@ describeNative('WorkbenchApp', () => {
     expect(painted).toContain(project)
     expect(painted).toContain('Demo session')
     expect(painted.some((line) => line.startsWith('What should we build in '))).toBe(true)
-    expect(painted).toContain('Ask anything, @tag files/folders, $use skills, or / for commands')
+    expect(painted).toContain('Ask anything, or type / for commands and skills')
     expect(painted).not.toContain('Build')
     expect(painted).not.toContain('Pi tools')
     expect(root.renderer.findByType('virtual-list')).toHaveLength(1)
