@@ -193,20 +193,25 @@ describeNative('terminal panels', () => {
       expect(await automation.getByTestId('terminal-muted-emoji').count()).toBe(1)
 
       const scrollToControl = async (testId: string) => {
-        const scroller = root.renderer.findByTestId('settings-scroll')!
-        // bounds() of the scroller reports its scrolled content box, not the fixed viewport,
-        // so measure against the root instead; otherwise each step over-scrolls and the later
-        // controls drift above the window on smaller CI displays.
+        const scroller = root.renderer.findByTestId('settings-scroll-native')!
+        const viewport = await automation.getByTestId('settings-scroll').bounds()
         const control = await automation.getByTestId(testId).bounds()
-        const overflow = control.y + control.height - 820 + 48
+        const overflow = control.y + control.height - viewport.y - viewport.height + 24
         if (overflow > 0) {
           const offset = root.renderer.getScrollOffset(scroller.id)?.[1] ?? 0
           root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(overflow))
           root.renderer.flush()
         }
+        const visible = await automation.getByTestId(testId).bounds()
+        expect(visible.y).toBeGreaterThanOrEqual(viewport.y)
+        expect(visible.y + visible.height).toBeLessThanOrEqual(viewport.y + viewport.height)
       }
       await scrollToControl('terminal-font-family-apply')
       await automation.getByTestId('terminal-font-family').fill('Fira Code')
+      root.renderer.flush()
+      expect(String(root.renderer.findByTestId('terminal-font-family')?.customProps?.value ?? '')).toBe('Fira Code')
+      expect(root.renderer.findByTestId('terminal-font-family-apply')?.style.opacity).toBe(1)
+      await scrollToControl('terminal-font-family-apply')
       await automation.getByTestId('terminal-font-family-apply').click()
       await scrollToControl('terminal-ligatures-off')
       await automation.getByTestId('terminal-ligatures-off').click()
