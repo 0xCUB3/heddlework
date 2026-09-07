@@ -8,7 +8,7 @@ import { resolvePiExecutable } from '../pi/rpc-transport.ts'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
-import { Button } from './primitives.tsx'
+import { Button, NativeVirtualList } from './primitives.tsx'
 import { DropdownSurface, useDropdownState } from './dropdown.tsx'
 import { colors, nativeTheme, type InterfaceFonts } from './theme.ts'
 import type { ThemeMode, ThemeSnapshot } from './theme-manager.ts'
@@ -81,9 +81,9 @@ export function SettingsView({
         <div style={{ flexGrow: 1 }} />
         <Button testId="settings-done" label="Done" compact onClick={onClose} />
       </MotionDiv>
-      {/* A column scroller so only the vertical axis scrolls and the content height, not the row cross-size, sets the extent; the child centres itself with alignItems. */}
-      <div testId="settings-scroll" style={{ height: 0, flexGrow: 1, minHeight: 0, minWidth: 0, overflow: 'scroll', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
-        <div testId="settings-global" style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minHeight: mobile ? 0 : 620, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
+      <div testId="settings-scroll" style={{ flexGrow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <NativeVirtualList testId="settings-scroll-native" alignment="top" estimatedItemHeight={620} overdraw={320} style={{ width: '100%', flexGrow: 1, minHeight: 0, minWidth: 0, paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
+          <div testId="settings-global" style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minHeight: mobile ? 0 : 620, flexShrink: 0, alignSelf: 'center', display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
           <SettingsSection title="Runtime" description={onStopAllAndQuit ? "Agents keep running when you close or update the app. Reopen to reconnect." : "Global Pi connection settings for this application."}>
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
@@ -136,7 +136,8 @@ export function SettingsView({
             <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
           </SettingsSection>
           <div testId="settings-bottom-spacer" style={{ height: 52, flexShrink: 0 }} />
-        </div>
+          </div>
+        </NativeVirtualList>
       </div>
     </div>
   )
@@ -689,5 +690,3 @@ function ThemeModePicker({ theme, onChange }: { theme: ThemeSnapshot; onChange(m
 function SettingsActions({ children }: { children: React.ReactNode }) {
   return <div style={{ minHeight: 48, display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 7, padding: 9 }}>{children}</div>
 }
-
-

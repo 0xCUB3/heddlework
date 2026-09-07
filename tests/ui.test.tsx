@@ -563,7 +563,7 @@ describeNative('WorkbenchApp', () => {
     expect(root.renderer.getPaintedText()).not.toContain('Saved threads')
     expect(root.renderer.getPaintedText()).not.toContain('Persistence')
     expect(root.renderer.getPaintedText()).toContain('Alpha')
-    const settingsScroll = (await automation.getByTestId('settings-scroll').all())[0]!
+    const settingsScroll = (await automation.getByTestId('settings-scroll-native').all())[0]!
     const settingsViewportBounds = await automation.getByTestId('settings-scroll').bounds()
     let alphaBounds = await automation.getByTestId('settings-alpha').bounds()
     const overflow = alphaBounds.y + alphaBounds.height - settingsViewportBounds.y - settingsViewportBounds.height
