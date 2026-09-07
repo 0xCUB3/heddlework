@@ -173,6 +173,198 @@ describe('session runtime routing', () => {
     }
   }, 20_000)
 
+  it('does not route commands to the old thread while a new bundle is opening', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-pending-route-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-pending-route-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const baseFactory = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await baseFactory({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let beta: Awaited<ReturnType<typeof baseFactory>> | undefined
+    const createSession: ReturnType<typeof createRuntimeSessionFactory> = async (input) => {
+      const created = await baseFactory(input)
+      if (input.sessionPath === files.beta.path) {
+        beta = created
+        await gate
+      }
+      return created
+    }
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
+      await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
+      client.send({ kind: 'command', id: 2, command: { type: 'setEditorText', text: 'beta-during-open' } })
+      await Bun.sleep(20)
+      expect(initial.controller.getSnapshot().editorText).not.toBe('beta-during-open')
+      expect(client.messages.some((message) => message.kind === 'result' && message.id === 2)).toBe(false)
+      release()
+      await client.next((message) => message.kind === 'result' && message.id === 2)
+      expect(beta?.controller.getSnapshot().editorText).toBe('beta-during-open')
+      expect(initial.controller.getSnapshot().editorText).not.toBe('beta-during-open')
+    } finally {
+      release()
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
+  it('keeps the latest thread selected when rapid switches complete out of order', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-latest-route-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-latest-route-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const baseFactory = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await baseFactory({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let beta: Awaited<ReturnType<typeof baseFactory>> | undefined
+    const createSession: ReturnType<typeof createRuntimeSessionFactory> = async (input) => {
+      const created = await baseFactory(input)
+      if (input.sessionPath === files.beta.path) {
+        beta = created
+        await gate
+      }
+      return created
+    }
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
+      await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
+      client.send({ kind: 'command', id: 2, command: { type: 'switchSession', path: files.alpha.path } })
+      await client.next((message) => message.kind === 'result' && message.id === 2)
+      release()
+      await client.next((message) => message.kind === 'result' && message.id === 1)
+      client.send({ kind: 'command', id: 3, command: { type: 'setEditorText', text: 'latest-alpha' } })
+      const setResult = await client.next((message) => message.kind === 'result' && message.id === 3)
+      expect(setResult).toMatchObject({ kind: 'result', ok: true })
+      expect(runtime.attach(files.alpha.path).controller.getSnapshot().editorText).toBe('latest-alpha')
+      expect(beta?.controller.getSnapshot().editorText).not.toBe('latest-alpha')
+    } finally {
+      release()
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
+  it('does not let a late disk preview overwrite a connected live bundle', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-late-preview-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-late-preview-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const createSession = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await createSession({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    let releaseHistory!: () => void
+    const historyGate = new Promise<void>((resolve) => { releaseHistory = resolve })
+    const host = createWorkspaceHost({
+      controller: initial.controller,
+      flows: initial.flows,
+      runtime,
+      workspacePath,
+      port: 0,
+      token: generateHostToken(),
+      loadSessionHistory: async () => { await historyGate; return { messages: [], hasOlder: false } },
+    })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
+      await client.next((message) => message.kind === 'result' && message.id === 1)
+      const connected = await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connected')
+      const connectedIndex = client.messages.indexOf(connected)
+      releaseHistory()
+      await Bun.sleep(20)
+      expect(client.messages.slice(connectedIndex + 1).some((message) => message.kind === 'patch' && message.patch.changed.connection === 'connecting')).toBe(false)
+    } finally {
+      releaseHistory()
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
+  it('rejects a command whose intended navigation is superseded', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-superseded-command-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-superseded-command-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const baseFactory = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await baseFactory({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let beta: Awaited<ReturnType<typeof baseFactory>> | undefined
+    const createSession: ReturnType<typeof createRuntimeSessionFactory> = async (input) => {
+      const created = await baseFactory(input)
+      if (input.sessionPath === files.beta.path) { beta = created; await gate }
+      return created
+    }
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
+      await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
+      client.send({ kind: 'command', id: 2, command: { type: 'setEditorText', text: 'must-not-land' } })
+      client.send({ kind: 'command', id: 3, command: { type: 'switchSession', path: files.alpha.path } })
+      await client.next((message) => message.kind === 'result' && message.id === 3)
+      release()
+      const rejected = await client.next((message) => message.kind === 'result' && message.id === 2)
+      expect(rejected).toMatchObject({ kind: 'result', ok: false })
+      expect(initial.controller.getSnapshot().editorText).not.toBe('must-not-land')
+      expect(beta?.controller.getSnapshot().editorText).not.toBe('must-not-land')
+    } finally {
+      release()
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
+  it('rejects commands queued behind a failed navigation instead of rolling them back to the old thread', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-failed-command-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-failed-command-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const baseFactory = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await baseFactory({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    const createSession: ReturnType<typeof createRuntimeSessionFactory> = async (input) => {
+      if (input.sessionPath === files.beta.path) throw new Error('open failed')
+      return baseFactory(input)
+    }
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
+      client.send({ kind: 'command', id: 2, command: { type: 'setEditorText', text: 'must-not-rollback' } })
+      await client.next((message) => message.kind === 'result' && message.id === 1 && !message.ok)
+      const rejected = await client.next((message) => message.kind === 'result' && message.id === 2)
+      expect(rejected).toMatchObject({ kind: 'result', ok: false })
+      expect(initial.controller.getSnapshot().editorText).not.toBe('must-not-rollback')
+    } finally {
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
   it('shares thread lifecycle across session bundles', async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-lifecycle-'))
     const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-lifecycle-rt-'))
@@ -193,5 +385,41 @@ describe('session runtime routing', () => {
       await runtime.dispose()
     }
   }, 20_000)
-})
 
+  it('keeps an attached socket with its live owner after an external session-file change', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-external-reindex-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-external-reindex-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const createSession = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await createSession({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
+    const client = new TestClient(wsUrl(host))
+    const originalGetSnapshot = initial.controller.getSnapshot
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      ;(initial.controller as unknown as { getSnapshot: typeof initial.controller.getSnapshot }).getSnapshot = () => {
+        const state = originalGetSnapshot()
+        return { ...state, session: { ...state.session, sessionFile: files.beta.path } }
+      }
+      initial.controller.setEditorText('external-switch')
+      await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
+
+      const replacement = await runtime.ensureSession(files.alpha.path)
+      client.send({ kind: 'command', id: 77, command: { type: 'setEditorText', text: 'owner-only' } })
+      await client.next((message) => message.kind === 'result' && message.id === 77)
+
+      expect(originalGetSnapshot().editorText).toBe('owner-only')
+      expect(replacement.controller.getSnapshot().editorText).not.toBe('owner-only')
+      expect(runtime.bundleForKey(files.alpha.path)).toBe(replacement)
+      expect(runtime.bundleForKey(files.beta.path)).toBe(initial)
+    } finally {
+      ;(initial.controller as unknown as { getSnapshot: typeof initial.controller.getSnapshot }).getSnapshot = originalGetSnapshot
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+})

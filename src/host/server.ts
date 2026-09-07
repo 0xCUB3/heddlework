@@ -23,7 +23,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { attentionBody, isLedgerNotice, noticeHeadline } from '../workbench/notices.ts'
 import { routeAttention, type ClientPresence } from '../workbench/presence.ts'
 import { advertiseCandidates, type AdvertiseCandidate } from './advertise.ts'
-import { executeSocketCommand, HostCommandSignal, socketAttachment } from './server-runtime.ts'
+import { executeSocketCommand, HostCommandSignal, socketAttachment, type PendingNavigation, type RuntimeCommandHostOptions } from './server-runtime.ts'
 import { SessionAdmissionError, type SessionRuntime } from './session-runtime.ts'
 import { timingSafeEqualToken } from './token.ts'
 import type { HostIdentity } from '../protocol/host-identity.ts'
@@ -41,6 +41,7 @@ export interface WorkspaceHostOptions {
   staticRoot?: string | undefined
   extraHostUrls?: (() => readonly string[]) | undefined
   runtime?: SessionRuntime | undefined
+  loadSessionHistory?: RuntimeCommandHostOptions['loadSessionHistory']
   // Who this machine is, sent in every welcome and on /health so clients can label and distinguish hosts.
   identity?: HostIdentity | undefined
 }
@@ -61,6 +62,8 @@ interface SocketData {
   presence?: ClientPresence
   clientId: string
   sessionKey: string
+  navigationGeneration?: number
+  pendingNavigation?: PendingNavigation
 }
 
 export const DEFAULT_HOST_PORT = 4817
@@ -188,6 +191,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
           browserIntegrations: options.browserIntegrations,
           sleepPrevention: options.sleepPrevention,
           terminals: options.terminals,
+          loadSessionHistory: options.loadSessionHistory,
         }
         try {
           const commandValue = await executeSocketCommand(hostCommand, socket, message, (target, payload) => send(target as Bun.ServerWebSocket<SocketData>, payload))
@@ -219,6 +223,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
       queueMicrotask(() => {
         socket.data.scheduled = false
         if (!sockets.has(socket)) return
+        if (socket.data.sessionKey !== sessionKey) return
         const next = serializeSnapshot(controller.getSnapshot())
         const patch = diffSnapshots(socket.data.lastSnapshot, next)
         socket.data.lastSnapshot = next
@@ -282,6 +287,12 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
       flushAttention()
     })
 
+  const unsubscribeSessionKeys = options.runtime?.subscribeSessionKeys((fromKey, toKey) => {
+    for (const socket of sockets) {
+      if (socket.data.sessionKey === fromKey) socket.data.sessionKey = toKey
+    }
+  })
+
   const unsubscribeFlows = options.runtime
     ? options.runtime.subscribeFlowSnapshots((sessionKey) => {
       const bundle = options.runtime!.bundleForKey(sessionKey)
@@ -316,6 +327,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
       unsubscribeTerminalState?.()
       unsubscribeTerminalFrames?.()
       unsubscribeController()
+      unsubscribeSessionKeys?.()
       unsubscribeFlows()
       for (const socket of sockets) socket.close(1001, 'Host shutting down')
       sockets.clear()
@@ -443,4 +455,3 @@ function serveStatic(root: string, pathname: string): Response {
   if (target.endsWith('.webmanifest')) headers['content-type'] = 'application/manifest+json'
   return new Response(Bun.file(target), { headers })
 }
-

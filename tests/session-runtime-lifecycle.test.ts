@@ -143,4 +143,35 @@ describe('session runtime lazy restoration', () => {
       expect(runtime.bundleForKey(idlePath)).toBeUndefined()
     } finally { await runtime.dispose() }
   })
+
+  it('reindexes a live owner when its controller switches session files externally', async () => {
+    const { root, path } = fixture()
+    const oldPath = join(root, 'old.jsonl')
+    const newPath = join(root, 'new.jsonl')
+    const owner = bundle(root, oldPath)
+    const replacement = bundle(root, oldPath)
+    let created = 0
+    const runtime = new SessionRuntime({
+      initial: owner.value,
+      path,
+      createSession: async () => { created++; return replacement.value },
+    })
+    const migrations: Array<[string, string]> = []
+    runtime.subscribeSessionKeys((from, to) => migrations.push([from, to]))
+    try {
+      await runtime.startInitial()
+      owner.setPath(newPath)
+      owner.publish()
+
+      expect(runtime.bundleForKey(oldPath)).toBeUndefined()
+      expect(runtime.bundleForKey(newPath)).toBe(owner.value)
+      expect(runtime.defaultSessionKey).toBe(newPath)
+      expect(migrations).toEqual([[oldPath, newPath]])
+
+      expect(await runtime.ensureSession(oldPath)).toBe(replacement.value)
+      expect(created).toBe(1)
+      expect(runtime.bundleForKey(oldPath)).toBe(replacement.value)
+      expect(runtime.bundleForKey(newPath)).toBe(owner.value)
+    } finally { await runtime.dispose() }
+  })
 })

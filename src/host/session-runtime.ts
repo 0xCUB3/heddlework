@@ -124,6 +124,7 @@ export class SessionRuntime {
   readonly #snapshotListeners = new Set<(sessionKey: string) => void>()
   readonly #flowUnsubs = new Map<string, () => void>()
   readonly #flowListeners = new Set<(sessionKey: string) => void>()
+  readonly #sessionKeyListeners = new Set<(fromKey: string, toKey: string) => void>()
 
   constructor(options: SessionRuntimeOptions) {
     this.#createSession = options.createSession
@@ -154,6 +155,11 @@ export class SessionRuntime {
   subscribeFlowSnapshots(listener: (sessionKey: string) => void): () => void {
     this.#flowListeners.add(listener)
     return () => { this.#flowListeners.delete(listener) }
+  }
+
+  subscribeSessionKeys(listener: (fromKey: string, toKey: string) => void): () => void {
+    this.#sessionKeyListeners.add(listener)
+    return () => { this.#sessionKeyListeners.delete(listener) }
   }
 
   isBusy(): boolean {
@@ -275,6 +281,7 @@ export class SessionRuntime {
     this.#flowUnsubs.clear()
     this.#snapshotListeners.clear()
     this.#flowListeners.clear()
+    this.#sessionKeyListeners.clear()
     for (const session of this.#sessions.values()) await session.dispose()
     this.#sessions.clear()
     this.#started.clear()
@@ -303,16 +310,7 @@ export class SessionRuntime {
     const sessionPath = bundle.controller.getSnapshot().session.sessionFile
     if (!sessionPath) return temporaryKey
     const pathKey = resolve(sessionPath)
-    if (pathKey !== temporaryKey) {
-      this.#sessions.set(pathKey, bundle)
-      this.#sessions.delete(temporaryKey)
-      this.#migrateSessionSubscriptions(temporaryKey, pathKey)
-      if (this.#started.has(temporaryKey)) {
-        this.#started.delete(temporaryKey)
-        this.#started.add(pathKey)
-      }
-    }
-    return pathKey
+    return pathKey === temporaryKey ? temporaryKey : this.#moveSessionKey(temporaryKey, pathKey, bundle)
   }
 
   #reindexDefaultSession(): void {
@@ -353,7 +351,12 @@ export class SessionRuntime {
   #wireSession(sessionKey: string, bundle: RuntimeSessionBundle): void {
     if (!this.#snapshotUnsubs.has(sessionKey)) {
       this.#snapshotUnsubs.set(sessionKey, bundle.controller.subscribe(() => {
-        const currentKey = this.#keyForBundle(bundle) ?? sessionKey
+        let currentKey = this.#keyForBundle(bundle) ?? sessionKey
+        const sessionPath = bundle.controller.getSnapshot().session.sessionFile
+        if (sessionPath) {
+          const pathKey = resolve(sessionPath)
+          if (pathKey !== currentKey) currentKey = this.#moveSessionKey(currentKey, pathKey, bundle)
+        }
         for (const listener of this.#snapshotListeners) listener(currentKey)
       }))
     }
@@ -363,6 +366,27 @@ export class SessionRuntime {
         for (const listener of this.#flowListeners) listener(currentKey)
       }))
     }
+  }
+
+  #moveSessionKey(fromKey: string, desiredKey: string, bundle: RuntimeSessionBundle): string {
+    if (fromKey === desiredKey) return fromKey
+    const occupant = this.#sessions.get(desiredKey)
+    const snapshot = bundle.controller.getSnapshot()
+    const toKey = occupant && occupant !== bundle
+      ? registryKey(undefined, snapshot.session.sessionId ?? `${desiredKey}:${fromKey}`)
+      : desiredKey
+    if (toKey === fromKey) return fromKey
+    this.#sessions.set(toKey, bundle)
+    if (this.#sessions.get(fromKey) === bundle) this.#sessions.delete(fromKey)
+    this.#migrateSessionSubscriptions(fromKey, toKey)
+    if (this.#started.has(fromKey)) {
+      this.#started.delete(fromKey)
+      this.#started.add(toKey)
+    }
+    if (this.#defaultKey === fromKey) this.#defaultKey = toKey
+    this.#persistRegistry()
+    for (const listener of this.#sessionKeyListeners) listener(fromKey, toKey)
+    return toKey
   }
 
   async #start(key: string, bundle: RuntimeSessionBundle): Promise<void> {

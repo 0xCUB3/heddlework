@@ -25,6 +25,13 @@ export interface RuntimeCommandHostOptions {
   browserIntegrations?: BrowserIntegrationService | undefined
   sleepPrevention?: SleepPreventionService | undefined
   terminals?: TerminalSessionService | undefined
+  loadSessionHistory?: ((sessionPath: string) => Promise<{ messages: WorkbenchState['messages']; hasOlder: boolean }>) | undefined
+}
+
+export interface PendingNavigation {
+  generation: number
+  promise: Promise<void>
+  error?: unknown
 }
 
 export class HostCommandSignal extends Error {
@@ -51,8 +58,11 @@ function sendSwitchPreview(
   socket: Bun.ServerWebSocket<{ lastSnapshot: WorkbenchSnapshot | undefined }>,
   current: WorkbenchState,
   sessionPath: string,
+  isCurrent: () => boolean,
+  loadHistory: (sessionPath: string) => Promise<{ messages: WorkbenchState['messages']; hasOlder: boolean }>,
 ): void {
-  const summary = current.sessions.find((session) => session.path === sessionPath)
+  const targetPath = resolve(sessionPath)
+  const summary = current.sessions.find((session) => resolve(session.path) === targetPath)
   const preview: WorkbenchState = {
     ...current,
     ...(summary?.cwd ? { workspacePath: resolve(summary.cwd) } : {}),
@@ -66,22 +76,17 @@ function sendSwitchPreview(
     workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
   }
   const pushPreview = (state: WorkbenchState): void => {
+    if (!isCurrent()) return
     const next = serializeSnapshot(state)
     const patch = diffSnapshots(socket.data.lastSnapshot, next)
     socket.data.lastSnapshot = next
     if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
   }
   pushPreview(preview)
-  let lastPreview = socket.data.lastSnapshot
-  void new PiSessionHistoryPager(sessionPath).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, {
-    minimumConversationMessages: SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES,
-    maximumMessages: SESSION_HISTORY_PAGE_MAX_MESSAGES,
-  }).then((page) => {
-    // Only fill in the transcript while this preview is still what the socket shows. If another click
-    // or the real bundle already replaced it, that state wins.
-    if (socket.data.lastSnapshot !== lastPreview) return
+  void loadHistory(sessionPath).then((page) => {
+    // Navigation identity, not snapshot object identity, decides whether this async preview is stale.
+    if (!isCurrent()) return
     pushPreview({ ...preview, messages: page.messages, messagesHasOlder: page.hasOlder })
-    lastPreview = socket.data.lastSnapshot
   }).catch(() => { /* No transcript yet; the bundle's bootstrap fills it in. */ })
 }
 
@@ -100,12 +105,34 @@ export function resyncSocket(
 
 export async function executeSocketCommand(
   options: RuntimeCommandHostOptions,
-  socket: Bun.ServerWebSocket<{ clientId: string; sessionKey: string; lastSnapshot: WorkbenchSnapshot | undefined }>,
+  socket: Bun.ServerWebSocket<{
+    clientId: string
+    sessionKey: string
+    lastSnapshot: WorkbenchSnapshot | undefined
+    navigationGeneration?: number | undefined
+    pendingNavigation?: PendingNavigation | undefined
+  }>,
   message: { id: number; requestId?: string | undefined; command: WorkbenchCommand },
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
 ): Promise<unknown> {
   const requestId = message.requestId ?? String(message.id)
   const clientId = socket.data.clientId
+  if (options.runtime && !['switchSession', 'newSession', 'switchWorkspace'].includes(message.command.type)) {
+    const intendedGeneration = socket.data.navigationGeneration ?? 0
+    const intendedKey = socket.data.sessionKey
+    while (socket.data.pendingNavigation) {
+      const pending = socket.data.pendingNavigation
+      await pending.promise
+      if (pending.error !== undefined) {
+        if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
+        throw new HostCommandSignal('Navigation failed; command was not sent')
+      }
+      if ((socket.data.navigationGeneration ?? 0) !== intendedGeneration || socket.data.sessionKey !== intendedKey) {
+        throw new HostCommandSignal('Navigation changed; command was not sent')
+      }
+      if (socket.data.pendingNavigation === pending) break
+    }
+  }
   const { controller, flows, sessionKey } = socketAttachment(options, socket)
 
   if (options.runtime) {
@@ -120,30 +147,79 @@ export async function executeSocketCommand(
 
   try {
     if (options.runtime && message.command.type === 'newSession') {
+      const generation = (socket.data.navigationGeneration ?? 0) + 1
+      socket.data.navigationGeneration = generation
       const workspacePath = controller.getSnapshot().workspacePath
-      const created = await options.runtime.createNewSession(workspacePath)
+      const opening = options.runtime.createNewSession(workspacePath)
+      const pending: PendingNavigation = { generation, promise: opening.then(() => undefined, (error) => { pending.error = error }) }
+      socket.data.pendingNavigation = pending
+      const created = await opening
+      if (socket.data.navigationGeneration !== generation) {
+        options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
+        return undefined
+      }
+      if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
       socket.data.sessionKey = created.sessionKey
       resyncSocket(send, socket, created.bundle.controller, created.bundle.flows)
-      options.runtime.recordCommandResult(clientId, requestId, message.command, created.sessionKey, true)
+      options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
       return undefined
     }
     if (options.runtime && message.command.type === 'switchWorkspace') {
-      const opened = await options.runtime.openWorkspace(message.command.path)
+      const generation = (socket.data.navigationGeneration ?? 0) + 1
+      socket.data.navigationGeneration = generation
+      const opening = options.runtime.openWorkspace(message.command.path)
+      const pending: PendingNavigation = { generation, promise: opening.then(() => undefined, (error) => { pending.error = error }) }
+      socket.data.pendingNavigation = pending
+      const opened = await opening
+      if (socket.data.navigationGeneration !== generation) {
+        options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
+        return undefined
+      }
+      if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
       socket.data.sessionKey = opened.sessionKey
       resyncSocket(send, socket, opened.bundle.controller, opened.bundle.flows)
-      options.runtime.recordCommandResult(clientId, requestId, message.command, opened.sessionKey, true)
+      options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
       return undefined
     }
     if (options.runtime && message.command.type === 'switchSession') {
       const path = message.command.path
-      const target = options.runtime.bundleForKey(resolve(path))
+      const targetPath = resolve(path)
+      const current = controller.getSnapshot()
+      const summary = current.sessions.find((candidate) => resolve(candidate.path) === targetPath)
+      const generation = (socket.data.navigationGeneration ?? 0) + 1
+      socket.data.navigationGeneration = generation
+      let previewActive = true
+      // Stop old-session broadcasts immediately; commands arriving during startup wait below instead of
+      // accidentally attaching to the previous live bundle.
+      socket.data.sessionKey = targetPath
+      const target = options.runtime.bundleForKey(targetPath)
       // A thread with no live bundle needs a Pi process, which takes seconds. Show the thread now from
       // the current snapshot plus its transcript on disk; the real bundle replaces it when it lands.
-      if (!target) sendSwitchPreview(send, socket, controller.getSnapshot(), path)
-      const bundle = await options.runtime.ensureSession(path)
-      socket.data.sessionKey = resolve(path)
+      const isCurrent = () => previewActive && socket.data.navigationGeneration === generation && socket.data.sessionKey === targetPath
+      const loadHistory = options.loadSessionHistory ?? ((sessionPath: string) => new PiSessionHistoryPager(sessionPath).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES, {
+        minimumConversationMessages: SESSION_HISTORY_PAGE_CONVERSATION_MESSAGES,
+        maximumMessages: SESSION_HISTORY_PAGE_MAX_MESSAGES,
+      }))
+      if (!target) sendSwitchPreview(send, socket, current, path, isCurrent, loadHistory)
+      const opening = options.runtime.ensureSession(path, summary)
+      const pending: PendingNavigation = { generation, promise: opening.then(() => undefined, (error) => { pending.error = error }) }
+      socket.data.pendingNavigation = pending
+      const bundle = await opening.catch((error) => {
+        previewActive = false
+        if (socket.data.navigationGeneration === generation && socket.data.sessionKey === targetPath) {
+          socket.data.sessionKey = sessionKey
+          resyncSocket(send, socket, controller, flows)
+        }
+        throw error
+      })
+      if (!isCurrent()) {
+        options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
+        return undefined
+      }
+      previewActive = false
+      if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
       resyncSocket(send, socket, bundle.controller, bundle.flows)
-      options.runtime.recordCommandResult(clientId, requestId, message.command, socket.data.sessionKey, true)
+      options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
       return undefined
     }
 
