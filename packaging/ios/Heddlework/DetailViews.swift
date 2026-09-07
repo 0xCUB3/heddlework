@@ -289,6 +289,8 @@ struct SettingsWorkspace: View {
     var onClose: () -> Void = {}
     var onDisconnect: () -> Void = {}
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var titleModelDraft = ""
+    @State private var titleInstructionsDraft = ""
 
     private var mobile: Bool { horizontalSizeClass == .compact }
 
@@ -359,6 +361,42 @@ struct SettingsWorkspace: View {
                             settingsRow("Host power", value: "Connect to an updated host to control idle sleep on that computer.")
                         }
                     }
+                    settingsSection("Threads", description: "Automatic names for new threads, plus the model and house rules used to write them.") {
+                        Toggle(isOn: Binding(
+                            get: { client.snapshot?.threadTitles?.autoTitles ?? true },
+                            set: { client.send(CommandFactory.setThreadTitleSettings(autoTitles: $0), label: "Thread title settings") }
+                        )) {
+                            Text("Name threads automatically").font(.workbench(size: 12, weight: .medium)).foregroundStyle(AppColors.text)
+                        }
+                        .padding(.horizontal, 13)
+                        .frame(minHeight: 46)
+                        .accessibilityIdentifier("settings-auto-titles")
+                        .overlay(alignment: .bottom) { Divider().overlay(AppColors.border) }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Title model").font(.workbench(size: 12, weight: .medium)).foregroundStyle(AppColors.text)
+                            TextField("provider/id, empty = automatic", text: $titleModelDraft)
+                                .font(.workbench(size: 12))
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .submitLabel(.done)
+                                .onSubmit { commitTitleModel() }
+                                .accessibilityIdentifier("settings-title-model")
+                        }
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 10)
+                        .overlay(alignment: .bottom) { Divider().overlay(AppColors.border) }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Title instructions").font(.workbench(size: 12, weight: .medium)).foregroundStyle(AppColors.text)
+                            TextField("Extra house rules", text: $titleInstructionsDraft, axis: .vertical)
+                                .font(.workbench(size: 12))
+                                .lineLimit(3...8)
+                                .submitLabel(.done)
+                                .onSubmit { commitTitleInstructions() }
+                                .accessibilityIdentifier("settings-title-instructions")
+                        }
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 10)
+                    }
                     settingsSection("Interface", description: "Application-wide presentation and navigation defaults.") {
                         settingsRow("Appearance", value: "System")
                         settingsRow("Text font", value: "Helvetica Neue")
@@ -409,6 +447,30 @@ struct SettingsWorkspace: View {
         }
         .background(AppColors.background)
         .accessibilityIdentifier("settings-view")
+        .onAppear { syncTitleDrafts() }
+        .onChange(of: client.snapshot?.threadTitles?.titleModel) { _, next in
+            titleModelDraft = next ?? ""
+        }
+        .onChange(of: client.snapshot?.threadTitles?.instructions) { _, next in
+            titleInstructionsDraft = next ?? ""
+        }
+    }
+
+    private func syncTitleDrafts() {
+        titleModelDraft = client.snapshot?.threadTitles?.titleModel ?? ""
+        titleInstructionsDraft = client.snapshot?.threadTitles?.instructions ?? ""
+    }
+
+    private func commitTitleModel() {
+        let trimmed = titleModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        titleModelDraft = trimmed
+        client.send(CommandFactory.setThreadTitleSettings(titleModel: trimmed), label: "Title model")
+    }
+
+    private func commitTitleInstructions() {
+        let trimmed = titleInstructionsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        titleInstructionsDraft = trimmed
+        client.send(CommandFactory.setThreadTitleSettings(instructions: trimmed), label: "Title instructions")
     }
 
     private func settingsSection<Content: View>(_ title: String, description: String, @ViewBuilder content: () -> Content) -> some View {
@@ -453,6 +515,13 @@ struct SessionsView: View {
                     .contextMenu {
                         Button("Open") { client.send(CommandFactory.withString("switchSession", key: "path", value: session.path), label: "Switch session"); dismiss() }
                         Button("Settle") { client.send(CommandFactory.withString("settleThread", key: "path", value: session.path), label: "Settle thread") }
+                        Button {
+                            client.send(CommandFactory.withString("regenerateThreadTitle", key: "path", value: session.path), label: "Regenerate title")
+                        } label: {
+                            Label("Regenerate title", systemImage: "sparkles")
+                        }
+                        .disabled(client.snapshot?.threadLifecycle?[session.path]?.titleGeneratingAt != nil)
+                        .accessibilityIdentifier("thread-regenerate-title")
                     }
             }
             .navigationTitle("Sessions")
