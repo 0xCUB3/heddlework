@@ -29,6 +29,7 @@ struct ServerEnvelope: Decodable {
     let snapshot: [String: JSONValue]?
     let flows: FlowRuntimeSnapshot?
     let hostUrls: [String]?
+    let host: HostIdentity?
     let browserIntegrations: BrowserIntegrationSnapshot?
     let sleepPrevention: SleepPreventionSnapshot?
     let terminal: RemoteTerminalSnapshot?
@@ -47,6 +48,7 @@ struct ServerEnvelope: Decodable {
         case snapshot
         case flows
         case hostUrls
+        case host
         case browserIntegrations
         case sleepPrevention
         case terminal

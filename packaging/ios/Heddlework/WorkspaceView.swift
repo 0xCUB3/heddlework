@@ -5,10 +5,12 @@ import UIKit
 struct WorkspaceView: View {
     let link: ConnectLink
     let onDisconnect: () -> Void
+    @EnvironmentObject private var store: SavedHostsStore
     @StateObject private var client = WorkspaceClient()
     @State private var surface: WorkspaceSurface = .chat
     @State private var panel: DetailPanel?
     @State private var showingSessions = false
+    @State private var showingHostPicker = false
     @State private var contract = UIContract.load()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingSidebar = false
@@ -24,7 +26,7 @@ struct WorkspaceView: View {
                 }
             } else {
                 NavigationSplitView(columnVisibility: $columnVisibility) {
-                    SidebarView(client: client, surface: $surface, panel: $panel, columnVisibility: $columnVisibility, showingSessions: $showingSessions, contract: contract, onDisconnect: onDisconnect)
+                    SidebarView(client: client, surface: $surface, panel: $panel, columnVisibility: $columnVisibility, showingSessions: $showingSessions, showingHostPicker: $showingHostPicker, contract: contract, onDisconnect: onDisconnect)
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar(.hidden, for: .navigationBar)
                         .toolbar(removing: .sidebarToggle)
@@ -53,8 +55,13 @@ struct WorkspaceView: View {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
             }
         }
-        .sheet(isPresented: $showingSidebar) { NavigationStack { SidebarView(client: client, surface: $surface, panel: $panel, columnVisibility: $columnVisibility, showingSessions: $showingSessions, contract: contract, onDisconnect: onDisconnect).navigationTitle("Heddlework") } }
+        .sheet(isPresented: $showingSidebar) { NavigationStack { SidebarView(client: client, surface: $surface, panel: $panel, columnVisibility: $columnVisibility, showingSessions: $showingSessions, showingHostPicker: $showingHostPicker, contract: contract, onDisconnect: onDisconnect).navigationTitle("Heddlework") } }
         .sheet(isPresented: $showingSessions) { SessionsView(client: client) }
+        .sheet(isPresented: $showingHostPicker) { HostPickerView(client: client, link: link) }
+        .onChange(of: client.host) { _, host in
+            guard let host else { return }
+            store.remember(identity: host, url: link.hostURL, token: link.token, hostUrls: client.candidates)
+        }
         .sheet(item: dialogBinding) { DialogView(dialog: $0, client: client) }
         .alert("Workspace", isPresented: Binding(get: { client.lastError != nil }, set: { if !$0 { client.dismissError() } })) {
             Button("OK") { client.dismissError() }
@@ -69,7 +76,7 @@ struct WorkspaceView: View {
                 SettingsWorkspace(client: client, contract: contract, onClose: { surface = .chat }, onDisconnect: onDisconnect)
             } else if horizontalSizeClass == .compact {
                 VStack(spacing: 0) {
-                    HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, terminalOpen: $terminalOpen, contract: contract)
+                    HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, terminalOpen: $terminalOpen, showingHostPicker: $showingHostPicker, contract: contract)
                     if let panel {
                         DetailPanelView(panel: panel, client: client, contract: contract)
                     } else {
@@ -80,7 +87,7 @@ struct WorkspaceView: View {
                 GeometryReader { geo in
                     HStack(spacing: 0) {
                         VStack(spacing: 0) {
-                            HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, terminalOpen: $terminalOpen, contract: contract)
+                            HeaderView(client: client, surface: $surface, panel: $panel, showingSidebar: $showingSidebar, columnVisibility: $columnVisibility, terminalOpen: $terminalOpen, showingHostPicker: $showingHostPicker, contract: contract)
                             content
                         }
                         if let panel {
@@ -131,9 +138,11 @@ struct SidebarView: View {
     @Binding var panel: DetailPanel?
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var showingSessions: Bool
+    @Binding var showingHostPicker: Bool
     let contract: UIContract
     let onDisconnect: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var sessionSearch = ""
     @State private var projectScope = "__all-projects__"
     @State private var settledExpanded = false
@@ -171,11 +180,19 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Heddlework")
-                .font(.workbench(size: 12, weight: .semibold))
-                .foregroundStyle(AppColors.muted)
-                .frame(height: WorkbenchLayoutMetrics.headerHeight(contract))
-                .accessibilityIdentifier("sidebar-brand")
+            Group {
+                if horizontalSizeClass == .compact {
+                    Text("Heddlework")
+                        .font(.workbench(size: 12, weight: .semibold))
+                        .foregroundStyle(AppColors.muted)
+                } else {
+                    HostBadge(client: client, onTap: { showingHostPicker = true })
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                }
+            }
+            .frame(height: WorkbenchLayoutMetrics.headerHeight(contract))
+            .accessibilityIdentifier("sidebar-brand")
             VStack(alignment: .leading, spacing: 4) {
                 Button {
                     surface = surface == .flows ? .chat : .flows
@@ -505,7 +522,9 @@ struct HeaderView: View {
     @Binding var showingSidebar: Bool
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var terminalOpen: Bool
+    @Binding var showingHostPicker: Bool
     let contract: UIContract
+    @EnvironmentObject private var store: SavedHostsStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var compact: Bool { horizontalSizeClass == .compact }
@@ -528,17 +547,33 @@ struct HeaderView: View {
                 .accessibilityLabel("Toggle sidebar")
                 .accessibilityIdentifier("toggle-left-sidebar")
 
-            HStack(spacing: 8) {
-                if !compact {
-                    Image(systemName: "folder").font(.workbench(size: 12)).foregroundStyle(AppColors.textFaint)
-                    Text(projectName).font(.workbench(size: 12, weight: .medium)).foregroundStyle(AppColors.muted).lineLimit(1)
-                    Text("/").font(.workbench(size: 12)).foregroundStyle(AppColors.textFaint)
+            if compact {
+                HostBadge(client: client, onTap: { showingHostPicker = true })
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 8) {
+                    if !compact {
+                        Image(systemName: "folder").font(.workbench(size: 12)).foregroundStyle(AppColors.textFaint)
+                        Text(projectName).font(.workbench(size: 12, weight: .medium)).foregroundStyle(AppColors.muted).lineLimit(1)
+                        Text("/").font(.workbench(size: 12)).foregroundStyle(AppColors.textFaint)
+                    }
+                    Text(SessionCatalog.activeThreadTitle(snapshot: client.snapshot))
+                        .font(.workbench(size: 12, weight: .semibold))
+                        .foregroundStyle(AppColors.text)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("chat-thread-title")
                 }
-                Text(SessionCatalog.activeThreadTitle(snapshot: client.snapshot))
-                    .font(.workbench(size: 12, weight: .semibold))
-                    .foregroundStyle(AppColors.text)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("chat-thread-title")
+                if compact {
+                    let caption = store.activeHost?.name ?? client.host?.name ?? ""
+                    if !caption.isEmpty {
+                        Text(shortHostName(caption))
+                            .font(.workbench(size: 10))
+                            .foregroundStyle(AppColors.muted)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("host-caption")
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

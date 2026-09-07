@@ -426,8 +426,9 @@ enum ToolActivity {
             let tail = Array(lines.suffix(maxLines)).joined(separator: "\n")
             var excerpt = boundedExcerpt(tail, maxLines: maxLines)
             // The tail hides the *leading* lines; report the real count from the complete output.
+            let excerptLineCount = excerpt?.lineCount ?? 0
             excerpt?.totalLines = lines.count
-            excerpt?.hiddenLines = max(0, lines.count - (excerpt?.lineCount ?? 0))
+            excerpt?.hiddenLines = max(0, lines.count - excerptLineCount)
             preview.outputTail = excerpt
         }
         if phase == .preparing { preview.preparingLabel = "Preparing command…" }
@@ -447,9 +448,11 @@ enum ToolActivity {
             fullText: output.isEmpty ? nil : output
         )
         if !lines.isEmpty {
-            preview.matchLines = boundedExcerpt(Array(lines.prefix(maxLines)).joined(separator: "\n"), maxLines: maxLines)
-            preview.matchLines?.totalLines = lines.count
-            preview.matchLines?.hiddenLines = max(0, lines.count - (preview.matchLines?.lineCount ?? 0))
+            var matchLines = boundedExcerpt(Array(lines.prefix(maxLines)).joined(separator: "\n"), maxLines: maxLines)
+            let matchLineCount = matchLines?.lineCount ?? 0
+            matchLines?.totalLines = lines.count
+            matchLines?.hiddenLines = max(0, lines.count - matchLineCount)
+            preview.matchLines = matchLines
             preview.matchTotal = lines.count
         }
         if phase == .preparing { preview.preparingLabel = "Preparing search…" }
