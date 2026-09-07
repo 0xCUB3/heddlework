@@ -130,6 +130,8 @@ export class WorkbenchController {
   #disposed = false
   #sessionLimit = SESSION_PAGE_SIZE
   #sessionRefresh: Promise<void> | undefined
+  #sessionRefreshDirty = false
+  #unsubscribeCatalog: (() => void) | undefined
   readonly #titleGenerator: ThreadTitleGeneratorService | undefined
   readonly #titleSettingsStore: ThreadTitleSettingsStoreService | undefined
   // Threads whose first settled turn already triggered a title, so retries and later turns stay quiet.
@@ -241,10 +243,11 @@ export class WorkbenchController {
   }
 
   async start(): Promise<void> {
-    if (this.#started || this.#connecting) return
+    if (this.#disposed || this.#started || this.#connecting) return
     this.#clearReconnectTimer()
     this.#connecting = true
     this.#patch({ connection: 'connecting', connectionMessage: 'Starting Pi…' })
+    this.#watchSessionCatalog()
     void this.refreshSessions()
     try {
       await this.#transport.start()
@@ -696,26 +699,51 @@ export class WorkbenchController {
     }
   }
 
-  async refreshSessions(): Promise<void> {
-    if (this.#sessionRefresh) return this.#sessionRefresh
-    this.#patch({ sessionsLoading: true })
+  async refreshSessions(background = false): Promise<void> {
+    if (this.#disposed) return
+    if (this.#sessionRefresh) {
+      if (background) this.#sessionRefreshDirty = true
+      return this.#sessionRefresh
+    }
+    const workspacePath = this.#state.workspacePath
+    const limit = this.#sessionLimit
+    if (!background) this.#patch({ sessionsLoading: true })
     const task = (async () => {
       try {
-        const sessions = await this.#sessionCatalog.list(this.#state.workspacePath, this.#sessionLimit + 1)
+        const sessions = await this.#sessionCatalog.list(workspacePath, limit + 1)
+        if (this.#disposed) return
+        if (workspacePath !== this.#state.workspacePath || limit !== this.#sessionLimit) {
+          this.#sessionRefreshDirty = true
+          return
+        }
+        const page = sessions.slice(0, limit)
+        const unchanged = page.length === this.#state.sessions.length && page.every((session, index) => session === this.#state.sessions[index])
         this.#patch({
-          sessions: sessions.slice(0, this.#sessionLimit),
+          sessions: unchanged ? this.#state.sessions : page,
           sessionsLoading: false,
-          sessionsHasMore: sessions.length > this.#sessionLimit,
+          sessionsHasMore: sessions.length > limit,
         })
       } catch (error) {
+        if (this.#disposed) return
         this.#patch({ sessionsLoading: false })
         this.#setState((state) => addNotice(state, 'warning', `Could not list sessions: ${errorMessage(error)}`))
       }
     })().finally(() => {
       if (this.#sessionRefresh === task) this.#sessionRefresh = undefined
+      if (this.#sessionRefreshDirty && !this.#disposed) {
+        this.#sessionRefreshDirty = false
+        void this.refreshSessions(true)
+      }
     })
     this.#sessionRefresh = task
     return task
+  }
+
+  #watchSessionCatalog(): void {
+    this.#unsubscribeCatalog?.()
+    this.#unsubscribeCatalog = this.#sessionCatalog.subscribe?.(this.#state.workspacePath, () => {
+      void this.refreshSessions(true)
+    })
   }
 
   async loadMoreSessions(): Promise<void> {
@@ -1151,6 +1179,8 @@ export class WorkbenchController {
 
   async dispose(): Promise<void> {
     this.#disposed = true
+    this.#unsubscribeCatalog?.()
+    this.#unsubscribeCatalog = undefined
     this.#clearReconnectTimer()
     if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
     this.#dialogs.dispose()
@@ -1885,6 +1915,7 @@ export class WorkbenchController {
   }
 
   #patch(patch: Partial<WorkbenchState>): void {
+    if ((Object.keys(patch) as (keyof WorkbenchState)[]).every((key) => this.#state[key] === patch[key])) return
     this.#setState((state) => ({ ...state, ...patch }))
   }
 
@@ -1893,6 +1924,7 @@ export class WorkbenchController {
     const next = update(previous)
     if (next === previous) return
     this.#state = next
+    if (next.workspacePath !== previous.workspacePath && this.#unsubscribeCatalog) this.#watchSessionCatalog()
     if (next.queue !== previous.queue || next.workspacePath !== previous.workspacePath) this.#queueStore?.save(next.workspacePath, next.queue)
     if (next.threadLifecycle !== previous.threadLifecycle && !this.#applyingSharedStore) this.#threadMetadataStore?.save(next.threadLifecycle)
     this.#notifier.notify(liveFieldsOnlyChanged(previous, next) ? false : true)

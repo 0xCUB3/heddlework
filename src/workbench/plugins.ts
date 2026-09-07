@@ -29,11 +29,11 @@ export function createAgentTransportPlugin(options: PiRpcTransportOptions & { de
   }
 }
 
-export function createSessionCatalogPlugin(options: SessionCatalogOptions = {}): WorkbenchPlugin {
+export function createSessionCatalogPlugin(options: SessionCatalogOptions = {}, catalog?: SessionCatalogService): WorkbenchPlugin {
   return {
     id: 'pi-session-catalog',
     activate(ctx) {
-      ctx.provide(sessionCatalogToken, new PiSessionCatalog(options))
+      ctx.provide(sessionCatalogToken, catalog ?? new PiSessionCatalog(options))
     },
   }
 }

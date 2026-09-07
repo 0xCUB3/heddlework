@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { WorkbenchKernel } from '../core/kernel.ts'
 import { createFlowRuntimePlugin, flowRuntimeToken } from '../flows/plugin.ts'
-import { sessionSidebarCachePath } from '../pi/session-catalog.ts'
+import { PiSessionCatalog, sessionSidebarCachePath } from '../pi/session-catalog.ts'
 import { createReceiptPlugin } from '../receipts/plugin.ts'
 import { FileReceiptStore, receiptStorePath } from '../receipts/store.ts'
 import { coreToolPresentersPlugin } from '../ui/tool-presenters.ts'
@@ -21,6 +21,7 @@ export function createRuntimeSessionFactory(directory: string, demo = false) {
   const receipts = new FileReceiptStore(isolated ? false : receiptStorePath())
   const metadata = new FileThreadMetadataStore(isolated ? false : threadMetadataStorePath())
   const titleSettings = new FileThreadTitleSettingsStore(isolated ? false : threadTitleSettingsPath())
+  const sessionCatalog = new PiSessionCatalog({ cachePath: isolated ? false : sessionSidebarCachePath() })
   // Demo sessions have no real model behind them, so titles stay off there.
   const titleGenerator = demo ? undefined : createPiTitleGenerator({ ...(process.env.HEDDLEWORK_PI ? { command: process.env.HEDDLEWORK_PI } : {}) })
   return async ({ workspacePath, sessionPath, id }: SessionFactoryInput) => {
@@ -31,7 +32,7 @@ export function createRuntimeSessionFactory(directory: string, demo = false) {
     kernel.mount(createWorkbenchControllerPlugin(workspacePath, { queueStore: new FileQueueStore(join(stateDirectory, 'queue.json')), threadMetadataStore: metadata, titleGenerator, titleSettingsStore: titleSettings }))
     kernel.mount(createCheckoutLanePlugin())
     kernel.mount(createFlowRuntimePlugin({ path: join(stateDirectory, 'flows.json'), lanesFromKernel: true }))
-    kernel.mount(createSessionCatalogPlugin({ cachePath: isolated ? false : sessionSidebarCachePath() }))
+    kernel.mount(createSessionCatalogPlugin({}, sessionCatalog))
     kernel.mount(localWorkspaceDiffPlugin)
     kernel.mount(createReceiptPlugin({ path: false, store: receipts }))
     const piArgs: string[] = []

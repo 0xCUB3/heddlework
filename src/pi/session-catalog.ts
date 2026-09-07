@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { dirname, join, resolve } from 'node:path'
 import { withSessionBranches } from './session-branches.ts'
+import { watchPiSessions } from './session-watch.ts'
 import { asRecord, contentText } from '../workbench/state.ts'
 
 export interface PiSessionSummary {
@@ -67,6 +68,8 @@ const SESSION_META_CONCURRENCY = 64
 export class PiSessionCatalog {
   readonly #options: SessionCatalogOptions
   readonly #cache = new Map<string, SessionCacheEntry>()
+  readonly #scans = new Map<string, Promise<PiSessionSummary[]>>()
+  readonly #watches = new Map<string, { listeners: Set<() => void>; close: () => void }>()
   #persisted: PiSessionSummary[]
 
   constructor(options: SessionCatalogOptions = {}) {
@@ -82,11 +85,50 @@ export class PiSessionCatalog {
   }
 
   async list(cwd: string, limit = this.#options.limit): Promise<PiSessionSummary[]> {
-    const options = limit === undefined ? this.#options : { ...this.#options, limit }
-    const sessions = await listPiSessionsCached(cwd, options, this.#cache)
-    this.#persisted = sessions
-    await persistSessions(this.#options.cachePath, sessions)
-    return sessions
+    const key = this.#options.scope === 'cwd' ? resolve(cwd) : '*'
+    let scan = this.#scans.get(key)
+    if (!scan) {
+      // Limits affect presentation, not the shared cache. A second thread asking
+      // for a different page must not repeat the same directory scan.
+      const { limit: _limit, ...options } = this.#options
+      scan = listPiSessionsCached(cwd, options, this.#cache).then(async (sessions) => {
+        const previous = new Map(this.#persisted.map((session) => [session.path, session]))
+        const stable = sessions.map((session) => {
+          const old = previous.get(session.path)
+          return old && sameSummary(old, session) ? old : session
+        })
+        const changed = stable.length !== this.#persisted.length || stable.some((session, index) => session !== this.#persisted[index])
+        if (changed) {
+          this.#persisted = stable
+          await persistSessions(this.#options.cachePath, stable)
+        }
+        return changed ? stable : this.#persisted
+      }).finally(() => { this.#scans.delete(key) })
+      this.#scans.set(key, scan)
+    }
+    const sessions = await scan
+    return limit === undefined ? sessions : sessions.slice(0, Math.max(0, limit))
+  }
+
+  subscribe(cwd: string, listener: () => void): () => void {
+    const scoped = this.#options.scope === 'cwd'
+    const root = scoped ? getPiSessionDirectory(cwd, this.#options.agentDir) : getPiSessionRoot(this.#options.agentDir)
+    let entry = this.#watches.get(root)
+    if (!entry) {
+      const listeners = new Set<() => void>()
+      entry = { listeners, close: watchPiSessions(root, () => {
+        for (const callback of listeners) callback()
+      }, { recursive: !scoped }) }
+      this.#watches.set(root, entry)
+    }
+    entry.listeners.add(listener)
+    return () => {
+      entry.listeners.delete(listener)
+      if (entry.listeners.size === 0 && this.#watches.get(root) === entry) {
+        entry.close()
+        this.#watches.delete(root)
+      }
+    }
   }
 
   async createWorkspaceSession(cwd: string): Promise<PiSessionSummary> {
@@ -99,6 +141,11 @@ export class PiSessionCatalog {
     await writeFile(path, `${JSON.stringify({ type: 'session', version: 3, id, timestamp, cwd: workspace })}\n`, { encoding: 'utf8', flag: 'wx' })
     return { id, path, cwd: workspace, title: '(no messages)', firstMessage: '', messageCount: 0, createdAt: Date.parse(timestamp), modifiedAt: Date.parse(timestamp) }
   }
+}
+
+function sameSummary(left: PiSessionSummary, right: PiSessionSummary): boolean {
+  const keys = Object.keys(left) as (keyof PiSessionSummary)[]
+  return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key])
 }
 
 export function listPiSessions(cwd: string, options: SessionCatalogOptions = {}): Promise<PiSessionSummary[]> {
