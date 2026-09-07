@@ -17,6 +17,9 @@ import { fontStack } from '../dom/rich.tsx'
 import { workspaceClient } from './store.ts'
 import { watchWorkspaceNotifications } from './notifications.ts'
 import { notifyNativeShell } from './native-shell.ts'
+import { WebHostSwitcher } from './host-switcher.ts'
+import { shortHostName } from '../protocol/host-identity.ts'
+import { workspaceDisplayName } from '../workbench/workspace-name.ts'
 
 const kernel = new WorkbenchKernel()
 kernel.mount(coreToolPresentersPlugin)
@@ -36,6 +39,7 @@ export function WebWorkbench() {
   const view = useSyncExternalStore(client.subscribe.bind(client), client.getSnapshot.bind(client), client.getSnapshot.bind(client))
   const theme = useSyncExternalStore(defaultThemeManager.subscribe, defaultThemeManager.getSnapshot)
   const controller = useMemo(() => new RemoteWorkbenchController(client), [client])
+  const switcher = useMemo(() => new WebHostSwitcher(client, localStorage), [client])
   const registry = useMemo(() => {
     const ui = new WorkbenchUiRegistry()
     ui.register(createCoreUiExtension(controller))
@@ -56,6 +60,20 @@ export function WebWorkbench() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
   useEffect(() => watchWorkspaceNotifications(client), [client])
+  useEffect(() => {
+    if (view.status === 'connecting') {
+      document.title = 'Connecting… · Heddlework'
+      return
+    }
+    if (view.status !== 'open') {
+      document.title = 'Offline · Heddlework'
+      return
+    }
+    const workspace = workspaceDisplayName(view.workspacePath)
+    document.title = view.host
+      ? [shortHostName(view.host), workspace, 'Heddlework'].join(' · ')
+      : [workspace, 'Heddlework'].join(' · ')
+  }, [view.status, view.host, view.workspacePath])
   useEffect(() => {
     document.documentElement.style.setProperty('--gx-font-sans', fontStack(theme.fonts.fontSans))
     document.documentElement.style.setProperty('--gx-font-mono', fontStack(theme.fonts.fontMono, true))
@@ -110,6 +128,7 @@ export function WebWorkbench() {
         ui={registry}
         themeManager={defaultThemeManager as never}
         onQuit={() => { client.disconnect(); notifyNativeShell('disconnect') }}
+        hostSwitcher={switcher}
       />
     </GpuixContext.Provider>
   )

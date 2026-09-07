@@ -75,3 +75,113 @@ body { overscroll-behavior: none; }
 .gx-diff-hunk { background: var(--md-diff-hunk, rgba(99, 102, 241, 0.12)); color: var(--md-muted, inherit); }
 .gx-diff-meta { color: var(--md-muted, inherit); opacity: 0.7; }
 .gx-diff-more { display: block; margin: 8px 12px; border: 0; background: transparent; color: var(--md-accent, #6366f1); font: inherit; font-family: var(--md-font-sans, var(--gx-font-sans)); cursor: pointer; padding: 0; }
+
+.connect-page {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0A0A0A;
+  color: #E7E7E7;
+  padding: 32px;
+  overflow: auto;
+}
+.connect-shell {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  border: 1px solid #1D1E1E;
+  border-radius: 16px;
+  background: #111212;
+}
+.connect-kicker {
+  margin: 0;
+  color: #66676A;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.connect-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 28px;
+}
+.connect-lead {
+  margin: 0 0 4px;
+  color: #A0A0A3;
+  font-size: 13px;
+  line-height: 20px;
+}
+.connect-hosts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.connect-host {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #2A2B2B;
+  border-radius: 12px;
+  background: #151616;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.connect-host:hover { background: #202121; }
+.connect-host-kind {
+  color: #66676A;
+  font-size: 11px;
+  font-weight: 600;
+}
+.connect-host-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.connect-host-meta {
+  color: #A0A0A3;
+  font-size: 12px;
+}
+.connect-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.connect-input {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid #2A2B2B;
+  border-radius: 10px;
+  background: #1B1C1C;
+  color: #E7E7E7;
+  font: inherit;
+  resize: vertical;
+}
+.connect-input::placeholder { color: #77787B; }
+.connect-submit {
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: #346BF1;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.connect-submit:hover { background: #5B74E8; }
+.connect-error {
+  margin: 0;
+  color: #F87171;
+  font-size: 12px;
+}
