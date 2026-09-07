@@ -22,6 +22,17 @@ describe('workbench snapshot protocol', () => {
     expect(Object.keys(diffSnapshots(undefined, base).changed).length).toBe(Object.keys(base).length)
   })
 
+  it('preserves serialized collection identity across unrelated state updates', () => {
+    const state = createInitialState('/tmp/snap')
+    const first = serializeSnapshot(state)
+    const next = serializeSnapshot({ ...state, activity: 'Working' })
+    const patch = diffSnapshots(first, next)
+
+    expect(next.notices).toBe(first.notices)
+    expect(next.editorImages).toBe(first.editorImages)
+    expect(Object.keys(patch.changed)).toEqual(['activity'])
+  })
+
   it('clears optional state after a JSON wire roundtrip', () => {
     const base = { ...serializeSnapshot(createInitialState('/tmp/snap')), dialog: { id: 'dialog-1', method: 'confirm' as const, title: 'Continue?', createdAt: 1 } }
     const patch = diffSnapshots(base, { ...base, dialog: undefined })

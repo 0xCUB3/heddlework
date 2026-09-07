@@ -23,11 +23,14 @@ export interface SnapshotPatch {
   removed?: SnapshotKey[]
 }
 
+const serializedNotices = new WeakMap<WorkbenchState['notices'], WorkbenchSnapshot['notices']>()
+const serializedEditorImages = new WeakMap<WorkbenchState['editorImages'], SnapshotComposerImage[]>()
+
 export function serializeSnapshot(state: WorkbenchState): WorkbenchSnapshot {
   return {
     ...state,
-    notices: ledgerNotices(state.notices),
-    editorImages: state.editorImages.map(serializeImage),
+    notices: memoizedLedgerNotices(state.notices),
+    editorImages: memoizedEditorImages(state.editorImages),
   }
 }
 
@@ -61,4 +64,20 @@ function serializeImage(image: ComposerImage): SnapshotComposerImage {
   const bytes = image.size || image.data.length
   if (bytes <= SNAPSHOT_IMAGE_LIMIT_BYTES) return image
   return { ...image, data: { omitted: true, bytes } }
+}
+
+function memoizedLedgerNotices(notices: WorkbenchState['notices']): WorkbenchSnapshot['notices'] {
+  const cached = serializedNotices.get(notices)
+  if (cached) return cached
+  const next = ledgerNotices(notices)
+  serializedNotices.set(notices, next)
+  return next
+}
+
+function memoizedEditorImages(images: WorkbenchState['editorImages']): SnapshotComposerImage[] {
+  const cached = serializedEditorImages.get(images)
+  if (cached) return cached
+  const next = images.map(serializeImage)
+  serializedEditorImages.set(images, next)
+  return next
 }
