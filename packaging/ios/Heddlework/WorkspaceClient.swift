@@ -1,6 +1,29 @@
 import Foundation
 
 @MainActor
+final class TerminalFrameStore: ObservableObject {
+    @Published private(set) var frames: [String: RemoteTerminalFrame] = [:]
+
+    subscript(id: String) -> RemoteTerminalFrame? { frames[id] }
+
+    func replaceAll(_ frames: [String: RemoteTerminalFrame]) {
+        guard self.frames != frames else { return }
+        self.frames = frames
+    }
+
+    func retain(ids: Set<String>) {
+        let next = frames.filter { ids.contains($0.key) }
+        guard next != frames else { return }
+        frames = next
+    }
+
+    func set(_ frame: RemoteTerminalFrame) {
+        guard frames[frame.id] != frame else { return }
+        frames[frame.id] = frame
+    }
+}
+
+@MainActor
 final class WorkspaceClient: ObservableObject {
     enum Status: String { case connecting, open, closed }
 
@@ -11,7 +34,7 @@ final class WorkspaceClient: ObservableObject {
     @Published private(set) var browserIntegrations: BrowserIntegrationSnapshot?
     @Published private(set) var sleepPrevention: SleepPreventionSnapshot?
     @Published private(set) var terminal: RemoteTerminalSnapshot?
-    @Published private(set) var terminalFrames: [String: RemoteTerminalFrame] = [:]
+    let terminalFrames = TerminalFrameStore()
     @Published private(set) var lastError: String?
     @Published private(set) var pendingCommands: [Int: String] = [:]
     @Published private(set) var candidates: [String] = []
@@ -44,7 +67,7 @@ final class WorkspaceClient: ObservableObject {
             workspacePath = UIFixture.workspacePath
             snapshot = UIFixture.snapshot
             terminal = UIFixture.terminal
-            terminalFrames = UIFixture.terminalFrames
+            terminalFrames.replaceAll(UIFixture.terminalFrames)
             return
         }
         open()
@@ -65,7 +88,7 @@ final class WorkspaceClient: ObservableObject {
         browserIntegrations = nil
         sleepPrevention = nil
         terminal = nil
-        terminalFrames = [:]
+        terminalFrames.replaceAll([:])
         if clearState {
             workspacePath = ""
             snapshot = nil
@@ -190,9 +213,9 @@ final class WorkspaceClient: ObservableObject {
         case .terminal(let terminal):
             self.terminal = terminal
             let ids = Set((terminal?.sessions ?? []).map(\.id))
-            terminalFrames = terminalFrames.filter { ids.contains($0.key) }
+            terminalFrames.retain(ids: ids)
         case .terminalFrame(let frame):
-            terminalFrames[frame.id] = frame
+            terminalFrames.set(frame)
         case .result(let id, let ok, let error):
             if let id { pendingCommands.removeValue(forKey: id) }
             if ok == false { lastError = error ?? "Command failed" }
@@ -216,7 +239,7 @@ final class WorkspaceClient: ObservableObject {
         browserIntegrations = nil
         sleepPrevention = nil
         terminal = nil
-        terminalFrames = [:]
+        terminalFrames.replaceAll([:])
         lastError = error.localizedDescription
         failures += 1
         rotateIfStuck()

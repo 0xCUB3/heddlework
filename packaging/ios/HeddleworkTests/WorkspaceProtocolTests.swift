@@ -1,7 +1,24 @@
 import XCTest
+import Combine
 @testable import Heddlework
 
 final class WorkspaceProtocolTests: XCTestCase {
+    @MainActor
+    func testTerminalFramesDoNotInvalidateWholeWorkspaceClient() {
+        let client = WorkspaceClient()
+        var clientPublishes = 0
+        var framePublishes = 0
+        let clientToken = client.objectWillChange.sink { clientPublishes += 1 }
+        let frameToken = client.terminalFrames.objectWillChange.sink { framePublishes += 1 }
+        defer { clientToken.cancel(); frameToken.cancel() }
+
+        client.terminalFrames.set(RemoteTerminalFrame(id: "term", cols: 80, rows: 24, cursorX: 0, cursorY: 0, cursorVisible: true, title: nil, lines: ["hello"]))
+
+        XCTAssertEqual(clientPublishes, 0)
+        XCTAssertEqual(framePublishes, 1)
+        XCTAssertEqual(client.terminalFrames["term"]?.lines, ["hello"])
+    }
+
     func testWorkspaceSocketURLAddsWsPathAndToken() throws {
         let url = try XCTUnwrap(workspaceSocketURL(hostURL: "http://10.0.0.5:47311", token: "tok"))
         XCTAssertEqual(url.absoluteString, "ws://10.0.0.5:47311/ws?token=tok")

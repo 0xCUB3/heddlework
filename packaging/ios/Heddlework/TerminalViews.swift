@@ -3,10 +3,17 @@ import UIKit
 
 struct TerminalPanelView: View {
     @ObservedObject var client: WorkspaceClient
+    @ObservedObject private var terminalFrames: TerminalFrameStore
     var onClose: () -> Void
     @State private var cols = 80
     @State private var rows = 24
     @FocusState private var inputFocused: Bool
+
+    init(client: WorkspaceClient, onClose: @escaping () -> Void) {
+        self.client = client
+        self._terminalFrames = ObservedObject(wrappedValue: client.terminalFrames)
+        self.onClose = onClose
+    }
 
     private var snapshot: RemoteTerminalSnapshot? { client.terminal }
     private var session: RemoteTerminalSession? {
@@ -16,7 +23,7 @@ struct TerminalPanelView: View {
     }
     private var frame: RemoteTerminalFrame? {
         guard let id = session?.id else { return nil }
-        return client.terminalFrames[id]
+        return terminalFrames[id]
     }
 
     var body: some View {
