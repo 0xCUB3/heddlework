@@ -63,11 +63,20 @@ struct WorkspaceView: View {
             store.remember(identity: host, url: link.hostURL, token: link.token, hostUrls: client.candidates)
         }
         .sheet(item: dialogBinding) { DialogView(dialog: $0, client: client) }
-        .alert("Workspace", isPresented: Binding(get: { client.lastError != nil }, set: { if !$0 { client.dismissError() } })) {
+        .alert("Workspace", isPresented: errorPresented) {
             Button("OK") { client.dismissError() }
         } message: { Text(client.lastError ?? "") }
         .accessibilityIdentifier("workspace-root")
         .accessibilityValue(client.status.rawValue)
+    }
+
+    private var errorPresented: Binding<Bool> {
+        Binding<Bool>(
+            get: { client.lastError != nil },
+            set: { presented in
+                if !presented { client.dismissError() }
+            }
+        )
     }
 
     private var workspaceDetail: some View {

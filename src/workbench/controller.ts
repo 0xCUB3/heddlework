@@ -146,6 +146,7 @@ export class WorkbenchController {
   #sessionSwitchGeneration = 0
   #bootstrapGeneration = 0
   #historyPager: PiSessionHistoryPager | undefined
+  #transcriptBootstrap: Promise<void> | undefined
   #sessionTree: PiSessionTree | undefined
   #nextQueueId = 0
   #nextUiRequestId = 0
@@ -219,6 +220,12 @@ export class WorkbenchController {
 
   readonly loadEarlierMessages = async (): Promise<void> => {
     if (this.#sessionSwitch) return
+    // A scroll-up right after a switch lands arrives before the bundle's transcript has a pager. Waiting for
+    // that load keeps the first page from being dropped, which read as a dead first scroll.
+    if (!this.#historyPager && this.#transcriptBootstrap) {
+      await this.#transcriptBootstrap.catch(() => undefined)
+      if (this.#sessionSwitch || this.#disposed) return
+    }
     const pager = this.#historyPager
     if (!pager || !this.#state.messagesHasOlder || this.#state.messagesLoadingEarlier) return
     this.#patch({ messagesLoadingEarlier: true })
@@ -1579,7 +1586,15 @@ export class WorkbenchController {
     this.#patch({ uiRequest })
   }
 
-  async #bootstrap(includeModels: boolean, deferMetadata = false): Promise<void> {
+  #bootstrap(includeModels: boolean, deferMetadata = false): Promise<void> {
+    const task = this.#runBootstrap(includeModels, deferMetadata).finally(() => {
+      if (this.#transcriptBootstrap === task) this.#transcriptBootstrap = undefined
+    })
+    this.#transcriptBootstrap = task
+    return task
+  }
+
+  async #runBootstrap(includeModels: boolean, deferMetadata: boolean): Promise<void> {
     const generation = ++this.#bootstrapGeneration
     const transcriptGeneration = ++this.#transcriptRefreshGeneration
     const streamRevision = this.#streamRevision

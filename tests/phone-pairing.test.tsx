@@ -10,6 +10,8 @@ import { PhonePairingQr } from '../src/ui/phone-pairing.tsx'
 import { encodeQrMatrix, qrPng, tryQrSvg } from '../src/web/qr.ts'
 
 const testNative = hasNativeTestRenderer ? it : it.skip
+// The decoder is a Vision + AppKit script, so the offline decode only runs on macOS.
+const testDarwin = process.platform === 'darwin' ? it : it.skip
 const FIXTURE_URL = 'http://192.168.1.20:4817/?token=phone-link-token'
 const DECODE_SCRIPT = join(import.meta.dir, '../scripts/validation/decode-qr.swift')
 
@@ -39,7 +41,7 @@ describe('phone pairing QR', () => {
     expect(encodeQrMatrix(url).length).toBeGreaterThanOrEqual(21)
   })
 
-  it('decodes an offline PNG of the fixture phone link', () => {
+  testDarwin('decodes an offline PNG of the fixture phone link', () => {
     const directory = join(tmpdir(), 'heddlework-phone-qr')
     mkdirSync(directory, { recursive: true })
     const pngPath = join(directory, 'fixture-phone-link.png')

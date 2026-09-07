@@ -12,6 +12,15 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 const directories: string[] = []
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
 async function fixture() {
+  const { transport, sessions, dir } = await fixtureParts()
+  const controller = new WorkbenchController(transport, dir, {
+    sessionCatalog: { list: async () => sessions, createWorkspaceSession: async () => sessions[0]! },
+    workspaceDiff: { load: async () => ({ status: 'ready', branch: '', files: [], additions: 0, deletions: 0 }) },
+  })
+  await controller.start()
+  return { controller, transport, sessions }
+}
+async function fixtureParts() {
   const dir = await mkdtemp(join(tmpdir(), 'heddlework-open-')); directories.push(dir)
   const sessions: PiSessionSummary[] = []
   for (const id of ['a', 'b', 'c']) {
@@ -21,18 +30,14 @@ async function fixture() {
     sessions.push({ id, path, cwd: dir, title: id, firstMessage: `${id} message 0`, messageCount: 100, createdAt: 1, modifiedAt: 1 })
   }
   const transport = new SlowSwitchTransport(sessions)
-  const controller = new WorkbenchController(transport, dir, {
-    sessionCatalog: { list: async () => sessions, createWorkspaceSession: async () => sessions[0]! },
-    workspaceDiff: { load: async () => ({ status: 'ready', branch: '', files: [], additions: 0, deletions: 0 }) },
-  })
-  await controller.start()
-  return { controller, transport, sessions }
+  return { transport, sessions, dir }
 }
 class SlowSwitchTransport implements AgentTransport {
   active: PiSessionSummary
   requests: RpcCommand[] = []
   switchGate: ReturnType<typeof deferred> | undefined
   metadataGate: ReturnType<typeof deferred> | undefined
+  treeGate: ReturnType<typeof deferred> | undefined
   cancel = false
   fail = false
   constructor(readonly sessions: PiSessionSummary[]) { this.active = sessions[0]! }
@@ -51,7 +56,7 @@ class SlowSwitchTransport implements AgentTransport {
       return { cancelled: this.cancel } as T
     }
     if (command.type === 'get_state') return { model: null, thinkingLevel: 'off', isStreaming: false, sessionFile: this.active.path, sessionId: this.active.id } as T
-    if (command.type === 'get_tree') return { tree: [], leafId: `${this.active.id}-99` } as T
+    if (command.type === 'get_tree') { await this.treeGate?.promise; return { tree: [], leafId: `${this.active.id}-99` } as T }
     if (command.type === 'get_available_models') return { models: [] } as T
     if (command.type === 'get_available_thinking_levels') return { levels: ['off'] } as T
     if (command.type === 'get_commands') { const id = this.active.id; await this.metadataGate?.promise; return { commands: [{ name: `command-${id}`, description: id, source: 'extension' }] } as T }
@@ -84,6 +89,25 @@ it('renders a bounded disk preview while Pi is blocked, without sending to the o
     expect(controller.getSnapshot().messagesHasOlder).toBe(true)
     await controller.loadEarlierMessages()
     expect(controller.getSnapshot().messages).toHaveLength(100)
+  } finally { gate.resolve(); await controller.dispose() }
+})
+it('serves a scroll-up page requested while a fresh bundle is still loading its transcript', async () => {
+  const { transport, sessions, dir } = await fixtureParts()
+  const gate = transport.treeGate = deferred()
+  const controller = new WorkbenchController(transport, dir, {
+    sessionCatalog: { list: async () => sessions, createWorkspaceSession: async () => sessions[0]! },
+    workspaceDiff: { load: async () => ({ status: 'ready', branch: '', files: [], additions: 0, deletions: 0 }) },
+  })
+  try {
+    const starting = controller.start()
+    await until(() => transport.requests.some(r => r.type === 'get_tree'))
+    expect(controller.getSnapshot().messagesHasOlder).toBe(false)
+    const paging = controller.loadEarlierMessages()
+    gate.resolve()
+    await starting
+    await paging
+    expect(controller.getSnapshot().messages).toHaveLength(100)
+    expect(controller.getSnapshot().messages[0]?.content).toBe('a message 0')
   } finally { gate.resolve(); await controller.dispose() }
 })
 it('coalesces rapid selections and never paints an intermediate activation over the last click', async () => {
