@@ -31,6 +31,7 @@ import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import type { BrowserSessionService } from '../browser/service.ts'
 import { BrowserServiceProvider } from './browser-context.tsx'
 import { BrowserNativeHost } from './browser-host.tsx'
+import type { HostSwitcherSurface } from '../client/host-switcher.ts'
 import type { RemoteAccessSurface } from '../host/remote-access.ts'
 import type { TailnetServeSurface } from '../host/tailnet-serve.ts'
 import type { PluginHost } from '../plugins/host.ts'
@@ -93,6 +94,7 @@ export function WorkbenchApp({
   layoutStorage?: LayoutStorage
   hostSwitcher?: HostSwitcherSurface | undefined
 }) {
+  // Rendered by host-badge once the desktop lane lands.
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const theme = useSyncExternalStore(themeManager.subscribe, themeManager.getSnapshot)
   const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
