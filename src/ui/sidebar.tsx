@@ -165,6 +165,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         {...(state.threadLifecycle[session.path]?.snoozedUntil === undefined ? {} : { snoozedUntil: state.threadLifecycle[session.path]!.snoozedUntil })}
         snoozeOpen={snoozeMenu === session.path}
         moreOpen={threadMenu === session.path}
+        titleGenerating={Boolean(state.threadLifecycle[session.path]?.titleGeneratingAt)}
         onClick={() => { onSelectSession(); void controller.switchSession(session) }}
         onSettle={() => { setSnoozeMenu(null); setThreadMenu(null); controller.settleThread(session.path) }}
         onWake={() => controller.wakeThread(session.path)}
@@ -416,6 +417,7 @@ function compactTitle(value: string): string {
 function handleThreadAction(controller: WorkbenchControllerSurface, session: PiSessionSummary, id: ThreadActionId): void {
   if (id === 'pin') controller.pinThread(session.path)
   else if (id === 'unpin') controller.unpinThread(session.path)
+  else if (id === 'regenerate-title') void controller.regenerateThreadTitle(session.path)
   else if (id === 'copy-path') void copyThreadText(controller, session.path, 'Copied path to clipboard')
   else if (id === 'copy-thread-id') void copyThreadText(controller, session.id, 'Copied thread id to clipboard')
   else if (id === 'clone') void controller.cloneSession()

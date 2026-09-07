@@ -2,6 +2,7 @@ export type ThreadActionId =
   | 'pin'
   | 'unpin'
   | 'rename'
+  | 'regenerate-title'
   | 'copy-path'
   | 'copy-thread-id'
   | 'clone'
@@ -17,6 +18,7 @@ export interface ThreadAction {
   detail?: string
   disabled?: boolean
   danger?: boolean
+  testId?: string
 }
 
 export interface ThreadActionState {
@@ -40,6 +42,11 @@ export function buildThreadActions(state: ThreadActionState): ThreadAction[] {
       label: 'Rename thread',
       detail: running ?? 'Change the session name',
       ...(running ? { disabled: true } : {}),
+    },
+    {
+      id: 'regenerate-title',
+      label: 'Regenerate title',
+      detail: 'Ask the title model for a new name',
     },
     { id: 'copy-path', label: 'Copy path', detail: 'Copy the session file path' },
     { id: 'copy-thread-id', label: 'Copy thread id', detail: 'Copy the Pi session id' },

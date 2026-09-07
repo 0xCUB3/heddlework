@@ -12,7 +12,7 @@ const idle = {
 describe('buildThreadActions', () => {
   it('shows pin when unpinned and unpin when pinned', () => {
     expect(buildThreadActions(idle).map((action) => action.id)).toEqual([
-      'pin', 'rename', 'copy-path', 'copy-thread-id', 'clone', 'export', 'settle', 'snooze',
+      'pin', 'rename', 'regenerate-title', 'copy-path', 'copy-thread-id', 'clone', 'export', 'settle', 'snooze',
     ])
     expect(buildThreadActions(idle).find((action) => action.id === 'pin')?.label).toBe('Pin thread')
     const pinned = buildThreadActions({ ...idle, isPinned: true })
@@ -24,7 +24,7 @@ describe('buildThreadActions', () => {
   it('treats a settled thread as unpinned and offers unsettle instead of settle', () => {
     const actions = buildThreadActions({ ...idle, isPinned: true, isSettled: true })
     expect(actions.map((action) => action.id)).toEqual([
-      'pin', 'rename', 'copy-path', 'copy-thread-id', 'clone', 'export', 'unsettle', 'snooze',
+      'pin', 'rename', 'regenerate-title', 'copy-path', 'copy-thread-id', 'clone', 'export', 'unsettle', 'snooze',
     ])
     expect(actions.some((action) => action.id === 'unpin')).toBe(false)
   })

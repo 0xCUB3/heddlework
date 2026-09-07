@@ -34,6 +34,8 @@ describe('paletteItems', () => {
     const empty = paletteItems('', ordered, 'darwin')
     expect(empty.map((item) => item.label)).toEqual([
       'New thread',
+      'Rename thread…',
+      'Regenerate thread title',
       'Toggle sidebar',
       'Toggle terminal',
       'Toggle changes',
@@ -43,11 +45,9 @@ describe('paletteItems', () => {
       'Export transcript',
       'Reconnect',
       'Alpha',
-      'Terminal notes',
-      'Old 0',
     ])
     expect(empty[0]).toMatchObject({ kind: 'action', shortcut: '⌘N' })
-    expect(empty.filter((item) => item.kind === 'thread')).toHaveLength(3)
+    expect(empty.filter((item) => item.kind === 'thread')).toHaveLength(1)
 
     const filtered = paletteItems('term', ordered, 'linux')
     expect(filtered.map((item) => item.label)).toEqual(['Toggle terminal', 'Terminal notes'])

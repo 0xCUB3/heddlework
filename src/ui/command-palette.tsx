@@ -7,6 +7,8 @@ import { colors, nativeTheme } from './theme.ts'
 
 export type PaletteAction =
   | 'thread.new'
+  | 'thread.rename'
+  | 'thread.regenerateTitle'
   | 'sidebar.toggle'
   | 'terminal.toggle'
   | 'diff.toggle'
@@ -34,6 +36,8 @@ export type PaletteItem =
 
 const PALETTE_ACTIONS: readonly { action: PaletteAction; label: string; shortcutAction?: ShortcutAction }[] = [
   { action: 'thread.new', label: 'New thread', shortcutAction: 'thread.new' },
+  { action: 'thread.rename', label: 'Rename thread…' },
+  { action: 'thread.regenerateTitle', label: 'Regenerate thread title' },
   { action: 'sidebar.toggle', label: 'Toggle sidebar', shortcutAction: 'sidebar.toggle' },
   { action: 'terminal.toggle', label: 'Toggle terminal', shortcutAction: 'terminal.toggle' },
   { action: 'diff.toggle', label: 'Toggle changes', shortcutAction: 'diff.toggle' },
