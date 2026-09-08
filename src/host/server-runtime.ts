@@ -15,8 +15,95 @@ import {
 import type { TerminalSessionService } from '../terminal/service.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
+import type { PiMessage } from '../pi/types.ts'
 import { type SessionRuntime } from './session-runtime.ts'
 import type { WorkbenchSnapshot } from '../protocol/snapshot.ts'
+
+// A long-lived bundle accumulates far more transcript than one socket should receive at once; the wBlock
+// session reached 64MB in memory and tripped the wire cap on every open. Each socket sees a tail window
+// anchored at a message it already holds, and scroll-up reveals in-memory rows before touching the pager.
+export const SOCKET_TRANSCRIPT_WINDOW_MESSAGES = 240
+
+export interface TranscriptWindow {
+  sessionFile: string | undefined
+  anchorId: string | undefined
+  anchor: PiMessage
+  sliced?: { source: readonly PiMessage[]; start: number; messages: PiMessage[] }
+}
+
+export interface WindowSocketData {
+  transcriptWindow?: TranscriptWindow | undefined
+}
+
+function windowAnchorIndex(messages: readonly PiMessage[], window: TranscriptWindow): number {
+  if (window.anchorId !== undefined) {
+    const byId = messages.findIndex((message) => message.workbenchEntryId === window.anchorId)
+    if (byId >= 0) return byId
+  }
+  return messages.indexOf(window.anchor)
+}
+
+function anchorAt(messages: readonly PiMessage[], index: number, sessionFile: string | undefined): TranscriptWindow {
+  const anchor = messages[index]!
+  return { sessionFile, anchorId: typeof anchor.workbenchEntryId === 'string' ? anchor.workbenchEntryId : undefined, anchor }
+}
+
+export function withTranscriptWindow(socket: Bun.ServerWebSocket<WindowSocketData>, next: WorkbenchSnapshot): WorkbenchSnapshot {
+  const messages = next.messages
+  if (messages.length === 0) return next
+  const sessionFile = next.session.sessionFile ? resolve(next.session.sessionFile) : undefined
+  const current = socket.data.transcriptWindow
+  let start = current && current.sessionFile === sessionFile ? windowAnchorIndex(messages, current) : -1
+  if (start < 0) {
+    start = Math.max(0, messages.length - SOCKET_TRANSCRIPT_WINDOW_MESSAGES)
+    socket.data.transcriptWindow = anchorAt(messages, start, sessionFile)
+  }
+  if (start === 0) return next
+  const window = socket.data.transcriptWindow!
+  const sliced = window.sliced && window.sliced.source === messages && window.sliced.start === start
+    ? window.sliced.messages
+    : messages.slice(start)
+  window.sliced = { source: messages, start, messages: sliced }
+  return { ...next, messages: sliced, messagesHasOlder: true }
+}
+
+export function socketSnapshot(socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>, state: WorkbenchState): WorkbenchSnapshot {
+  return withTranscriptWindow(socket, withPreviewTranscript(socket, serializeSnapshot(state)))
+}
+
+export function pushSocketSnapshot(
+  send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
+  socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>,
+  controller: WorkbenchController,
+): void {
+  const next = socketSnapshot(socket, controller.getSnapshot())
+  const patch = diffSnapshots(socket.data.lastSnapshot, next)
+  socket.data.lastSnapshot = next
+  if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
+}
+
+// Reveal one more page of the bundle's own transcript, or ask the controller for a disk page once the
+// socket already sees everything in memory. Returns true when the socket's window moved.
+export async function revealEarlierMessages(
+  send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
+  socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>,
+  controller: WorkbenchController,
+): Promise<void> {
+  const state = controller.getSnapshot()
+  const window = socket.data.transcriptWindow
+  const sessionFile = state.session.sessionFile ? resolve(state.session.sessionFile) : undefined
+  const index = window && window.sessionFile === sessionFile ? windowAnchorIndex(state.messages, window) : -1
+  if (index > 0) {
+    socket.data.transcriptWindow = anchorAt(state.messages, Math.max(0, index - SESSION_HISTORY_PAGE_MESSAGES), sessionFile)
+    pushSocketSnapshot(send, socket, controller)
+    return
+  }
+  await controller.loadEarlierMessages()
+  const after = controller.getSnapshot()
+  const afterFile = after.session.sessionFile ? resolve(after.session.sessionFile) : undefined
+  if (after.messages.length > 0 && afterFile === sessionFile) socket.data.transcriptWindow = anchorAt(after.messages, 0, sessionFile)
+  pushSocketSnapshot(send, socket, controller)
+}
 
 export interface RuntimeCommandHostOptions {
   runtime?: SessionRuntime | undefined
@@ -55,7 +142,7 @@ export function socketAttachment(
 
 function sendSwitchPreview(
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
-  socket: Bun.ServerWebSocket<PreviewSocketData>,
+  socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>,
   current: WorkbenchState,
   sessionPath: string,
   isCurrent: () => boolean,
@@ -77,7 +164,7 @@ function sendSwitchPreview(
   }
   const pushPreview = (state: WorkbenchState): void => {
     if (!isCurrent()) return
-    const next = serializeSnapshot(state)
+    const next = withTranscriptWindow(socket, serializeSnapshot(state))
     const patch = diffSnapshots(socket.data.lastSnapshot, next)
     socket.data.lastSnapshot = next
     if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
@@ -119,15 +206,12 @@ export function withPreviewTranscript(socket: Bun.ServerWebSocket<PreviewSocketD
 
 export function resyncSocket(
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
-  socket: Bun.ServerWebSocket<PreviewSocketData>,
+  socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>,
   controller: WorkbenchController,
   flows: FlowRuntime,
 ): void {
-  const next = withPreviewTranscript(socket, serializeSnapshot(controller.getSnapshot()))
-  const patch = diffSnapshots(socket.data.lastSnapshot, next)
-  socket.data.lastSnapshot = next
   send(socket, { kind: 'flows', snapshot: flows.getSnapshot() })
-  if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
+  pushSocketSnapshot(send, socket, controller)
 }
 
 export async function executeSocketCommand(
@@ -139,6 +223,7 @@ export async function executeSocketCommand(
     previewTranscript?: PreviewTranscript | undefined
     navigationGeneration?: number | undefined
     pendingNavigation?: PendingNavigation | undefined
+    transcriptWindow?: TranscriptWindow | undefined
   }>,
   message: { id: number; requestId?: string | undefined; command: WorkbenchCommand },
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
@@ -248,6 +333,11 @@ export async function executeSocketCommand(
       return undefined
     }
 
+    if (message.command.type === 'loadEarlierMessages') {
+      await revealEarlierMessages(send, socket, controller)
+      options.runtime?.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
+      return undefined
+    }
     const commandValue = await applyWorkbenchCommand(controller, message.command, {
       flows,
       browserIntegrations: options.browserIntegrations,

@@ -23,7 +23,7 @@ import type { WorkbenchController } from '../workbench/controller.ts'
 import { attentionBody, isLedgerNotice, noticeHeadline } from '../workbench/notices.ts'
 import { routeAttention, type ClientPresence } from '../workbench/presence.ts'
 import { advertiseCandidates, type AdvertiseCandidate } from './advertise.ts'
-import { executeSocketCommand, HostCommandSignal, socketAttachment, withPreviewTranscript, type PendingNavigation, type PreviewTranscript, type RuntimeCommandHostOptions } from './server-runtime.ts'
+import { executeSocketCommand, HostCommandSignal, socketAttachment, socketSnapshot, type PendingNavigation, type PreviewTranscript, type RuntimeCommandHostOptions, type TranscriptWindow } from './server-runtime.ts'
 import { SessionAdmissionError, type SessionRuntime } from './session-runtime.ts'
 import { timingSafeEqualToken } from './token.ts'
 import type { HostIdentity } from '../protocol/host-identity.ts'
@@ -65,6 +65,7 @@ interface SocketData {
   navigationGeneration?: number
   pendingNavigation?: PendingNavigation
   previewTranscript?: PreviewTranscript
+  transcriptWindow?: TranscriptWindow
 }
 
 export const DEFAULT_HOST_PORT = 4817
@@ -139,7 +140,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
           sleepPrevention: options.sleepPrevention,
           terminals: options.terminals,
         }, socket)
-        const snapshot = serializeSnapshot(attachment.controller.getSnapshot())
+        const snapshot = socketSnapshot(socket, attachment.controller.getSnapshot())
         socket.data.lastSnapshot = snapshot
         send(socket, {
           kind: 'welcome',
@@ -228,7 +229,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
         socket.data.scheduled = false
         if (!sockets.has(socket)) return
         if (socket.data.sessionKey !== sessionKey) return
-        const next = withPreviewTranscript(socket, serializeSnapshot(controller.getSnapshot()))
+        const next = socketSnapshot(socket, controller.getSnapshot())
         const patch = diffSnapshots(socket.data.lastSnapshot, next)
         socket.data.lastSnapshot = next
         if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
