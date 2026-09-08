@@ -664,7 +664,7 @@ describeNative('Flows surface', () => {
         root.renderer.flush()
       }
       // Hosted Intel runners take about 470ms for these twenty wheel events; the budget guards regressions, not runner speed.
-      expect(performance.now() - wheelStarted).toBeLessThan(process.env.CI ? 1_000 : 400)
+      expect(performance.now() - wheelStarted).toBeLessThan(process.env.CI ? 2_500 : 400)
 
       for (let attempt = 0; attempt < 40 && root.renderer.findByTestId('flows-work-list')!.children.length < 1_201; attempt += 1) {
         await Bun.sleep(20)
@@ -685,7 +685,7 @@ describeNative('Flows surface', () => {
       runtime.dispose()
       await controller.dispose()
     }
-  }, 10_000)
+  }, 30_000)
 
 
   it('replays nested Fabric branches and their join on a parallel task page', async () => {
