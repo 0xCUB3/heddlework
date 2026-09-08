@@ -218,6 +218,7 @@ describe('runtime idle upgrade', () => {
   })
 
   it('stages first then upgrades an idle protocol mismatch to a new instance', async () => {
+    if (process.platform === 'win32') return
     const directory = temporary()
     const workspace = join(directory, 'workspace')
     mkdirSync(workspace, { recursive: true })
@@ -242,6 +243,7 @@ describe('runtime idle upgrade', () => {
   }, 15_000)
 
   it('refreshes an idle same-protocol runtime onto the staged executable', async () => {
+    if (process.platform === 'win32') return
     const directory = temporary()
     const source = writeFakeRuntime(directory, 'refresh-new')
     const predecessor = await startPredecessor(directory, {

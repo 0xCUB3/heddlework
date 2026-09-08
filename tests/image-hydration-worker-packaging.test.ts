@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { chmodSync, copyFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -21,8 +21,9 @@ describe('image hydration worker packaging', () => {
       })
       expect(result.success).toBe(true)
 
-      const binary = join(away, 'probe')
-      copyFileSync(outfile, binary)
+      const compiled = existsSync(outfile) ? outfile : `${outfile}.exe`
+      const binary = join(away, process.platform === 'win32' ? 'probe.exe' : 'probe')
+      copyFileSync(compiled, binary)
       chmodSync(binary, 0o755)
       if (process.platform === 'darwin') {
         const signed = Bun.spawnSync(['codesign', '--force', '--sign', '-', '--timestamp=none', binary], {
