@@ -9,7 +9,7 @@ settings:
   base:
     DEVELOPMENT_TEAM: DNP7DGUB7B
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: "0.1.5"
+    MARKETING_VERSION: "0.1.6"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Automatic
 targets:
