@@ -140,6 +140,29 @@ export function socketAttachment(
   return { controller: options.controller, flows: options.flows, sessionKey: socket.data.sessionKey }
 }
 
+function sendNewSessionPreview(
+  send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
+  socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>,
+  current: WorkbenchState,
+): void {
+  const preview: WorkbenchState = {
+    ...current,
+    session: { model: current.session.model, thinkingLevel: current.session.thinkingLevel, sessionId: '', isStreaming: false },
+    connection: 'connecting', connectionMessage: 'Starting thread', activity: 'Starting thread',
+    messages: [], messagesHasOlder: false, messagesLoadingEarlier: false,
+    liveAssistant: undefined, liveTools: [], forkMessages: [], stats: undefined,
+    dialog: undefined, dialogQueue: [], statusItems: {}, widgets: {},
+    questionnaireSubmitting: undefined, questionnaireCollapsed: undefined,
+    editorText: '', editorImages: [], queue: createQueueState(),
+    workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
+  }
+  socket.data.previewTranscript = undefined
+  const next = withTranscriptWindow(socket, serializeSnapshot(preview))
+  const patch = diffSnapshots(socket.data.lastSnapshot, next)
+  socket.data.lastSnapshot = next
+  if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
+}
+
 function sendSwitchPreview(
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
   socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>,
@@ -262,11 +285,18 @@ export async function executeSocketCommand(
     if (options.runtime && message.command.type === 'newSession') {
       const generation = (socket.data.navigationGeneration ?? 0) + 1
       socket.data.navigationGeneration = generation
-      const workspacePath = controller.getSnapshot().workspacePath
+      const current = controller.getSnapshot()
+      const workspacePath = current.workspacePath
+      // Booting a Pi process takes seconds. Paint an empty draft for this workspace now so the click lands
+      // immediately; the real bundle replaces it through resyncSocket when it is ready.
+      sendNewSessionPreview(send, socket, current)
       const opening = options.runtime.createNewSession(workspacePath)
       const pending: PendingNavigation = { generation, promise: opening.then(() => undefined, (error) => { pending.error = error }) }
       socket.data.pendingNavigation = pending
-      const created = await opening
+      const created = await opening.catch((error) => {
+        if (socket.data.navigationGeneration === generation) resyncSocket(send, socket, controller, flows)
+        throw error
+      })
       if (socket.data.navigationGeneration !== generation) {
         options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
         return undefined

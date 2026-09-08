@@ -188,6 +188,34 @@ describe('session runtime routing', () => {
     }
   }, 20_000)
 
+  it('paints an empty draft the moment New thread is clicked, before its bundle boots', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-new-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-new-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const createSession = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await createSession({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'newSession' } })
+      const preview = await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connecting')
+      const result = await client.next((message) => message.kind === 'result' && message.id === 1)
+      expect(client.messages.indexOf(preview)).toBeLessThan(client.messages.indexOf(result))
+      expect(preview.kind === 'patch' && preview.patch.changed.messages).toEqual([])
+      expect(preview.kind === 'patch' && preview.patch.changed.session?.sessionFile).toBeUndefined()
+      const connected = await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connected')
+      expect(connected.kind === 'patch' && connected.patch.changed.session?.sessionFile).not.toBe(files.alpha.path)
+    } finally {
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
   it('does not route commands to the old thread while a new bundle is opening', async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-pending-route-'))
     const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-pending-route-rt-'))
