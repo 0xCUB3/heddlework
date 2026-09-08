@@ -1,8 +1,18 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useGpuixRequired } from '@gpuix/react'
 import type { BrowserSessionService } from '../browser/service.ts'
-import type { BrowserEngineKind, BrowserEngineStatus, BrowserNativeState } from '../browser/types.ts'
+import type {
+  BrowserEngineKind,
+  BrowserEngineStatus,
+  BrowserNativeState,
+  BrowserRuntimeProfile,
+  BrowserSurfaceBounds,
+  BrowserTab,
+} from '../browser/types.ts'
 import { useBrowserSnapshot } from './browser-context.tsx'
+
+// CEF drops a replacement Views window when destroy and create land in the same GPUix batch.
+export const NATIVE_BROWSER_REMOUNT_DELAY_MS = 100
 
 interface BrowserRenderer {
   supportsNativeBrowser?(): boolean
@@ -39,40 +49,74 @@ export function BrowserNativeHost({ service, suspended = false }: { service: Bro
         const shown = !suspended && placement?.tabId === tab.id && placement.visible
         const bounds = shown ? placement.bounds : { x: 0, y: 0, width: 1, height: 1 }
         return (
-          <browser
-            key={`${tab.id}:${tab.generation}`}
-            testId={`native-browser-${tab.id}`}
-            source={tab.url}
-            generation={tab.generation}
-            profileId={profile.id}
-            profilePath={profile.path}
-            incognito={profile.incognito}
-            visible={Boolean(shown)}
-            command={JSON.stringify(tab.commands)}
-            style={{
-              position: 'absolute',
-              left: bounds.x,
-              top: bounds.y,
-              width: bounds.width,
-              height: bounds.height,
-              pointerEvents: 'none',
-            }}
-            onBrowserState={(event: BrowserEvent) => {
-              const state = parseBrowserState(event.value)
-              if (state) service.applyNativeState(tab.id, state)
-            }}
-            onBrowserOpen={(event: BrowserEvent) => {
-              const opened = parseBrowserValue(event.value)
-              if (opened) service.openRequested(tab.id, opened.generation, opened.value)
-            }}
-            onBrowserError={(event: BrowserEvent) => {
-              const failure = parseBrowserValue(event.value)
-              if (failure) service.applyNativeState(tab.id, { generation: failure.generation, loading: false, error: failure.value })
-            }}
+          <NativeBrowserElement
+            key={tab.id}
+            tab={tab}
+            profile={profile}
+            bounds={bounds}
+            shown={shown}
+            service={service}
           />
         )
       })}
     </div>
+  )
+}
+
+function NativeBrowserElement({
+  tab,
+  profile,
+  bounds,
+  shown,
+  service,
+}: {
+  tab: BrowserTab
+  profile: BrowserRuntimeProfile
+  bounds: BrowserSurfaceBounds
+  shown: boolean
+  service: BrowserSessionService
+}) {
+  const [mountedGeneration, setMountedGeneration] = useState(tab.generation)
+
+  useEffect(() => {
+    if (mountedGeneration === tab.generation) return
+    const timer = setTimeout(() => setMountedGeneration(tab.generation), NATIVE_BROWSER_REMOUNT_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [tab.generation, mountedGeneration])
+
+  if (mountedGeneration !== tab.generation) return null
+
+  return (
+    <browser
+      testId={`native-browser-${tab.id}`}
+      source={tab.url}
+      generation={mountedGeneration}
+      profileId={profile.id}
+      profilePath={profile.path}
+      incognito={profile.incognito}
+      visible={Boolean(shown)}
+      command={JSON.stringify(tab.commands)}
+      style={{
+        position: 'absolute',
+        left: bounds.x,
+        top: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        pointerEvents: 'none',
+      }}
+      onBrowserState={(event: BrowserEvent) => {
+        const state = parseBrowserState(event.value)
+        if (state) service.applyNativeState(tab.id, state)
+      }}
+      onBrowserOpen={(event: BrowserEvent) => {
+        const opened = parseBrowserValue(event.value)
+        if (opened) service.openRequested(tab.id, opened.generation, opened.value)
+      }}
+      onBrowserError={(event: BrowserEvent) => {
+        const failure = parseBrowserValue(event.value)
+        if (failure) service.applyNativeState(tab.id, { generation: failure.generation, loading: false, error: failure.value })
+      }}
+    />
   )
 }
 
