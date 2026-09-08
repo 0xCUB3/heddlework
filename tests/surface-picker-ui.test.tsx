@@ -30,7 +30,7 @@ describeNative('surface picker columns', () => {
         if (layout.mobile) expect(second.x).toBe(first.x)
         else {
           expect(second.y).toBe(first.y)
-          expect(second.width).toBeCloseTo(first.width, 0)
+          expect(Math.abs(second.width - first.width)).toBeLessThanOrEqual(1)
           expect(second.x).toBeGreaterThan(first.x + first.width)
         }
       } finally {

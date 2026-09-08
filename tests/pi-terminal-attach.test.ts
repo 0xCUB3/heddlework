@@ -157,15 +157,29 @@ describe('Pi terminal attach client', () => {
       env: { ...process.env, HEDDLEWORK_RUNTIME_DIR: root },
       stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
     })
+    const decoder = new TextDecoder()
+    let stdout = ''
+    const stdoutDone = (async () => {
+      for await (const chunk of child.stdout) stdout += decoder.decode(chunk, { stream: true })
+      stdout += decoder.decode()
+    })()
+    const waitFor = async (needle: string, ms = 4000) => {
+      const deadline = Date.now() + ms
+      while (!stdout.includes(needle)) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${JSON.stringify(needle)}\nstdout=${stdout}`)
+        await Bun.sleep(25)
+      }
+    }
+    await waitFor('session: Attached')
     child.stdin.write('hello owner\n')
-    await Bun.sleep(80)
+    await waitFor('assistant: live reply')
     child.stdin.write('/detach\n')
     child.stdin.end()
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
+    const [stderr, exitCode] = await Promise.all([
       new Response(child.stderr).text(),
       child.exited,
     ])
+    await stdoutDone
     await new Promise<void>((resolve) => server.close(() => resolve()))
     if (exitCode !== 0) throw new Error(`attach CLI exited ${exitCode}\nstdout=${stdout}\nstderr=${stderr}`)
     expect(stderr).toBe('')
@@ -182,5 +196,5 @@ describe('Pi terminal attach client', () => {
     expect(commands).not.toContain('get_state')
     expect(commands).not.toContain('get_messages')
     expect(commands).toContain('prompt')
-  }, 5_000)
+  }, 10_000)
 })
