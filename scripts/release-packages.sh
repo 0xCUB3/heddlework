@@ -36,11 +36,12 @@ case "$version" in *-*) echo "prerelease $version: not publishing to the tap or 
 [ "$dry_run" = "--dry-run" ] && exit 0
 
 : "${PACKAGES_TOKEN:?PACKAGES_TOKEN is required to push}"
-# Bearer extraheader keeps the token off the remote URL so clone/push failures cannot leak it.
+# GitHub git-over-HTTPS wants basic x-access-token, matching actions/checkout. Keep it off the remote URL.
 push_file() {
-  local repo="$1" path="$2" src="$3" work header
+  local repo="$1" path="$2" src="$3" work header auth
   work="$(mktemp -d)"
-  header="AUTHORIZATION: bearer ${PACKAGES_TOKEN}"
+  auth="$(printf '%s' "x-access-token:${PACKAGES_TOKEN}" | openssl base64 -A)"
+  header="AUTHORIZATION: basic ${auth}"
   git -c "http.https://github.com/.extraheader=${header}" clone -q --depth 1 "https://github.com/0xCUB3/${repo}.git" "$work"
   mkdir -p "$work/$(dirname "$path")"
   cp "$src" "$work/$path"
