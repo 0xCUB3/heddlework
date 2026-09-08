@@ -27,6 +27,7 @@ export function RightPanelHeader({
   fullscreenProgress,
   fullscreenLocked = false,
   refreshDisabled = false,
+  compact = false,
   tabs,
   activeTabId,
   newTabLabel = 'New tab',
@@ -45,6 +46,7 @@ export function RightPanelHeader({
   fullscreenProgress?: number | undefined
   fullscreenLocked?: boolean
   refreshDisabled?: boolean
+  compact?: boolean
   tabs?: readonly RightPanelHeaderTab[]
   activeTabId?: string
   newTabLabel?: string
@@ -100,7 +102,7 @@ export function RightPanelHeader({
   }, [activeTabId, renderer, tabs])
 
   return (
-    <MotionDiv initial={false} animate={{ paddingLeft: 9 + trafficLightInset }} transition={LAYOUT_MOTION_TRANSITION} testId="right-panel-header" style={{ height: 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 9 + trafficLightInset, paddingRight: 9 }}>
+    <MotionDiv initial={false} animate={{ paddingLeft: 9 + trafficLightInset }} transition={LAYOUT_MOTION_TRANSITION} testId="right-panel-header" style={{ height: compact ? 40 : 52, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: 9 + trafficLightInset, paddingRight: 9 }}>
       {tabs ? (
         <div ref={setTabViewportRef} testId="right-panel-tabs" style={{ minWidth: 0, height: 30, flexGrow: 1, overflow: 'hidden' }}>
           <div ref={setTabScrollRef} testId="right-panel-tab-scroll" style={{ width: '100%', height: 30, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, overflow: 'scroll' }}>

@@ -44,6 +44,7 @@ export function BrowserPanel({
       <RightPanelHeader
         icon="globe"
         title="Browser"
+        compact
         fullscreen={fullscreen}
         fullscreenProgress={fullscreenProgress}
         fullscreenLocked={fullscreenLocked}
@@ -116,7 +117,7 @@ function BrowserToolbar({
   }
 
   return (
-    <div testId="browser-toolbar" style={{ height: 42, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, paddingLeft: 7, paddingRight: 7, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
+    <div testId="browser-toolbar" style={{ height: 38, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 3, paddingLeft: 7, paddingRight: 7, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }}>
       <IconButton icon="chevronLeft" label="Back" testId="browser-back" disabled={!tab?.canGoBack} onClick={() => tab && service.command(tab.id, 'back')} />
       <IconButton icon="chevronRight" label="Forward" testId="browser-forward" disabled={!tab?.canGoForward} onClick={() => tab && service.command(tab.id, 'forward')} />
       <IconButton icon={tab?.status === 'loading' ? 'x' : 'refresh'} label={tab?.status === 'loading' ? 'Stop loading' : 'Reload'} testId="browser-reload" disabled={!tab?.url} onClick={() => tab && service.command(tab.id, tab.status === 'loading' ? 'stop' : 'reload')} />
@@ -163,7 +164,7 @@ function BrowserSurfaceSlot({ service, tabId, visible }: { service: BrowserSessi
     }
     update()
     return () => {
-      if (timer) clearTimeout(timer)
+      if (timer !== undefined) clearTimeout(timer)
       service.hidePlacement(tabId)
     }
   }, [renderer, service, tabId, visible])

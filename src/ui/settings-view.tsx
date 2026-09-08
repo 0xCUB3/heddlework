@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import uiContract from '../workbench/ui-contract.json'
+import { hasNativeTrafficLights } from './window-chrome.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
 import { BrowserIntegrationSettings } from './browser-integration-settings.tsx'
@@ -80,7 +81,7 @@ export const SettingsView = React.memo(function SettingsView({
 }: SettingsViewProps) {
   onRenderForTest?.()
   const { mobile, compact, contentGutter } = useResponsiveLayout()
-  const resolvedTitlebarInset = titlebarInset ?? (compact ? (process.platform === 'darwin' ? 132 : 54) : 18)
+  const resolvedTitlebarInset = titlebarInset ?? (compact ? (hasNativeTrafficLights() ? 132 : 54) : 18)
   return (
     <div testId="settings-view" style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
       <MotionDiv initial={false} animate={{ paddingLeft: resolvedTitlebarInset }} transition={LAYOUT_MOTION_TRANSITION} style={{ height: uiContract.layout.headerHeight, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'center', paddingLeft: resolvedTitlebarInset, paddingRight: 16, borderWidth: 1, borderColor: colors.border }}>

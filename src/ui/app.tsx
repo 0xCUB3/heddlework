@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import uiContract from '../workbench/ui-contract.json'
+import { hasNativeTrafficLights } from './window-chrome.ts'
 import { useGpuixRequired, useWindowInsets, useWindowSize } from '@gpuix/react'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import type { FlowRuntimeSurface } from '../flows/runtime.ts'
@@ -451,8 +452,8 @@ export function WorkbenchApp({
   const dockHeight = !bottomTerminalOpen || panelFullscreenTarget ? 0 : bottomFullscreenVisible ? safeHeight : restDockHeight
   const showBottomDock = Boolean(terminals) && (bottomTerminalOpen || bottomTerminalMounted)
   const panelFullscreenProgress = panelFullscreenTarget ? 1 : 0
-  const sidebarToggleLeft = process.platform === 'darwin' ? 90 : layout.navigationOverlay ? 10 : 10 + 54 * animatedSidebarProgress
-  const collapsedChromeInset = process.platform === 'darwin' ? 132 : 54
+  const sidebarToggleLeft = hasNativeTrafficLights() ? 90 : layout.navigationOverlay ? 10 : 10 + 54 * animatedSidebarProgress
+  const collapsedChromeInset = hasNativeTrafficLights() ? 132 : 54
   const contentSidebarProgress = layout.navigationOverlay ? 0 : animatedSidebarProgress
   const flowsTitlebarInset = 24 + (collapsedChromeInset - 24) * (1 - contentSidebarProgress)
   const settingsTitlebarInset = 18 + (collapsedChromeInset - 18) * (1 - contentSidebarProgress)

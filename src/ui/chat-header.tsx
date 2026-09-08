@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import uiContract from '../workbench/ui-contract.json'
 import { workspaceDisplayName } from '../workbench/workspace-name.ts'
+import { hasNativeTrafficLights } from './window-chrome.ts'
 import { Select, SelectContent, SelectItem, SelectTrigger, type SelectItemState, type SelectTriggerState } from '@gpuix/react'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { contentText, type WorkbenchState } from '../workbench/state.ts'
@@ -40,7 +41,7 @@ export function ChatHeader({
   const projectName = workspaceDisplayName(state.workspacePath)
   const title = activeThreadTitle(state)
   const layout = useResponsiveLayout()
-  const collapsedLeftInset = process.platform === 'darwin' ? 132 : 54
+  const collapsedLeftInset = hasNativeTrafficLights() ? 132 : 54
   const titleGenerating = Boolean(state.session.sessionFile && state.threadLifecycle[state.session.sessionFile]?.titleGeneratingAt)
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(title)
