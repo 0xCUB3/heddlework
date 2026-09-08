@@ -283,7 +283,7 @@ function workTracesEqual(
     && left.items.every((item, index) => timelineItemsEqual(item, right.items[index]!))
 }
 
-function timelineItemsEqual(left: TimelineItem, right: TimelineItem | undefined): boolean {
+export function timelineItemsEqual(left: TimelineItem, right: TimelineItem | undefined): boolean {
   if (!right) return false
   if (left === right) return true
   if (left.id !== right.id || left.kind !== right.kind) return false
@@ -299,7 +299,12 @@ function timelineItemsEqual(left: TimelineItem, right: TimelineItem | undefined)
   if ('revertEntryId' in left || 'revertEntryId' in right) {
     if (('revertEntryId' in left ? left.revertEntryId : undefined) !== ('revertEntryId' in right ? right.revertEntryId : undefined)) return false
   }
-  if (left.kind === 'user' && right.kind === 'user') return left.images.length === right.images.length
+  if ('images' in left && 'images' in right && (left.images.length !== right.images.length
+    || !left.images.every((image, index) => {
+      const other = right.images[index]!
+      return image.data === other.data && image.mimeType === other.mimeType && image.previewPath === other.previewPath
+    }))) return false
+  if (left.kind === 'assistant' && right.kind === 'assistant') return left.metrics === right.metrics
   if (left.kind === 'status' && right.kind === 'status') return left.tone === right.tone
   if (left.kind === 'notice' && right.kind === 'notice') return left.notice.id === right.notice.id && left.notice.message === right.notice.message
   if (left.kind === 'tool' && right.kind === 'tool') {
@@ -309,10 +314,14 @@ function timelineItemsEqual(left: TimelineItem, right: TimelineItem | undefined)
       && left.tool.isError === right.tool.isError
       && left.tool.output === right.tool.output
       && left.tool.argsText === right.tool.argsText
+      && left.tool.args === right.tool.args
+      && left.tool.details === right.tool.details
+      && left.tool.outputOffset === right.tool.outputOffset
+      && left.tool.detailRef === right.tool.detailRef
   }
   if (left.kind === 'compaction' && right.kind === 'compaction') return left.tokensBefore === right.tokensBefore
   if (left.kind === 'context-injection' && right.kind === 'context-injection') {
-    return left.source === right.source && left.images.length === right.images.length
+    return left.source === right.source
   }
   return true
 }

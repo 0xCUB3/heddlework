@@ -3,6 +3,7 @@ import { useGpuix } from '@gpuix/react'
 import type { ComposerImage, PiModel, PiSessionStats, SlashCommand, ThinkingLevel } from '../pi/types.ts'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import { questionnaireFromTool } from '../workbench/ask-user.ts'
+import { nativeQuestionFromTool } from '../workbench/native-question.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { Icon } from './icons.tsx'
 import { Button, ChipSelect, type SelectOption } from './primitives.tsx'
@@ -42,11 +43,18 @@ export function Composer({ state, controller, draft = false, onPickerOpenChange,
     slashDismissed || commandQuery === undefined ? [] : matchCommands(state.commands, commandQuery).slice(0, 8)
   ), [commandQuery, slashDismissed, state.commands])
   const [activeCommandIndex, setActiveCommandIndex] = useState(0)
-  const collapsedQuestionnaire = useMemo(() => state.questionnaireCollapsed === undefined
-    ? undefined
-    : state.liveTools
+  const collapsedQuestionnaire = useMemo(() => {
+    if (state.questionnaireCollapsed === undefined) return undefined
+    const tabbed = state.liveTools
       .map(questionnaireFromTool)
-      .find((questionnaire) => questionnaire?.toolCallId === state.questionnaireCollapsed), [state.liveTools, state.questionnaireCollapsed])
+      .find((questionnaire) => questionnaire?.toolCallId === state.questionnaireCollapsed)
+    if (tabbed) return tabbed
+    const question = state.liveTools
+      .map(nativeQuestionFromTool)
+      .find((candidate) => candidate?.requestId === state.questionnaireCollapsed || candidate?.toolCallId === state.questionnaireCollapsed)
+    if (!question) return undefined
+    return { toolCallId: question.requestId, questions: [{ question: question.stem, header: question.header ?? 'Question', multiSelect: question.multiSelect, options: question.options.map((option) => ({ label: option.label, description: option.description ?? '' })) }] }
+  }, [state.liveTools, state.questionnaireCollapsed])
   useEffect(() => setActiveCommandIndex(0), [commandQuery])
   useEffect(() => {
     if (slashDismissed) setSlashDismissed(false)

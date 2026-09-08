@@ -9,8 +9,19 @@ import {
   type SessionHistoryPage,
 } from '../pi/session-history.ts'
 import {
+  findOmittedTranscriptEntry,
+  findTranscriptDetail,
+  isOmittedTranscriptMessage,
+  isTranscriptDetailRef,
+  mergeTranscriptDetail,
+  messageMatchesTranscriptEntry,
+  pageTranscriptDetail,
+  sameSessionFile,
+  TRANSCRIPT_DETAIL_PAGE_BYTES,
+  type TranscriptDetail,
+} from '../protocol/transcript.ts'
+import {
   sessionTreeFrom,
-  sessionTreeLeafDescendsFrom,
   sessionTreeOptions,
   treeNavigationLeavesBranch,
   type PiSessionTree,
@@ -148,6 +159,8 @@ export class WorkbenchController {
   #historyPager: PiSessionHistoryPager | undefined
   #transcriptBootstrap: Promise<void> | undefined
   #sessionTree: PiSessionTree | undefined
+  #leafId: string | null | undefined
+  #leafRevision: number | undefined
   #nextQueueId = 0
   #nextUiRequestId = 0
   #nextFabricRequestId = 0
@@ -197,6 +210,7 @@ export class WorkbenchController {
       patch: (patch) => this.#patch(patch),
       setState: (update) => this.#setState(update),
       send: (record) => this.#transport.send(record),
+      ownership: () => this.#transport.ownership,
     })
     const cachedSessions = this.#sessionCatalog.cached?.(workspacePath, this.#sessionLimit + 1) ?? []
     if (cachedSessions.length > 0) {
@@ -246,8 +260,72 @@ export class WorkbenchController {
     }
   }
 
+  readonly getTranscriptDetail = async (
+    entryId: string,
+    options: { offset?: number; limit?: number } = {},
+  ): Promise<TranscriptDetail> => {
+    if (!entryId) throw new Error('Transcript entry id is required')
+    const generation = this.#sessionSwitchGeneration
+    const sessionFile = this.#state.session.sessionFile
+    const sources = {
+      messages: this.#state.messages,
+      liveTools: this.#state.liveTools,
+      liveAssistant: this.#state.liveAssistant,
+    }
+    const fromState = findTranscriptDetail(sources, entryId)
+    if (fromState) {
+      if (generation !== this.#sessionSwitchGeneration) throw new Error('Session changed')
+      const page = pageTranscriptDetail(fromState, {
+        offset: options.offset ?? 0,
+        limit: options.limit ?? TRANSCRIPT_DETAIL_PAGE_BYTES,
+        ...(sessionFile ? { sessionFile } : {}),
+      })
+      this.#adoptTranscriptDetail(page, generation)
+      return page
+    }
+    const omitted = findOmittedTranscriptEntry(sources, entryId)
+    const loadId = omitted?.entryId ?? entryId
+    const pager = this.#historyPager
+    const loaded = pager
+      ? await pager.loadEntry(loadId)
+      : sessionFile
+        ? await new PiSessionHistoryPager(sessionFile).loadEntry(loadId)
+        : undefined
+    if (generation !== this.#sessionSwitchGeneration) throw new Error('Session changed')
+    if (pager && pager !== this.#historyPager) throw new Error('Session changed')
+    if (!loaded) throw new Error('Unknown transcript entry: ' + entryId)
+    const page = pageTranscriptDetail({ kind: 'message', entryId: loadId, message: loaded }, {
+      offset: options.offset ?? 0,
+      limit: options.limit ?? TRANSCRIPT_DETAIL_PAGE_BYTES,
+      ...(sessionFile ? { sessionFile } : {}),
+    })
+    this.#adoptTranscriptDetail(page, generation)
+    return page
+  }
+
+  #adoptTranscriptDetail(detail: TranscriptDetail, generation: number): void {
+    if (generation !== this.#sessionSwitchGeneration) return
+    if (detail.sessionFile && this.#state.session.sessionFile && !sameSessionFile(detail.sessionFile, this.#state.session.sessionFile)) return
+    const omitted = this.#state.messages.some((message) => messageMatchesTranscriptEntry(message, detail.entryId) && isOmittedTranscriptMessage(message))
+      || this.#state.liveTools.some((tool) => tool.id === detail.entryId && isTranscriptDetailRef(tool.detailRef))
+      || this.#state.liveAssistant?.blocks.some((block) => isTranscriptDetailRef(block.detailRef) && (this.#state.liveAssistant?.id === detail.entryId || block.detailRef.entryId === detail.entryId))
+    if (!omitted) return
+    const next = mergeTranscriptDetail(this.#state, detail)
+    if (next === this.#state) return
+    if (next.messages === this.#state.messages && next.liveTools === this.#state.liveTools && next.liveAssistant === this.#state.liveAssistant) return
+    this.#patch({
+      messages: next.messages,
+      liveTools: next.liveTools,
+      liveAssistant: next.liveAssistant,
+    })
+  }
+
   readonly acceptAgentEvent = (event: RpcRecord): void => this.#handleEvent(event)
   readonly acceptAgentStatus = (status: TransportStatus): void => this.#handleStatus(status)
+
+  get agentOwnership(): 'owned' | 'attached' | undefined {
+    return this.#transport.ownership
+  }
 
   notify(kind: NoticeKind, message: string, options?: NoticeOptions): void {
     this.#setState((state) => addNotice(state, kind, message, options))
@@ -568,6 +646,9 @@ export class WorkbenchController {
       const result = await this.#transport.request<{ cancelled?: boolean }>({ type: 'new_session' })
       if (result.cancelled) return
       this.#historyPager = undefined
+      this.#sessionTree = undefined
+      this.#leafId = undefined
+      this.#leafRevision = undefined
       this.#patch({
         messages: [],
         messagesHasOlder: false,
@@ -684,10 +765,15 @@ export class WorkbenchController {
       }
       const workspacePath = session.cwd ? resolve(session.cwd) : this.#state.workspacePath
       this.#historyPager = undefined
+      this.#sessionTree = undefined
+      this.#leafId = undefined
+      this.#leafRevision = undefined
+      const preview = this.#sessionPreview
+      const keepPreview = preview && sameSessionFile(preview.session.sessionFile, session.path)
       this.#patch({
         workspacePath,
-        messages: [],
-        messagesHasOlder: false,
+        messages: keepPreview ? preview.messages : [],
+        messagesHasOlder: keepPreview ? preview.messagesHasOlder : false,
         messagesLoadingEarlier: false,
         forkMessages: [],
         liveAssistant: undefined,
@@ -1178,8 +1264,8 @@ export class WorkbenchController {
     this.#dialogs.respond(response)
   }
 
-  submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[]): void {
-    this.#dialogs.submitQuestionnaire(toolCallId, answers)
+  submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[], note?: string): void {
+    this.#dialogs.submitQuestionnaire(toolCallId, answers, note)
   }
 
   cancelAskUserQuestionnaire(toolCallId: string): void {
@@ -1598,9 +1684,9 @@ export class WorkbenchController {
     const generation = ++this.#bootstrapGeneration
     const transcriptGeneration = ++this.#transcriptRefreshGeneration
     const streamRevision = this.#streamRevision
-    const [reportedSession, sessionTree] = await Promise.all([
+    const [reportedSession, leaf] = await Promise.all([
       this.#transport.request<PiSessionState>({ type: 'get_state' }),
-      this.#tryRequestSessionTree(),
+      this.#tryRequestLeaf(),
     ])
     if (this.#disposed || generation !== this.#bootstrapGeneration) return
     // Events may arrive while get_state is in flight. A late idle snapshot must
@@ -1608,19 +1694,20 @@ export class WorkbenchController {
     const session = streamRevision === this.#streamRevision ? reportedSession : {
       ...reportedSession, isStreaming: this.#state.session.isStreaming,
     }
-    this.#sessionTree = sessionTree
+    this.#leafId = leaf?.leafId
+    this.#leafRevision = leaf?.revision
     this.#reconnectAttempts = 0
     this.#patch({
       connection: 'connected', connectionMessage: 'Connected', session,
       activity: session.isStreaming ? 'Working' : 'Ready',
     })
     const current = () => !this.#disposed && generation === this.#bootstrapGeneration
-    const transcript = this.#loadInitialTranscript(session, sessionTree?.leafId).then(({ page, pager }) => {
+    const transcript = this.#loadInitialTranscript(session, leaf?.leafId).then(({ page, pager }) => {
       if (!current() || transcriptGeneration !== this.#transcriptRefreshGeneration) return
       this.#historyPager = pager
       this.#patch({ messages: page.messages, messagesHasOlder: page.hasOlder, messagesLoadingEarlier: false, ...reconcileLiveTranscript(this.#state, page.messages) })
     })
-    // Supplementary RPC metadata must never hold the transcript or navigation hostage.
+    // Fork affordances and other RPC metadata must never hold the transcript hostage.
     const metadata = Promise.allSettled([
       includeModels ? this.#transport.request<{ models: PiModel[] }>({ type: 'get_available_models' }) : Promise.resolve({ models: this.#state.models }),
       this.#getThinkingLevels(),
@@ -1663,15 +1750,23 @@ export class WorkbenchController {
     const sessionTree = sessionTreeFrom(value)
     if (!sessionTree) throw new Error('This Pi version does not expose session tree navigation to RPC clients')
     this.#sessionTree = sessionTree
+    this.#leafId = sessionTree.leafId
     return sessionTree
   }
 
-  async #tryRequestSessionTree(): Promise<PiSessionTree | undefined> {
+  async #tryRequestLeaf(): Promise<SessionLeaf | undefined> {
     try {
-      const value = await this.#transport.request({ type: 'get_tree' })
-      return sessionTreeFrom(value)
+      return sessionLeafFrom(await this.#transport.request({ type: 'get_leaf' }))
     } catch {
-      return undefined
+      try {
+        const tree = sessionTreeFrom(await this.#transport.request({ type: 'get_tree' }))
+        if (!tree) return undefined
+        this.#sessionTree = tree
+        this.#leafId = tree.leafId
+        return { leafId: tree.leafId, revision: undefined }
+      } catch {
+        return undefined
+      }
     }
   }
 
@@ -1686,37 +1781,45 @@ export class WorkbenchController {
     const current = () => !this.#disposed && generation === this.#sessionSwitchGeneration && refreshGeneration === this.#transcriptRefreshGeneration && !this.#sessionSwitch
     try {
       const sessionFile = this.#state.session.sessionFile
-      const previousTree = this.#sessionTree
-      const [sessionTree, forkMessages] = await Promise.all([
-        this.#tryRequestSessionTree(),
-        this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' }).catch(() => ({ messages: this.#state.forkMessages })),
-      ])
+      const previousLeafId = this.#leafId
+      const leaf = await this.#tryRequestLeaf()
       if (!current()) return
-      if (sessionTree) this.#sessionTree = sessionTree
+      if (leaf) {
+        this.#leafId = leaf.leafId
+        this.#leafRevision = leaf.revision
+      }
+      const forksPromise = this.#transport.request<{ messages: PiForkMessage[] }>({ type: 'get_fork_messages' })
+        .catch(() => ({ messages: this.#state.forkMessages }))
       // Pi announces the session file before it writes it (the first user message creates it),
       // so a missing file means the transcript still lives only in pi's memory. Fall through to
       // get_messages and attach the pager on the next refresh once the file exists.
-      const loaded = sessionFile ? await this.#tryLoadTranscriptPage(sessionFile, sessionTree?.leafId) : undefined
+      const loaded = sessionFile ? await this.#tryLoadTranscriptPage(sessionFile, leaf?.leafId ?? previousLeafId) : undefined
       if (!current()) return
+      const applyForks = (forkMessages: unknown) => {
+        if (!current()) return
+        this.#patch({ forkMessages: forkMessagesFrom(forkMessages) })
+      }
       if (loaded) {
         const { pager: latestPager, ...page } = loaded
-        const branchChanged = previousTree !== undefined
-          && sessionTree !== undefined
-          && !sessionTreeLeafDescendsFrom(sessionTree, previousTree.leafId)
+        const branchChanged = previousLeafId !== undefined
+          && leaf?.leafId !== undefined
+          && leaf.leafId !== previousLeafId
+          && !transcriptOverlaps(this.#state.messages, page.messages)
         const retainedPager = branchChanged ? undefined : this.#historyPager
         if (!retainedPager) this.#historyPager = latestPager
         this.#patch({
           messages: branchChanged ? page.messages : mergeTranscriptTail(this.#state.messages, page.messages),
           messagesHasOlder: retainedPager ? this.#state.messagesHasOlder : page.hasOlder,
           messagesLoadingEarlier: false,
-          forkMessages: forkMessagesFrom(forkMessages),
           ...reconcileLiveTranscript(this.#state, page.messages),
         })
+        void forksPromise.then(applyForks)
         return
       }
       const messages = await this.#transport.request<{ messages: PiMessage[] }>({ type: 'get_messages' })
       if (!current()) return
-      this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, forkMessages: forkMessagesFrom(forkMessages), ...reconcileLiveTranscript(this.#state, messages.messages) })
+      this.#patch({ messages: messages.messages, messagesHasOlder: false, messagesLoadingEarlier: false, ...reconcileLiveTranscript(this.#state, messages.messages) })
+      void forksPromise.then(applyForks)
     } catch (error) {
       if (current()) this.#setState((state) => addNotice(state, 'warning', `Could not refresh transcript: ${errorMessage(error)}`))
     }
@@ -1874,6 +1977,16 @@ export class WorkbenchController {
         }
         return next
       })
+      if (Array.isArray(event.prompts)) this.#dialogs.restorePrompts(event.prompts as RpcRecord[], this.#sessionTransitionDepth > 0)
+      return
+    }
+    if (event.type === 'heddlework_native_question' && event.question && typeof event.question === 'object') {
+      this.#dialogs.handleNativeQuestion(event.question as import('./native-question.ts').NativeQuestion, this.#sessionTransitionDepth > 0)
+      return
+    }
+    if (event.type === 'heddlework_native_question_end' || event.type === 'heddlework_ui_prompt_end') {
+      const id = String(event.requestId ?? event.id ?? '')
+      if (id) this.#dialogs.dismiss(id)
       return
     }
     if (event.type === 'session_switched' || event.type === 'heddlework_session_state') {
@@ -1951,6 +2064,8 @@ export class WorkbenchController {
       this.#refreshFull = false
       this.#historyPager = undefined
       this.#sessionTree = undefined
+      this.#leafId = undefined
+      this.#leafRevision = undefined
       this.#pauseAfterTools = false
       this.#compactionHold = false
       const summary = this.#state.sessions.find((candidate) => candidate.path === session.sessionFile)
@@ -2147,6 +2262,30 @@ function mergeTranscriptTail(current: PiMessage[], latest: PiMessage[]): PiMessa
     seen.add(id)
     return true
   })
+}
+
+interface SessionLeaf {
+  leafId: string | null
+  revision?: number | undefined
+}
+
+function sessionLeafFrom(value: unknown): SessionLeaf | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (record.leafId !== null && typeof record.leafId !== 'string') return undefined
+  return {
+    leafId: record.leafId,
+    ...(typeof record.revision === 'number' ? { revision: record.revision } : {}),
+  }
+}
+
+function transcriptOverlaps(current: readonly PiMessage[], latest: readonly PiMessage[]): boolean {
+  const latestIds = new Set(latest.flatMap((message) => {
+    const id = messageEntryId(message)
+    return id ? [id] : []
+  }))
+  if (latestIds.size === 0) return false
+  return current.some((message) => latestIds.has(messageEntryId(message) ?? ''))
 }
 
 function healthyTurnBoundary(event: RpcRecord): boolean {

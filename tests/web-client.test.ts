@@ -48,6 +48,24 @@ function waitFor(client: WorkspaceClient, predicate: () => boolean, timeoutMs = 
 }
 
 describe('web workspace client', () => {
+  it('does not dedupe transcript detail requests with different page limits', async () => {
+    const client = new WorkspaceClient()
+    const commands: unknown[] = []
+    const deferred: Array<{ resolve: (value: unknown) => void }> = []
+    ;(client as unknown as { send(command: unknown): Promise<unknown> }).send = (command: unknown) => {
+      commands.push(command)
+      return new Promise((resolve) => deferred.push({ resolve }))
+    }
+
+    const small = client.getTranscriptDetail('entry', { limit: 64 })
+    const large = client.getTranscriptDetail('entry', { limit: 128 })
+    expect(commands).toHaveLength(2)
+    deferred[0]!.resolve({ kind: 'message', entryId: 'entry', offset: 0, bytes: 64, totalBytes: 128, complete: false, encoding: 'json', chunk: 'x'.repeat(64) })
+    deferred[1]!.resolve({ kind: 'message', entryId: 'entry', offset: 0, bytes: 128, totalBytes: 128, complete: true, encoding: 'json', chunk: 'x'.repeat(128) })
+    expect((await small).bytes).toBe(64)
+    expect((await large).bytes).toBe(128)
+  })
+
   it('applies welcome and patches, resolves send, and reconnects', async () => {
     const first = await bootstrap()
     const client = new WorkspaceClient()

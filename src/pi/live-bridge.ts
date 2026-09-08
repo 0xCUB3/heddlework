@@ -121,6 +121,7 @@ export interface PiLiveSnapshotData {
   messages?: PiMessage[]
   assistant?: PiMessage
   tools: RpcRecord[]
+  prompts?: RpcRecord[]
   sequence: number
 }
 
@@ -270,6 +271,7 @@ function isAdvertisement(value: unknown): value is PiLiveBridgeAdvertisement {
 
 export const HEDDLEWORK_LIVE_BRIDGE_SOURCE = String.raw`import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { StringDecoder } from "node:string_decoder";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -278,7 +280,12 @@ import { join } from "node:path";
 const VERSION = 1;
 const KEY = Symbol.for("heddlework.pi.live.bridge.v1");
 const STATE_WIDGET = "heddlework.live.state.v1";
+const QUESTION_API = Symbol.for("heddlework.native.question.v1");
+const QUESTION_CONTRACT = "heddlework.question.v1";
+const DONT_KNOW_LABEL = "I don't know";
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const toolAls = new AsyncLocalStorage();
+function newRequestId() { return randomBytes(16).toString("hex"); }
 
 function registryRoot() {
   if (process.env.HEDDLEWORK_RUNTIME_DIR) return join(process.env.HEDDLEWORK_RUNTIME_DIR, "pi-live");
@@ -403,7 +410,219 @@ function makeState(pi, ctx) {
     sessionId: ctx.sessionManager.getSessionId(),
     sessionName: pi.getSessionName(),
     pendingMessageCount: ctx.hasPendingMessages() ? 1 : 0,
+    nativeQuestion: { contract: QUESTION_CONTRACT, dialogs: true, customQa: true },
   };
+}
+
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function toolArgs(tool) {
+  return asRecord(tool && tool.args);
+}
+
+function optionList(value) {
+  if (!Array.isArray(value)) return [];
+  const options = [];
+  const seen = new Set();
+  for (const entry of value) {
+    if (typeof entry === "string" && entry.trim()) {
+      const label = entry.trim();
+      if (seen.has(label)) continue;
+      seen.add(label);
+      options.push({ value: label, label });
+      continue;
+    }
+    const option = asRecord(entry);
+    const label = typeof option.label === "string" ? option.label.trim() : "";
+    if (!label) continue;
+    const optionValue = typeof option.value === "string" && option.value.trim() ? option.value.trim() : label;
+    if (seen.has(optionValue)) continue;
+    seen.add(optionValue);
+    options.push({
+      value: optionValue,
+      label,
+      ...(typeof option.description === "string" && option.description.trim() ? { description: option.description.trim() } : {}),
+    });
+  }
+  return options;
+}
+
+function displayedOptionLabels(tool) {
+  const details = asRecord(tool && (tool.details || asRecord(tool.partialResult).details));
+  const update = asRecord(tool && tool.partialResult);
+  const candidates = [details.options, asRecord(update.details).options];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    const labels = candidate.flatMap((entry) => {
+      if (typeof entry === "string" && entry.trim()) return [entry.trim()];
+      const option = asRecord(entry);
+      return typeof option.label === "string" && option.label.trim() ? [option.label.trim()] : [];
+    });
+    if (labels.length > 0) return labels;
+  }
+  return [];
+}
+
+function questionFromTool(tool) {
+  if (!tool || tool.type === "tool_execution_end") return undefined;
+  const args = toolArgs(tool);
+  if (Array.isArray(args.questions)) return { variant: "tabbed", toolCallId: tool.toolCallId, stem: "" };
+  const stem = typeof args.question === "string" ? args.question.trim() : "";
+  if (!stem) return undefined;
+  const authored = optionList(args.options);
+  const displayed = displayedOptionLabels(tool);
+  const remaining = [...authored];
+  const options = displayed.length === 0 ? authored : displayed.map((label) => {
+    const index = remaining.findIndex((option) => option.label === label);
+    if (index < 0) return { value: label, label };
+    return remaining.splice(index, 1)[0] || { value: label, label };
+  });
+  const graded = Object.prototype.hasOwnProperty.call(args, "correctAnswer") || Object.prototype.hasOwnProperty.call(args, "explanation");
+  const description = typeof args.details === "string" && args.details.trim() ? args.details.trim() : undefined;
+  const allowText = options.length === 0;
+  const multiSelect = args.multiSelect === true;
+  return {
+    variant: "single",
+    contract: QUESTION_CONTRACT,
+    requestId: String(tool.toolCallId || ""),
+    toolCallId: tool.toolCallId,
+    toolName: tool.toolName,
+    stem,
+    description,
+    options,
+    multiSelect,
+    graded,
+    allowCustom: !graded && !allowText,
+    allowUnknown: graded,
+    allowNote: graded,
+    allowText,
+    required: !allowText,
+    kind: allowText ? "text" : multiSelect ? "multi-select" : "single-select",
+    responseShape: graded ? "custom-quiz" : allowText ? "rpc-dialog" : "custom-ask",
+  };
+}
+
+function runningQuestionTools(shared) {
+  const found = [];
+  for (const tool of shared.liveTools.values()) {
+    const question = questionFromTool(tool);
+    if (question && question.variant === "single") found.push({ tool, question });
+  }
+  return found;
+}
+
+function explicitQuestion(options) {
+  if (!options || typeof options !== "object") return;
+  const meta = options.question || options.nativeQuestion;
+  if (meta && typeof meta === "object") return meta;
+  if (options.contract === QUESTION_CONTRACT && (typeof options.stem === "string" || typeof options.question === "string")) return options;
+}
+
+function questionFromAls(shared, store) {
+  if (!store || !store.toolCallId) return;
+  const tool = shared.liveTools.get(store.toolCallId) || {
+    type: "tool_execution_start",
+    toolCallId: store.toolCallId,
+    toolName: store.toolName,
+    args: store.args,
+  };
+  return questionFromTool(tool);
+}
+
+function bindCustomQuestion(shared, options) {
+  if (options && options.overlay === true && !explicitQuestion(options)) return;
+  const explicit = explicitQuestion(options);
+  if (explicit) {
+    const requestId = String(explicit.requestId || newRequestId());
+    const pending = shared.pendingQuestions.get(requestId);
+    if (pending && pending.resolve) return;
+    const toolCallId = explicit.toolCallId ? String(explicit.toolCallId) : undefined;
+    if (toolCallId && shared.boundCustom.has(toolCallId)) return;
+    return {
+      requestId,
+      toolCallId,
+      question: { ...explicit, contract: QUESTION_CONTRACT, requestId, ...(toolCallId ? { toolCallId } : {}) },
+    };
+  }
+  const fromAls = questionFromAls(shared, toolAls.getStore());
+  if (toolAls.getStore()) {
+    if (!fromAls || fromAls.variant !== "single") return;
+    const toolCallId = String(fromAls.toolCallId || toolAls.getStore().toolCallId);
+    if (shared.boundCustom.has(toolCallId)) return;
+    const requestId = newRequestId();
+    return { requestId, toolCallId, question: { ...fromAls, requestId, toolCallId } };
+  }
+  const running = runningQuestionTools(shared).filter((entry) => !shared.boundCustom.has(entry.tool.toolCallId));
+  if (running.length !== 1) return;
+  const toolCallId = running[0].tool.toolCallId;
+  const requestId = newRequestId();
+  return { requestId, toolCallId, question: { ...running[0].question, requestId, toolCallId } };
+}
+
+function wrapToolExecute(tool) {
+  if (!tool || typeof tool.execute !== "function" || tool.execute.__hwAls) return;
+  const original = tool.execute;
+  function wrapped(toolCallId, params, signal, onUpdate, ctx) {
+    return toolAls.run({ toolCallId, toolName: tool.name, args: params }, () => original.call(this, toolCallId, params, signal, onUpdate, ctx));
+  }
+  wrapped.__hwAls = true;
+  tool.execute = wrapped;
+}
+
+function resultFromAnswer(question, answer) {
+  if (!answer || answer.cancelled) return null;
+  if (Object.prototype.hasOwnProperty.call(answer, "result")) return answer.result;
+  return formatCustomResult(question, answer);
+}
+
+function quizAnswers(question, selected) {
+  return selected.map((option, index) => ({
+    label: option.label,
+    value: option.value,
+    index: (question.options.findIndex((candidate) => candidate.value === option.value) + 1) || index + 1,
+  }));
+}
+
+function formatCustomResult(question, answer) {
+  if (!answer || answer.cancelled) return null;
+  const note = typeof answer.note === "string" && answer.note.trim() ? answer.note.trim() : undefined;
+  if (question.allowText) {
+    const text = String(answer.text || answer.custom || "").trim();
+    return { type: "text", label: text, value: text };
+  }
+  if (question.graded) {
+    if (answer.unknown) return { dontKnow: true, ...(note ? { note } : {}), answers: [] };
+    const selected = (answer.selectedValues || []).flatMap((value) => {
+      const option = question.options.find((candidate) => candidate.value === value || candidate.label === value);
+      return option ? [option] : [];
+    });
+    return { dontKnow: false, ...(note ? { note } : {}), answers: quizAnswers(question, selected) };
+  }
+  if (answer.custom) {
+    const custom = { type: "other", label: answer.custom, value: answer.custom };
+    return question.multiSelect ? [custom] : custom;
+  }
+  const selected = (answer.selectedValues || []).flatMap((value) => {
+    const option = question.options.find((candidate) => candidate.value === value || candidate.label === value);
+    if (!option) return [];
+    const index = question.options.findIndex((candidate) => candidate.value === option.value) + 1;
+    return [{ type: "option", label: option.label, value: option.value, index }];
+  });
+  return question.multiSelect ? selected : selected[0] || null;
+}
+
+function parseMultiInput(question, value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed || trimmed === "0") return { unknown: true, selectedValues: [] };
+  const selectedValues = trimmed.split(/[ ,]+/).flatMap((token) => {
+    const index = Number.parseInt(token, 10);
+    if (!Number.isFinite(index) || index < 1) return [];
+    const option = question.options[index - 1];
+    return option ? [option.value] : [];
+  });
+  return { unknown: false, selectedValues };
 }
 
 function line(socket, value) {
@@ -434,6 +653,16 @@ function createShared() {
     liveAssistant: undefined,
     liveTools: new Map(),
     sequence: 0,
+    pendingUi: new Map(),
+    pendingQuestions: new Map(),
+    pendingByToolCallId: new Map(),
+    boundCustom: new Set(),
+    answeredQuestions: new Set(),
+    wrappedUi: undefined,
+  };
+  globalThis[QUESTION_API] = {
+    contract: QUESTION_CONTRACT,
+    ask(question) { return shared.askHost(question); },
   };
 
   shared.broadcast = (value) => {
@@ -470,6 +699,268 @@ function createShared() {
     writeFileSync(temp, JSON.stringify(payload), { mode: 0o600 });
     renameSync(temp, shared.registryPath);
   };
+
+  shared.settlePending = (map, id, value) => {
+    const pending = map.get(id);
+    if (!pending || !pending.resolve) {
+      map.set(id, { queued: value });
+      return true;
+    }
+    map.delete(id);
+    pending.resolve(value);
+    return true;
+  };
+  shared.waitMap = (map, id) => new Promise((resolve) => {
+    const existing = map.get(id);
+    if (existing && Object.prototype.hasOwnProperty.call(existing, "queued")) {
+      map.delete(id);
+      resolve(existing.queued);
+      return;
+    }
+    map.set(id, { resolve, ...(existing || {}) });
+  });
+  shared.takeQueuedAnswer = (requestId, toolCallId) => {
+    const byRequest = shared.pendingQuestions.get(requestId);
+    if (byRequest && Object.prototype.hasOwnProperty.call(byRequest, "queued")) {
+      shared.pendingQuestions.delete(requestId);
+      return byRequest.queued;
+    }
+    if (!toolCallId) return;
+    const mapped = shared.pendingByToolCallId.get(toolCallId);
+    const pending = mapped ? shared.pendingQuestions.get(mapped) : shared.pendingQuestions.get(toolCallId);
+    if (pending && Object.prototype.hasOwnProperty.call(pending, "queued")) {
+      if (mapped) shared.pendingQuestions.delete(mapped);
+      else shared.pendingQuestions.delete(toolCallId);
+      shared.pendingByToolCallId.delete(toolCallId);
+      return pending.queued;
+    }
+  };
+  shared.askHost = (question) => {
+    const requestId = String(question.requestId || newRequestId());
+    const toolCallId = question.toolCallId ? String(question.toolCallId) : undefined;
+    const payload = { ...question, contract: QUESTION_CONTRACT, requestId, ...(toolCallId ? { toolCallId } : {}) };
+    const queued = shared.takeQueuedAnswer(requestId, toolCallId);
+    if (queued !== undefined) {
+      shared.answeredQuestions.add(requestId);
+      if (toolCallId) shared.answeredQuestions.add(toolCallId);
+      return Promise.resolve(queued);
+    }
+    const waiter = shared.waitMap(shared.pendingQuestions, requestId);
+    const pending = shared.pendingQuestions.get(requestId);
+    if (pending) pending.question = payload;
+    if (toolCallId && !shared.pendingByToolCallId.has(toolCallId)) shared.pendingByToolCallId.set(toolCallId, requestId);
+    shared.broadcast({ type: "heddlework_native_question", question: payload });
+    return waiter.then((answer) => {
+      shared.pendingQuestions.delete(requestId);
+      if (toolCallId && shared.pendingByToolCallId.get(toolCallId) === requestId) shared.pendingByToolCallId.delete(toolCallId);
+      shared.broadcast({ type: "heddlework_native_question_end", requestId, toolCallId });
+      return answer;
+    });
+  };
+  shared.pendingPromptRecords = () => {
+    const prompts = [];
+    for (const [id, pending] of shared.pendingUi) {
+      prompts.push(pending.request || { type: "extension_ui_request", id, method: pending.method || "select" });
+    }
+    for (const pending of shared.pendingQuestions.values()) {
+      if (pending.question && pending.question.stem) prompts.push({ type: "heddlework_native_question", question: pending.question });
+    }
+    return prompts;
+  };
+  shared.clearPrompts = () => {
+    for (const pending of shared.pendingUi.values()) pending.resolve({ cancelled: true });
+    shared.pendingUi.clear();
+    for (const pending of shared.pendingQuestions.values()) {
+      if (pending.resolve) pending.resolve({ cancelled: true });
+    }
+    shared.pendingQuestions.clear();
+    shared.pendingByToolCallId.clear();
+    shared.boundCustom.clear();
+    shared.answeredQuestions.clear();
+  };
+  shared.wrapUi = (ctx) => {
+    const ui = ctx && ctx.ui;
+    if (!ui || ui.__heddleworkQuestionWrap) return;
+    ui.__heddleworkQuestionWrap = true;
+    const original = {
+      select: ui.select ? ui.select.bind(ui) : undefined,
+      confirm: ui.confirm ? ui.confirm.bind(ui) : undefined,
+      input: ui.input ? ui.input.bind(ui) : undefined,
+      editor: ui.editor ? ui.editor.bind(ui) : undefined,
+      custom: ui.custom ? ui.custom.bind(ui) : undefined,
+    };
+    const raceUi = async (method, request, local, abort) => {
+      const id = request.id;
+      const remote = shared.waitMap(shared.pendingUi, id);
+      shared.pendingUi.get(id).request = request;
+      shared.pendingUi.get(id).method = method;
+      shared.broadcast(request);
+      const localResult = Promise.resolve().then(local);
+      const winner = await Promise.race([
+        localResult.then((value) => ({ source: "local", value })),
+        remote.then((value) => ({ source: "remote", value })),
+      ]);
+      shared.pendingUi.delete(id);
+      shared.broadcast({ type: "heddlework_ui_prompt_end", id });
+      if (winner.source === "remote") {
+        if (abort) abort.abort();
+        if (winner.value && winner.value.cancelled) return method === "confirm" ? false : undefined;
+        if (winner.value && Object.prototype.hasOwnProperty.call(winner.value, "confirmed")) return winner.value.confirmed;
+        return winner.value ? winner.value.value : undefined;
+      }
+      return winner.value;
+    };
+    if (ctx.mode === "tui") {
+      if (original.select) {
+        ui.select = (title, options, opts) => {
+          const id = Math.random().toString(36).slice(2);
+          const abort = new AbortController();
+          return raceUi("select", { type: "extension_ui_request", id, method: "select", title, options, timeout: opts && opts.timeout }, () => original.select(title, options, { ...opts, signal: abort.signal }), abort);
+        };
+      }
+      if (original.confirm) {
+        ui.confirm = (title, message, opts) => {
+          const id = Math.random().toString(36).slice(2);
+          const abort = new AbortController();
+          return raceUi("confirm", { type: "extension_ui_request", id, method: "confirm", title, message, timeout: opts && opts.timeout }, () => original.confirm(title, message, { ...opts, signal: abort.signal }), abort);
+        };
+      }
+      if (original.input) {
+        ui.input = (title, placeholder, opts) => {
+          const id = Math.random().toString(36).slice(2);
+          const abort = new AbortController();
+          return raceUi("input", { type: "extension_ui_request", id, method: "input", title, placeholder, timeout: opts && opts.timeout }, () => original.input(title, placeholder, { ...opts, signal: abort.signal }), abort);
+        };
+      }
+      if (original.editor) {
+        ui.editor = (title, prefill, opts) => {
+          const id = Math.random().toString(36).slice(2);
+          const abort = new AbortController();
+          return raceUi("editor", { type: "extension_ui_request", id, method: "editor", title, prefill, timeout: opts && opts.timeout }, () => original.editor(title, prefill, { ...opts, signal: abort.signal }), abort);
+        };
+      }
+    }
+    ui.custom = async (factory, options) => {
+      const bound = bindCustomQuestion(shared, options);
+      if (!bound) {
+        const id = newRequestId();
+        shared.broadcast({
+          type: "extension_ui_request",
+          id,
+          method: "unsupported",
+          title: "Terminal-only extension UI",
+          message: "This extension is drawing a custom terminal component. Heddlework cannot convert arbitrary TUI factories into a native form.",
+        });
+        return original.custom ? original.custom(factory, options) : undefined;
+      }
+      if (bound.toolCallId) shared.boundCustom.add(bound.toolCallId);
+      if (ctx.mode !== "tui") {
+        try {
+          return await runRpcQuestion(ui, original, bound.question);
+        } finally {
+          if (bound.toolCallId) shared.boundCustom.delete(bound.toolCallId);
+        }
+      }
+      const requestId = bound.requestId;
+      let settled = false;
+      let heldRemote;
+      let resolveWinner;
+      const finished = new Promise((resolve) => { resolveWinner = resolve; });
+      const settle = (source, value, error) => {
+        if (settled) return false;
+        settled = true;
+        if (source === "remote") heldRemote = resultFromAnswer(bound.question, value);
+        resolveWinner({ source, value, error });
+        return true;
+      };
+      let delivered = false;
+      let pendingDone;
+      const deliver = (done, value) => {
+        if (delivered || typeof done !== "function") return;
+        delivered = true;
+        try { done(value); } catch {}
+      };
+      shared.askHost(bound.question).then(
+        (value) => settle("remote", value),
+        (error) => settle("remote", undefined, error),
+      );
+      let local = Promise.resolve(undefined);
+      try {
+        if (original.custom) {
+          local = Promise.resolve().then(() => original.custom((tui, theme, kb, done) => {
+            pendingDone = done;
+            const wrappedDone = (value) => {
+              settle("local", value);
+              deliver(done, value);
+            };
+            const component = factory(tui, theme, kb, wrappedDone);
+            if (settled) deliver(done, heldRemote);
+            return component;
+          }, options));
+          local.then(
+            (value) => settle("local", value),
+            (error) => settle("local", undefined, error),
+          );
+        } else {
+          settle("local", undefined);
+        }
+        const winner = await finished;
+        if (winner.source === "remote") {
+          deliver(pendingDone, heldRemote);
+          if (winner.error) throw winner.error;
+          return heldRemote;
+        }
+        shared.settlePending(shared.pendingQuestions, requestId, { cancelled: true });
+        if (winner.error) throw winner.error;
+        return winner.value;
+      } finally {
+        if (bound.toolCallId) shared.boundCustom.delete(bound.toolCallId);
+        shared.answeredQuestions.add(requestId);
+        if (bound.toolCallId) shared.answeredQuestions.add(bound.toolCallId);
+        shared.pendingQuestions.delete(requestId);
+        if (bound.toolCallId && shared.pendingByToolCallId.get(bound.toolCallId) === requestId) {
+          shared.pendingByToolCallId.delete(bound.toolCallId);
+        }
+      }
+    };
+  };
+
+  async function runRpcQuestion(ui, original, question) {
+    const select = original.select || (ui.select && ui.select.bind(ui));
+    const input = original.input || (ui.input && ui.input.bind(ui));
+    const editor = original.editor || (ui.editor && ui.editor.bind(ui));
+    if (question.allowText) {
+      const title = question.description ? question.stem + "\n\n" + question.description : question.stem;
+      const text = editor ? await editor(title) : await input(title);
+      if (text === undefined) return null;
+      return formatCustomResult(question, { text });
+    }
+    if (question.multiSelect) {
+      const value = input ? await input(question.stem, "Enter numbers, comma-separated") : undefined;
+      if (value === undefined) return null;
+      const parsed = parseMultiInput(question, value);
+      let note;
+      if (question.allowNote && input) note = await input("Note (optional):");
+      return formatCustomResult(question, { ...parsed, note });
+    }
+    const labels = question.options.map((option) => option.label);
+    if (question.allowUnknown) labels.push(DONT_KNOW_LABEL);
+    if (question.allowCustom) labels.push("Other");
+    const choice = select ? await select(question.stem, labels) : undefined;
+    if (choice === undefined) return null;
+    if (choice === "Other") {
+      const custom = input ? await input("Custom answer") : "";
+      if (custom === undefined) return null;
+      let note;
+      if (question.allowNote && input) note = await input("Note (optional):");
+      return formatCustomResult(question, { custom, note });
+    }
+    let note;
+    if (question.allowNote && input) note = await input("Note (optional):");
+    if (choice === DONT_KNOW_LABEL) return formatCustomResult(question, { unknown: true, note });
+    const option = question.options.find((candidate) => candidate.label === choice);
+    return formatCustomResult(question, { selectedValues: option ? [option.value] : [choice], note });
+  }
 
   shared.server = createServer((socket) => {
     let authenticated = false;
@@ -518,6 +1009,7 @@ function createShared() {
       if (request.type === "get_available_thinking_levels") return respond(true, { levels: supportedThinking(ctx.model) });
       if (request.type === "get_fork_messages") return respond(true, { messages: forkMessages(ctx) });
       if (request.type === "get_tree") return respond(true, { tree: ctx.sessionManager.getTree(), leafId: ctx.sessionManager.getLeafId() });
+      if (request.type === "get_leaf") return respond(true, { leafId: ctx.sessionManager.getLeafId(), revision: shared.sequence });
       if (request.type === "get_session_stats") return respond(true, stats(ctx));
       if (request.type === "get_live_state") {
         const includeMessages = request.includeMessages === true;
@@ -530,8 +1022,28 @@ function createShared() {
           ...(allMessages === undefined ? {} : { messages: allMessages.slice(Math.max(0, allMessages.length - messageLimit)) }),
           assistant: shared.liveAssistant,
           tools: [...shared.liveTools.values()],
+          prompts: shared.pendingPromptRecords(),
           sequence: shared.sequence,
         });
+      }
+      if (request.type === "extension_ui_response") {
+        const settled = shared.settlePending(shared.pendingUi, request.id, request);
+        return respond(true, { settled });
+      }
+      if (request.type === "answer_native_question") {
+        const requestId = request.requestId || request.id;
+        const toolCallId = request.toolCallId;
+        if ((requestId && shared.answeredQuestions.has(requestId)) || (toolCallId && shared.answeredQuestions.has(toolCallId))) {
+          return respond(true, { settled: false });
+        }
+        let target = requestId && shared.pendingQuestions.has(requestId) ? requestId : undefined;
+        if (!target && toolCallId && shared.pendingByToolCallId.has(toolCallId)) target = shared.pendingByToolCallId.get(toolCallId);
+        if (!target && requestId && shared.pendingByToolCallId.has(requestId)) target = shared.pendingByToolCallId.get(requestId);
+        if (!target && toolCallId && shared.pendingQuestions.has(toolCallId)) target = toolCallId;
+        if (!target) target = requestId || toolCallId;
+        if (!target) return respond(true, { settled: false });
+        const settled = shared.settlePending(shared.pendingQuestions, target, request.answer || request);
+        return respond(true, { settled });
       }
       if (request.type === "abort") { ctx.abort(); return respond(true); }
       if (request.type === "prompt" || request.type === "steer" || request.type === "follow_up") {
@@ -568,6 +1080,15 @@ function createShared() {
 
 export default function heddleworkLiveBridge(pi) {
   const shared = globalThis[KEY] || (globalThis[KEY] = createShared());
+  if (typeof pi.registerTool === "function" && !pi.registerTool.__hwAls) {
+    const registerTool = pi.registerTool.bind(pi);
+    const wrappedRegister = (tool) => {
+      wrapToolExecute(tool);
+      return registerTool(tool);
+    };
+    wrappedRegister.__hwAls = true;
+    pi.registerTool = wrappedRegister;
+  }
   if (shared.active) return;
   shared.active = true;
   const emitSessionState = (ctx) => {
@@ -575,12 +1096,13 @@ export default function heddleworkLiveBridge(pi) {
     const sequenced = shared.broadcast(record);
     if (ctx.mode === "rpc") ctx.ui.setWidget(STATE_WIDGET, [JSON.stringify(sequenced)]);
   };
-  const setContext = (ctx) => { shared.latestContext = ctx; };
+  const setContext = (ctx) => { shared.latestContext = ctx; shared.wrapUi(ctx); };
   pi.on("session_start", (_event, ctx) => {
     shared.latestPi = pi;
     setContext(ctx);
     shared.liveAssistant = undefined;
     shared.liveTools.clear();
+    shared.clearPrompts();
     shared.lastAdvertisementKey = undefined;
     shared.advertise();
     shared.broadcast({ type: "session_switched", state: makeState(pi, ctx) });
@@ -608,6 +1130,15 @@ export default function heddleworkLiveBridge(pi) {
       else if (eventName === "tool_execution_update" || eventName === "tool_execution_end") {
         const previous = shared.liveTools.get(event.toolCallId) || {};
         shared.liveTools.set(event.toolCallId, { ...previous, ...event });
+        if (eventName === "tool_execution_end") {
+          const mapped = shared.pendingByToolCallId.get(event.toolCallId);
+          if (mapped) {
+            shared.settlePending(shared.pendingQuestions, mapped, { cancelled: true });
+            shared.pendingByToolCallId.delete(event.toolCallId);
+            shared.boundCustom.delete(event.toolCallId);
+            shared.broadcast({ type: "heddlework_native_question_end", requestId: mapped, toolCallId: event.toolCallId });
+          }
+        }
       }
       shared.broadcast(eventName === "message_update" ? projectMessageUpdate(event) : event);
     });
@@ -619,6 +1150,7 @@ export default function heddleworkLiveBridge(pi) {
     shared.active = false;
     shared.liveAssistant = undefined;
     shared.liveTools.clear();
+    shared.clearPrompts();
     if (event.reason !== "quit") return;
     for (const client of shared.clients) client.destroy();
     shared.clients.clear();

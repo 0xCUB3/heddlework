@@ -62,8 +62,8 @@ final class UIContractTests: XCTestCase {
     }
 
     func testWelcomeProtocolVersionIsOnWire() throws {
-        let data = Data(#"{"kind":"welcome","protocol":1,"workspacePath":"/w","snapshot":{},"flows":{"schedules":[],"pending":[],"runs":[]}}"#.utf8)
+        let data = Data(#"{"kind":"welcome","protocol":2,"workspacePath":"/w","snapshot":{},"flows":{"schedules":[],"pending":[],"runs":[]}}"#.utf8)
         let envelope = try JSONDecoder().decode(ServerEnvelope.self, from: data)
-        XCTAssertEqual(envelope.protocolVersion, 1)
+        XCTAssertEqual(envelope.protocolVersion, 2)
     }
 }

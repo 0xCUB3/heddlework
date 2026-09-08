@@ -1,6 +1,9 @@
 import React from 'react'
 import {
   DEFAULT_VIRTUAL_WINDOW_SIZE,
+  adaptiveOverscanRows,
+  adaptiveWindowSize,
+  averageMeasuredHeight,
   clampVirtualWindowStart,
   countPrependedIds,
 } from './virtual-window.ts'
@@ -8,9 +11,13 @@ import {
 export {
   DEFAULT_VIRTUAL_WINDOW_SIZE,
   SIDEBAR_VIRTUAL_WINDOW_SIZE,
+  TRANSCRIPT_OVERSCAN_ROWS,
   TRANSCRIPT_VIRTUAL_WINDOW_SIZE,
+  TRANSCRIPT_VIEWPORT_FALLBACK_PX,
   WEB_TRANSCRIPT_ROW_ESTIMATE_PX,
   WEB_TRANSCRIPT_WINDOW_SIZE,
+  adaptiveOverscanRows,
+  adaptiveWindowSize,
   clampVirtualWindowStart,
   countPrependedIds,
   virtualWindowForTail,
@@ -31,6 +38,8 @@ export interface NativeScrollEvent {
 export interface NativeVisibleRangeEvent {
   startIndex?: number
   endIndex?: number
+  viewportHeight?: number
+  atEnd?: boolean
 }
 
 export interface NativeVirtualWindow {
@@ -55,30 +64,61 @@ export function useNativeVirtualWindow(
   identity: string,
   initialStart = 0,
   windowSize = DEFAULT_VIRTUAL_WINDOW_SIZE,
-  options: { pinToEnd?: boolean; prepended?: number } = {},
+  options: {
+    pinToEnd?: boolean
+    prepended?: number
+    viewportHeight?: number
+    estimatedItemHeight?: number
+    overscan?: number
+    measuredHeights?: readonly number[]
+  } = {},
 ): NativeVirtualWindow {
-  const maxStart = Math.max(0, itemCount - windowSize)
+  const estimatedItemHeight = options.estimatedItemHeight ?? 88
+  const measuredAverage = options.measuredHeights
+    ? averageMeasuredHeight(options.measuredHeights, estimatedItemHeight)
+    : estimatedItemHeight
+  const sized = options.viewportHeight == null
+    ? windowSize
+    : adaptiveWindowSize(
+      options.viewportHeight,
+      measuredAverage,
+      options.overscan ?? adaptiveOverscanRows(options.viewportHeight, measuredAverage),
+      windowSize,
+    )
+  const resolvedWindowSize = itemCount <= Math.max(sized * 2, 48) ? Math.max(sized, itemCount) : sized
+  const maxStart = Math.max(0, itemCount - resolvedWindowSize)
   const pinToEnd = Boolean(options.pinToEnd)
   const prepended = options.prepended ?? 0
-  const defaultStart = pinToEnd ? maxStart : clampVirtualWindowStart(itemCount, initialStart, windowSize)
-  const [window, setWindow] = React.useState(() => ({ identity, start: defaultStart }))
-  let start = window.identity === identity ? window.start : defaultStart
-  if (window.identity === identity && prepended > 0 && start > 0) start += prepended
+  const defaultStart = pinToEnd ? maxStart : clampVirtualWindowStart(itemCount, initialStart, resolvedWindowSize)
+  const [window, setWindow] = React.useState(() => ({ identity, start: defaultStart, itemCount }))
+  const sameIdentity = window.identity === identity
+  let start = sameIdentity ? window.start : defaultStart
+  if (sameIdentity && itemCount > window.itemCount && prepended > 0) start += prepended
   if (pinToEnd) start = maxStart
-  const windowStart = clampVirtualWindowStart(itemCount, start, windowSize)
-  const windowEnd = Math.min(itemCount, windowStart + windowSize)
-  if (window.identity !== identity || ((prepended > 0 || pinToEnd) && window.start !== windowStart)) {
-    setWindow({ identity, start: windowStart })
+  const windowStart = clampVirtualWindowStart(itemCount, start, resolvedWindowSize)
+  const windowEnd = Math.min(itemCount, windowStart + resolvedWindowSize)
+  if (!sameIdentity || window.itemCount !== itemCount || window.start !== windowStart) {
+    setWindow({ identity, start: windowStart, itemCount })
   }
+  const overscan = options.overscan ?? (options.viewportHeight == null
+    ? 8
+    : adaptiveOverscanRows(options.viewportHeight, measuredAverage))
+  const activeIdentity = React.useRef(identity)
+  activeIdentity.current = identity
+  const rangeConfig = React.useRef({ identity, itemCount, overscan, resolvedWindowSize, windowEnd, windowStart })
+  rangeConfig.current = { identity, itemCount, overscan, resolvedWindowSize, windowEnd, windowStart }
   const onVisibleRange = React.useCallback((event: NativeVisibleRangeEvent) => {
+    if (activeIdentity.current !== identity) return
+    const current = rangeConfig.current
+    if (current.identity !== identity) return
     const first = Math.max(0, Math.floor(event.startIndex ?? 0))
     const last = Math.max(first, Math.floor(event.endIndex ?? first))
-    const margin = Math.max(8, Math.floor(windowSize / 4))
-    if (first >= windowStart + margin && last < windowEnd - margin) return
-    const nextStart = clampVirtualWindowStart(itemCount, first - margin, windowSize)
-    if (nextStart === windowStart && window.identity === identity) return
-    setWindow({ identity, start: nextStart })
-  }, [identity, itemCount, window.identity, windowEnd, windowSize, windowStart])
+    const margin = Math.max(2, Math.min(current.overscan, Math.floor(current.resolvedWindowSize / 4) || 2))
+    if (first >= current.windowStart + margin && last < current.windowEnd - margin) return
+    const nextStart = clampVirtualWindowStart(current.itemCount, first - margin, current.resolvedWindowSize)
+    if (nextStart === current.windowStart) return
+    setWindow({ identity, start: nextStart, itemCount: current.itemCount })
+  }, [identity])
   return { windowStart, windowEnd, onVisibleRange }
 }
 

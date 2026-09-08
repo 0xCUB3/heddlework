@@ -239,6 +239,131 @@ describe('Pi extension UI projection', () => {
     }
   })
 
+  it('drives a screenshot-shaped quiz through the production adapter without a tool-name whitelist', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({
+        type: 'tool_execution_start',
+        toolCallId: 'quiz-1',
+        toolName: 'fabric_probe',
+        args: {
+          question: 'Let $A=U\\Sigma V^*$ be invertible, with $\\sigma_1>\\sigma_n$. Which directions for $b$ and its perturbation $\\delta b$ attain the worst-case relative amplification?',
+          details: 'This jumps ahead deliberately to see whether you can construct the worst case, rather than just recognize the bound.',
+          options: [
+            { label: '$b=u_n$, $\\delta b=\\varepsilon u_1$', value: 'un-u1' },
+            { label: '$b=u_1$, $\\delta b=\\varepsilon u_1$', value: 'u1-u1' },
+            { label: '$b=v_1$, $\\delta b=\\varepsilon v_n$', value: 'v1-vn' },
+            { label: '$b=u_1$, $\\delta b=\\varepsilon u_n$', value: 'u1-un' },
+          ],
+          correctAnswer: 'un-u1',
+          explanation: 'Do not leak.',
+        },
+      })
+      transport.emit({
+        type: 'tool_execution_update',
+        toolCallId: 'quiz-1',
+        toolName: 'fabric_probe',
+        partialResult: { details: { options: [
+          { index: 1, label: '$b=u_n$, $\\delta b=\\varepsilon u_1$' },
+          { index: 2, label: '$b=u_1$, $\\delta b=\\varepsilon u_1$' },
+          { index: 3, label: '$b=v_1$, $\\delta b=\\varepsilon v_n$' },
+          { index: 4, label: '$b=u_1$, $\\delta b=\\varepsilon u_n$' },
+        ] } },
+      })
+      transport.emit({
+        type: 'extension_ui_request',
+        id: 'quiz-select',
+        method: 'select',
+        title: 'Let $A=U\\Sigma V^*$ be invertible, with $\\sigma_1>\\sigma_n$. Which directions for $b$ and its perturbation $\\delta b$ attain the worst-case relative amplification?',
+        options: ['$b=u_n$, $\\delta b=\\varepsilon u_1$', '$b=u_1$, $\\delta b=\\varepsilon u_1$', '$b=v_1$, $\\delta b=\\varepsilon v_n$', '$b=u_1$, $\\delta b=\\varepsilon u_n$', "I don't know"],
+      })
+      controller.submitAskUserQuestionnaire('quiz-1', [{ kind: 'option', optionIndex: 0 }], 'last right singular vector')
+      expect(transport.sent.at(-1)).toEqual({ type: 'extension_ui_response', id: 'quiz-select', value: '$b=u_n$, $\\delta b=\\varepsilon u_1$' })
+      transport.emit({ type: 'extension_ui_request', id: 'quiz-note', method: 'input', title: 'Note (optional):' })
+      expect(transport.sent.at(-1)).toEqual({ type: 'extension_ui_response', id: 'quiz-note', value: 'last right singular vector' })
+      controller.submitAskUserQuestionnaire('quiz-1', [{ kind: 'option', optionIndex: 2 }])
+      expect(transport.sent.filter((record) => record.type === 'extension_ui_response' && record.id === 'quiz-select')).toHaveLength(1)
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('cancels, isolates sessions, and restores attached quiz identity after a live snapshot', async () => {
+    const transport = new ManualTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    try {
+      await controller.start()
+      transport.emit({
+        type: 'tool_execution_start',
+        toolCallId: 'quiz-a',
+        toolName: 'quiz',
+        args: { question: 'First?', options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }], explanation: 'x', correctAnswer: 'a' },
+      })
+      transport.emit({ type: 'extension_ui_request', id: 'first', method: 'select', title: 'First?', options: ['A', 'B', "I don't know"] })
+      controller.cancelAskUserQuestionnaire('quiz-a')
+      expect(transport.sent.at(-1)).toEqual({ type: 'extension_ui_response', id: 'first', cancelled: true })
+
+      transport.emit({
+        type: 'tool_execution_start',
+        toolCallId: 'quiz-b',
+        toolName: 'other_quiz',
+        args: { question: 'Second?', options: [{ label: 'C', value: 'c' }, { label: 'D', value: 'd' }], explanation: 'y', correctAnswer: 'c' },
+      })
+      transport.emit({ type: 'heddlework_native_question', question: {
+        contract: 'heddlework.question.v1',
+        requestId: 'quiz-b',
+        toolCallId: 'quiz-b',
+        kind: 'single-select',
+        stem: 'Second?',
+        options: [{ value: 'c', label: 'C' }, { value: 'd', label: 'D' }],
+        allowCustom: false,
+        allowUnknown: true,
+        allowNote: true,
+        required: true,
+        multiSelect: false,
+        responseShape: 'custom-quiz',
+      } })
+      expect(controller.getSnapshot().dialog?.id).toBe('quiz-b')
+      controller.submitAskUserQuestionnaire('quiz-a', [{ kind: 'option', optionIndex: 0 }])
+      expect(transport.sent.some((record) => record.type === 'answer_native_question' && record.requestId === 'quiz-a')).toBe(false)
+
+      const creatingSession = controller.newSession()
+      expect(controller.getSnapshot().dialog).toBeUndefined()
+      await creatingSession
+      transport.emit({
+        type: 'heddlework_live_snapshot',
+        state: { sessionId: 'other', cwd: '/tmp/workspace' },
+        cwd: '/tmp/workspace',
+        tools: [{
+          type: 'tool_execution_start',
+          toolCallId: 'quiz-c',
+          toolName: 'quiz',
+          args: { question: 'Restored?', options: [{ label: 'Yes', value: 'yes' }, { label: 'No', value: 'no' }], explanation: 'z', correctAnswer: 'yes' },
+        }],
+        prompts: [{ type: 'heddlework_native_question', question: {
+          contract: 'heddlework.question.v1',
+          requestId: 'quiz-c',
+          kind: 'single-select',
+          stem: 'Restored?',
+          options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }],
+          allowCustom: false,
+          allowUnknown: true,
+          allowNote: true,
+          required: true,
+          multiSelect: false,
+          responseShape: 'custom-quiz',
+        } }],
+        sequence: 1,
+      })
+      expect(controller.getSnapshot().liveTools[0]?.id).toBe('quiz-c')
+      expect(controller.getSnapshot().dialog?.id).toBe('quiz-c')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('withdraws pending dialog effects when the controller is disposed', async () => {
     const transport = new ManualTransport()
     const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))

@@ -73,8 +73,10 @@ try {
   if (process.platform !== 'win32') chmodSync(runtimeOutput, 0o755)
   cpSync(webOutput, resolve(runtimeDirectory, 'web'), { recursive: true })
 
+  // Extra compile entrypoint: Bun only embeds workers listed here. clipboard-media.ts starts
+  // `./src/ui/image-hydration-worker.ts` (path from repo root / compile cwd) under /$bunfs/.
   const result = await Bun.build({
-    entrypoints: [resolve(root, 'src/main.tsx')],
+    entrypoints: [resolve(root, 'src/main.tsx'), resolve(root, 'src/ui/image-hydration-worker.ts')],
     compile,
     minify: true,
     sourcemap: 'external',
@@ -89,8 +91,12 @@ try {
 
   if (process.platform !== 'win32') chmodSync(output, 0o755)
   if (bundleChromium) {
-    const sourceMap = resolve(dirname(output), 'main.js.map')
+    const executableDirectory = dirname(output)
+    const sourceMap = resolve(executableDirectory, 'main.js.map')
     if (existsSync(sourceMap)) renameSync(sourceMap, resolve(dist, 'Heddlework.js.map'))
+    // Extra compile entrypoints emit sibling maps; codesign rejects unsigned data under Contents/MacOS.
+    const workerMap = resolve(executableDirectory, 'image-hydration-worker.js.map')
+    if (existsSync(workerMap)) rmSync(workerMap)
   }
   if (bundleChromium && cefPackagingDirectory && nativePackagingDirectory) {
     validateCefArtifacts(nativePackagingDirectory, cefPackagingDirectory)

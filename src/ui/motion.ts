@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState, type ComponentProps, type Component
 
 export const SPRING_SETTLE_MS = 500
 export const LAYOUT_MOTION_TRANSITION = { duration: 0.42, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } as const
+export const READING_LAYOUT_TRANSITION = { duration: 0 } as const
 export const MotionDiv = motion.div as ComponentType<ComponentProps<typeof motion.div> & { testId?: string; tabIndex?: number }>
 
 export function useEaseProgress(open: boolean, duration = 0.22): number {

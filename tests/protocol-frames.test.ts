@@ -17,7 +17,7 @@ describe('workspace wire frames', () => {
       expect(isWireFrame(JSON.parse(frame))).toBe(true)
     }
     const assembler = new FrameAssembler()
-    let assembled: string | undefined
+    let assembled: unknown
     for (const frame of frames) assembled = assembler.push(frame)
     expect(assembled).toBe(json)
   })
@@ -41,8 +41,16 @@ describe('workspace wire frames', () => {
     expect(frames.length).toBeGreaterThan(1)
     for (const frame of frames) expect(utf8ByteLength(frame)).toBeLessThanOrEqual(8_192)
     const assembler = new FrameAssembler()
-    let assembled: string | undefined
+    let assembled: unknown
     for (const frame of frames) assembled = assembler.push(frame)
     expect(assembled).toBe(json)
+  })
+
+  it('parses a non-frame payload once and returns the object', () => {
+    const assembler = new FrameAssembler()
+    const json = JSON.stringify({ kind: 'pong' })
+    const parsed = assembler.push(json)
+    expect(parsed).toEqual({ kind: 'pong' })
+    expect(typeof parsed).toBe('object')
   })
 })

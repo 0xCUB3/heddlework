@@ -25,11 +25,13 @@ function bundle(cwd: string, sessionPath?: string, start?: () => Promise<void>) 
   if (sessionPath) state = { ...state, session: { ...state.session, sessionFile: sessionPath } }
   const listeners = new Set<() => void>()
   let starts = 0
+  let agentOwnership: 'owned' | 'attached' | undefined
   const value = {
     controller: {
       getSnapshot: () => state,
       subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
       start: async () => { starts++; await start?.() },
+      get agentOwnership() { return agentOwnership },
     },
     flows: { subscribe: () => () => undefined },
     dispose: async () => undefined,
@@ -38,6 +40,9 @@ function bundle(cwd: string, sessionPath?: string, start?: () => Promise<void>) 
     value,
     starts: () => starts,
     setPath(path: string) { state = { ...state, session: { ...state.session, sessionFile: path } } },
+    setBusy() { state = { ...state, session: { ...state.session, isStreaming: true } } },
+    setQueued() { state = { ...state, queue: { ...state.queue, items: [{ id: 'q', text: 'queued', images: [], createdAt: 1, lane: 'followUp' as const }] } } },
+    setAttached() { agentOwnership = 'attached' },
     publish() { for (const listener of listeners) listener() },
   }
 }
@@ -172,6 +177,93 @@ describe('session runtime lazy restoration', () => {
       expect(created).toBe(1)
       expect(runtime.bundleForKey(oldPath)).toBe(replacement.value)
       expect(runtime.bundleForKey(newPath)).toBe(owner.value)
+    } finally { await runtime.dispose() }
+  })
+
+  it('keeps idle age when a non-default lease is rekeyed', async () => {
+    const { root, path } = fixture()
+    const oldPath = join(root, 'old.jsonl')
+    const newPath = join(root, 'new.jsonl')
+    const opened = bundle(root, oldPath)
+    const runtime = new SessionRuntime({
+      initial: bundle(root).value,
+      path,
+      createSession: async () => opened.value,
+    })
+    try {
+      await runtime.startInitial()
+      await runtime.ensureSession(oldPath)
+      const future = Date.now() + 100
+      opened.setPath(newPath)
+      opened.publish()
+      expect(runtime.hasExecutionLease(newPath)).toBe(true)
+      expect(await runtime.releaseIdleExecutionLeases({ idleMs: 1, now: future })).toContain(newPath)
+      expect(runtime.hasExecutionLease(newPath)).toBe(false)
+    } finally { await runtime.dispose() }
+  })
+
+  it('browsing many threads does not spawn execution leases', async () => {
+    const { root, path } = fixture()
+    const created: string[] = []
+    const runtime = new SessionRuntime({
+      initial: bundle(root).value,
+      path,
+      createSession: async (input) => {
+        created.push(input.sessionPath!)
+        return bundle(root, input.sessionPath).value
+      },
+    })
+    try {
+      await runtime.startInitial()
+      expect(runtime.executionLeaseCount()).toBe(1)
+      for (let index = 0; index < 8; index++) {
+        const sessionPath = join(root, `thread-${index}.jsonl`)
+        expect(runtime.hasExecutionLease(sessionPath)).toBe(false)
+      }
+      expect(created).toEqual([])
+      const acting = join(root, 'thread-0.jsonl')
+      await runtime.ensureSession(acting)
+      expect(created).toEqual([acting])
+      expect(runtime.executionLeaseCount()).toBe(2)
+    } finally { await runtime.dispose() }
+  })
+
+  it('releases idle unowned leases and keeps running, queued, and attached owners', async () => {
+    const { root, path } = fixture()
+    const idlePath = join(root, 'idle.jsonl')
+    const runningPath = join(root, 'running.jsonl')
+    const queuedPath = join(root, 'queued.jsonl')
+    const attachedPath = join(root, 'attached.jsonl')
+    const idle = bundle(root, idlePath)
+    const running = bundle(root, runningPath)
+    running.setBusy()
+    const queued = bundle(root, queuedPath)
+    queued.setQueued()
+    const attached = bundle(root, attachedPath)
+    attached.setAttached()
+    const runtime = new SessionRuntime({
+      initial: bundle(root).value,
+      path,
+      createSession: async (input) => {
+        if (input.sessionPath === idlePath) return idle.value
+        if (input.sessionPath === runningPath) return running.value
+        if (input.sessionPath === queuedPath) return queued.value
+        if (input.sessionPath === attachedPath) return attached.value
+        return bundle(root, input.sessionPath).value
+      },
+    })
+    try {
+      await runtime.startInitial()
+      await runtime.ensureSession(idlePath)
+      await runtime.ensureSession(runningPath)
+      await runtime.ensureSession(queuedPath)
+      await runtime.ensureSession(attachedPath)
+      const released = await runtime.releaseIdleExecutionLeases({ idleMs: 0 })
+      expect(released).toContain(idlePath)
+      expect(runtime.hasExecutionLease(idlePath)).toBe(false)
+      expect(runtime.hasExecutionLease(runningPath)).toBe(true)
+      expect(runtime.hasExecutionLease(queuedPath)).toBe(true)
+      expect(runtime.hasExecutionLease(attachedPath)).toBe(true)
     } finally { await runtime.dispose() }
   })
 })

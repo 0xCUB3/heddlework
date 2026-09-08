@@ -8,6 +8,7 @@ import type { QueuedInput, QueueInputDraft, QueueLane } from './queue.ts'
 import type { MutationReceipt } from '../receipts/types.ts'
 import type { PresenceRegistry } from './presence.ts'
 import type { NavigateTreeOptions } from './controller.ts'
+import type { TranscriptDetail } from '../protocol/transcript.ts'
 
 /** Structural contract for GPUix, DOM, and native attach clients. No optional no-op stubs. */
 export interface WorkbenchControllerSurface {
@@ -15,6 +16,7 @@ export interface WorkbenchControllerSurface {
   subscribe(listener: () => void): () => void
   getSnapshot(): WorkbenchState
   loadEarlierMessages(): Promise<void>
+  getTranscriptDetail(entryId: string, options?: { offset?: number; limit?: number }): Promise<TranscriptDetail>
   acceptAgentEvent(event: RpcRecord): void
   acceptAgentStatus(status: TransportStatus): void
   notify(kind: NoticeKind, message: string, options?: NoticeOptions): void
@@ -77,7 +79,7 @@ export interface WorkbenchControllerSurface {
   markThreadsRead(threads: readonly { path: string; updatedAt: number }[]): void
   refreshWorkspaceDiff(): Promise<void>
   respondToDialog(response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void
-  submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[]): void
+  submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[], note?: string): void
   cancelAskUserQuestionnaire(toolCallId: string): void
   setAskUserQuestionnaireCollapsed(toolCallId: string, collapsed: boolean): void
   dispose(): Promise<void>

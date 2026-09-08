@@ -1,3 +1,4 @@
+import { compareSessionsByActivity } from '../pi/session-activity.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { ThreadLifecycle } from './state.ts'
 
@@ -8,7 +9,7 @@ export function sortActiveSessions(sessions: readonly PiSessionSummary[], lifecy
     const leftPinned = (lifecycle[left.path]?.pinnedAt ?? 0) > 0
     const rightPinned = (lifecycle[right.path]?.pinnedAt ?? 0) > 0
     if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
-    return right.modifiedAt - left.modifiedAt
+    return compareSessionsByActivity(left, right)
   })
 }
 

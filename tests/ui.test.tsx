@@ -568,10 +568,24 @@ describeNative('WorkbenchApp', () => {
     expect(nativeTheme.appearance).toBe('dark')
     expect(root.renderer.getPaintedText()).not.toContain('Saved threads')
     expect(root.renderer.getPaintedText()).not.toContain('Persistence')
-    expect(root.renderer.getPaintedText()).toContain('Alpha')
     const settingsScroll = (await automation.getByTestId('settings-scroll-native').all())[0]!
     const settingsViewportBounds = await automation.getByTestId('settings-scroll').bounds()
-    let alphaBounds = await automation.getByTestId('settings-alpha').bounds()
+    let alphaBounds: { x: number; y: number; width: number; height: number } | undefined
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        alphaBounds = await automation.getByTestId('settings-alpha').bounds()
+        const overflow = alphaBounds.y + alphaBounds.height - settingsViewportBounds.y - settingsViewportBounds.height
+        if (overflow <= 0 && alphaBounds.y >= settingsViewportBounds.y) break
+        const offset = root.renderer.getScrollOffset(settingsScroll.id)?.[1] ?? 0
+        root.renderer.scrollTo(settingsScroll.id, 0, offset - Math.ceil(overflow > 0 ? overflow : alphaBounds.y - settingsViewportBounds.y))
+      } catch {
+        const offset = root.renderer.getScrollOffset(settingsScroll.id)?.[1] ?? 0
+        root.renderer.scrollTo(settingsScroll.id, 0, offset - Math.ceil(settingsViewportBounds.height * 0.75))
+      }
+      root.renderer.flush()
+    }
+    alphaBounds = await automation.getByTestId('settings-alpha').bounds()
+    expect(root.renderer.getPaintedText()).toContain('Alpha')
     const overflow = alphaBounds.y + alphaBounds.height - settingsViewportBounds.y - settingsViewportBounds.height
     if (overflow > 0) {
       const offset = root.renderer.getScrollOffset(settingsScroll.id)?.[1] ?? 0

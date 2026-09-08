@@ -1,9 +1,10 @@
+import { compareSessionsByActivity } from '../pi/session-activity.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import { sortActiveSessions } from '../workbench/thread-lifecycle.ts'
 import type { ThreadLifecycle } from '../workbench/state.ts'
 
 export function compareSessionsByRecency(left: PiSessionSummary, right: PiSessionSummary): number {
-  return right.modifiedAt - left.modifiedAt
+  return compareSessionsByActivity(left, right)
 }
 
 // One ordering for the sidebar, Cmd+1..9, previous/next, and the palette: pinned first, then most recent.

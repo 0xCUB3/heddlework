@@ -12,6 +12,7 @@ import type { QueueLane } from '../workbench/queue.ts'
 import type { ThreadPriority } from '../workbench/state.ts'
 import type { ThreadTitleSettings } from '../workbench/thread-titles.ts'
 import { applyTerminalCommand, isTerminalCommand, TERMINAL_COMMAND_TYPES, type TerminalCommand, type TerminalCommandTarget } from './terminal.ts'
+import { clampTranscriptDetailLimit, findTranscriptDetail, pageTranscriptDetail } from './transcript.ts'
 
 export type SleepPreventionCommand = { type: 'setSleepPreventionPolicy'; when: SleepPreventionPolicy['when']; keepDisplayAwake: boolean }
 
@@ -43,11 +44,12 @@ export type WorkbenchCommand =
   | { type: 'refreshSessions' }
   | { type: 'loadMoreSessions' }
   | { type: 'loadEarlierMessages' }
+  | { type: 'getTranscriptDetail'; entryId: string; offset?: number; limit?: number; sessionFile?: string; requestId?: string }
   | { type: 'setModel'; provider: string; id: string }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   | { type: 'compact' }
   | { type: 'respondToDialog'; value?: string; confirmed?: boolean; cancelled?: boolean }
-  | { type: 'submitAskUserQuestionnaire'; toolCallId: string; answers: AskUserSubmissionAnswer[] }
+  | { type: 'submitAskUserQuestionnaire'; toolCallId: string; answers: AskUserSubmissionAnswer[]; note?: string }
   | { type: 'cancelAskUserQuestionnaire'; toolCallId: string }
   | { type: 'settleThread'; path: string }
   | { type: 'snoozeThread'; path: string; snoozedUntil: number }
@@ -96,7 +98,7 @@ export const WORKBENCH_COMMAND_TYPES: readonly WorkbenchCommandType[] = [
   ...TERMINAL_COMMAND_TYPES,
   'submit', 'queueInput', 'updateQueuedInput', 'removeQueuedInput', 'moveQueuedInput', 'moveQueuedInputToLane',
   'toggleQueuedInputPause', 'steerQueuedInput', 'resumeQueue', 'pause', 'abort', 'newSession', 'switchSession',
-  'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'setModel', 'setThinkingLevel', 'compact',
+  'refreshSessions', 'loadMoreSessions', 'loadEarlierMessages', 'getTranscriptDetail', 'setModel', 'setThinkingLevel', 'compact',
   'respondToDialog', 'submitAskUserQuestionnaire', 'cancelAskUserQuestionnaire', 'settleThread', 'snoozeThread',
   'wakeThread', 'pinThread', 'unpinThread', 'renameThread', 'setThreadPriority', 'regenerateThreadTitle', 'setThreadTitleSettings', 'setThreadLabels', 'markThreadRead', 'refreshWorkspaceDiff', 'dismissNotice',
   'markNoticeRead', 'markNoticesRead', 'activateNotice', 'clearNotices', 'reportPresence', 'createFlowSchedule', 'setFlowScheduleEnabled', 'removeFlowSchedule', 'launchFlow', 'runFlowScheduleNow', 'setEditorText', 'addEditorImage', 'removeEditorImage', 'clearReceipts', 'mergeLane', 'removeLane',
@@ -217,6 +219,32 @@ export async function applyWorkbenchCommand(controller: WorkbenchControllerSurfa
     case 'loadEarlierMessages':
       await controller.loadEarlierMessages()
       return
+    case 'getTranscriptDetail': {
+      if (!command.entryId) throw new Error('Transcript entry id is required')
+      if (typeof (controller as { getTranscriptDetail?: unknown }).getTranscriptDetail === 'function') {
+        return (controller as { getTranscriptDetail: (entryId: string, options?: { offset?: number; limit?: number }) => Promise<unknown> })
+          .getTranscriptDetail(command.entryId, {
+            ...(command.offset !== undefined ? { offset: command.offset } : {}),
+            ...(command.limit !== undefined ? { limit: command.limit } : {}),
+          })
+      }
+      const state = controller.getSnapshot()
+      const detail = findTranscriptDetail({
+        messages: state.messages,
+        liveTools: state.liveTools,
+        liveAssistant: state.liveAssistant,
+      }, command.entryId)
+      if (!detail) throw new Error('Unknown transcript entry: ' + command.entryId)
+      return pageTranscriptDetail(detail, {
+        offset: command.offset ?? 0,
+        limit: clampTranscriptDetailLimit(command.limit),
+        ...(command.sessionFile ? { sessionFile: command.sessionFile } : {}),
+        ...(command.requestId ? { requestId: command.requestId } : {}),
+        ...(command.sessionFile || state.session?.sessionFile
+          ? { sessionFile: command.sessionFile ?? state.session?.sessionFile }
+          : {}),
+      })
+    }
     case 'setModel': {
       const model = controller.getSnapshot().models.find((entry) => entry.provider === command.provider && entry.id === command.id)
       if (!model) throw new Error(`Unknown model: ${command.provider}/${command.id}`)
@@ -237,7 +265,7 @@ export async function applyWorkbenchCommand(controller: WorkbenchControllerSurfa
       })
       return
     case 'submitAskUserQuestionnaire':
-      controller.submitAskUserQuestionnaire(command.toolCallId, command.answers)
+      controller.submitAskUserQuestionnaire(command.toolCallId, command.answers, command.note)
       return
     case 'cancelAskUserQuestionnaire':
       controller.cancelAskUserQuestionnaire(command.toolCallId)

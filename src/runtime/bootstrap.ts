@@ -8,7 +8,26 @@ import { acquireProcessLock, processAlive } from './process-lock.ts'
 import { privateDirectory, runtimeDirectory, type RuntimeDescriptor } from './paths.ts'
 
 export interface RuntimeStatus { instanceId: string; busy: boolean; protocol: number; version: string }
-export interface AttachRuntimeOptions { workspacePath: string; directory?: string; executable?: string; supervisor?: 'launchd' | 'process'; timeoutMs?: number }
+export interface AttachRuntimeOptions {
+  workspacePath: string
+  directory?: string
+  executable?: string
+  supervisor?: 'launchd' | 'process'
+  timeoutMs?: number
+  // Installer-only: stage and replace an idle runtime whose executable identity differs.
+  // App attach leaves this unset so a compatible live runtime is reused without hashing.
+  refresh?: boolean
+  busyWaitMs?: number
+}
+
+export class RuntimeUpgradeDeferredError extends Error {
+  override readonly name = 'RuntimeUpgradeDeferredError'
+  readonly protocol: number
+  constructor(message: string, protocol: number) {
+    super(message)
+    this.protocol = protocol
+  }
+}
 
 export async function runtimeControl<T>(descriptor: RuntimeDescriptor, path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${descriptor.controlUrl}${path}`, {
@@ -26,8 +45,60 @@ export async function discoverRuntime(directory: string): Promise<RuntimeDescrip
     const descriptor = JSON.parse(readFileSync(join(directory, 'connection.json'), 'utf8')) as RuntimeDescriptor
     if (!processAlive(descriptor.pid) || !descriptor.token || !descriptor.controlUrl) return undefined
     const status = await runtimeControl<RuntimeStatus>(descriptor, '/status')
-    return status.instanceId === descriptor.instanceId ? descriptor : undefined
+    if (status.instanceId !== descriptor.instanceId) return undefined
+    return { ...descriptor, protocol: status.protocol, version: status.version }
   } catch { return undefined }
+}
+
+function deferredUpgradeMessage(protocol: number, reason: 'busy' | 'unavailable'): string {
+  const compatibility = protocol === PROTOCOL_VERSION
+    ? 'The live runtime is still on the previous build'
+    : `The running agents use protocol ${protocol}; this app uses ${PROTOCOL_VERSION}`
+  if (reason === 'unavailable') return `${compatibility}. The live runtime cannot upgrade in place, so the update will wait until agents stop.`
+  return `${compatibility}. Agents are busy, so the runtime update will wait.`
+}
+
+async function postRuntimeUpgrade(descriptor: RuntimeDescriptor): Promise<'accepted' | 'busy' | 'unavailable'> {
+  const response = await fetch(`${descriptor.controlUrl}/upgrade`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${descriptor.token}`, 'Content-Type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (response.status === 409) return 'busy'
+  if (response.status === 501) return 'unavailable'
+  if (!response.ok) throw new Error(await response.text())
+  return 'accepted'
+}
+
+async function waitUntilIdle(existing: RuntimeDescriptor, busyWaitMs: number): Promise<RuntimeStatus> {
+  const deadline = Date.now() + Math.max(0, busyWaitMs)
+  while (true) {
+    const status = await runtimeControl<RuntimeStatus>(existing, '/status')
+    if (status.instanceId !== existing.instanceId) throw new Error('The background runtime was replaced during upgrade')
+    if (!status.busy) return status
+    if (Date.now() >= deadline) throw new RuntimeUpgradeDeferredError(deferredUpgradeMessage(status.protocol, 'busy'), status.protocol)
+    await Bun.sleep(100)
+  }
+}
+
+async function requestIdleUpgrade(existing: RuntimeDescriptor, busyWaitMs: number): Promise<void> {
+  const status = await waitUntilIdle(existing, busyWaitMs)
+  let result = await postRuntimeUpgrade(existing)
+  if (result === 'busy' && busyWaitMs > 0) {
+    await waitUntilIdle(existing, Math.min(1_000, busyWaitMs))
+    result = await postRuntimeUpgrade(existing)
+  }
+  if (result === 'busy') throw new RuntimeUpgradeDeferredError(deferredUpgradeMessage(status.protocol, 'busy'), status.protocol)
+  if (result === 'unavailable') throw new RuntimeUpgradeDeferredError(deferredUpgradeMessage(status.protocol, 'unavailable'), status.protocol)
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number, log: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (processAlive(pid)) {
+    if (Date.now() >= deadline) throw new Error(`The previous background runtime did not exit after upgrade. See ${log}`)
+    await Bun.sleep(50)
+  }
 }
 
 export function stageRuntimeExecutable(source: string, directory: string): string {
@@ -112,28 +183,33 @@ function startRuntime(executable: string, directory: string, workspacePath: stri
 export async function attachOrStartRuntime(options: AttachRuntimeOptions): Promise<RuntimeDescriptor> {
   const directory = options.directory ?? runtimeDirectory()
   privateDirectory(directory)
+  const startTimeoutMs = options.timeoutMs ?? 30_000
   const release = await acquireProcessLock(join(directory, 'startup.lock'), options.timeoutMs ?? 90_000)
   try {
-    let existing = await discoverRuntime(directory)
-    const source = options.executable ?? await runtimeSource(directory)
-    const executable = stageRuntimeExecutable(source, directory)
+    const existing = await discoverRuntime(directory)
+    let previous: RuntimeDescriptor | undefined
+    let executable: string | undefined
+    let workspacePath = options.workspacePath
+    let supervisor = options.supervisor ?? (process.env.HEDDLEWORK_RUNTIME_SUPERVISOR === 'process' || process.platform !== 'darwin' ? 'process' : 'launchd')
     if (existing) {
-      if (existing.protocol !== PROTOCOL_VERSION) throw new Error(`The running agents use protocol ${existing.protocol}; this app uses ${PROTOCOL_VERSION}. Keep the compatible app open, or explicitly stop all agents before restarting.`)
-      if (existing.executable === executable) return existing
-      const status = await runtimeControl<RuntimeStatus>(existing, '/status')
-      if (status.busy) return existing
-      try { await runtimeControl(existing, '/upgrade', {}) } catch { return existing }
-      const deadline = Date.now() + 10_000
-      while (processAlive(existing.pid) && Date.now() < deadline) await Bun.sleep(50)
-      if (processAlive(existing.pid)) return existing
-      existing = undefined
+      const compatible = existing.protocol === PROTOCOL_VERSION
+      if (compatible && !options.refresh) return existing
+      const source = options.executable ?? await runtimeSource(directory)
+      executable = stageRuntimeExecutable(source, directory)
+      if (compatible && existing.executable === executable) return existing
+      previous = existing
+      workspacePath = existing.workspacePath || options.workspacePath
+      supervisor = existing.supervisor ?? supervisor
+      await requestIdleUpgrade(existing, options.busyWaitMs ?? 8_000)
+      await waitForPidExit(existing.pid, startTimeoutMs, join(directory, 'runtime.log'))
+    } else {
+      executable = stageRuntimeExecutable(options.executable ?? await runtimeSource(directory), directory)
     }
-    const supervisor = options.supervisor ?? (process.env.HEDDLEWORK_RUNTIME_SUPERVISOR === 'process' || process.platform !== 'darwin' ? 'process' : 'launchd')
-    startRuntime(executable, directory, options.workspacePath, supervisor)
-    const deadline = Date.now() + (options.timeoutMs ?? 30_000)
+    startRuntime(executable, directory, workspacePath, supervisor)
+    const deadline = Date.now() + startTimeoutMs
     do {
       const descriptor = await discoverRuntime(directory)
-      if (descriptor) {
+      if (descriptor && (!previous || descriptor.instanceId !== previous.instanceId)) {
         if (descriptor.protocol !== PROTOCOL_VERSION) throw new Error('The background runtime protocol does not match this app')
         return descriptor
       }

@@ -120,6 +120,19 @@ final class TranscriptProjectionTests: XCTestCase {
         XCTAssertEqual(reused, first)
     }
 
+    func testEqualLengthLiveContentChangeUpdatesProjection() {
+        var snapshot = WorkbenchSnapshot()
+        snapshot.messages = [PiMessage(role: "user", content: .string("Prompt"), workbenchEntryId: "u1")]
+        snapshot.liveAssistant = LiveAssistant(id: "live", blocks: [LiveBlock(index: 0, kind: "text", text: "hello")])
+        snapshot.session = SessionState(isStreaming: true)
+        let first = TranscriptProjection.projectWorkspace(snapshot: snapshot)
+        snapshot.liveAssistant = LiveAssistant(id: "live", blocks: [LiveBlock(index: 0, kind: "text", text: "world")])
+        let second = TranscriptProjection.projectWorkspace(snapshot: snapshot)
+        XCTAssertEqual(first.last?.item?.text.count, second.last?.item?.text.count)
+        XCTAssertNotEqual(first.last?.item?.text, second.last?.item?.text)
+        XCTAssertEqual(second.last?.item?.text, "world")
+    }
+
     func testReuseReplacesOnlyTheChangedLiveRow() {
         let user = TimelineItem(id: "user", kind: .user, text: "Prompt")
         let first = TranscriptProjection.projectTranscriptRows(

@@ -38,6 +38,7 @@ class SlowSwitchTransport implements AgentTransport {
   switchGate: ReturnType<typeof deferred> | undefined
   metadataGate: ReturnType<typeof deferred> | undefined
   treeGate: ReturnType<typeof deferred> | undefined
+  leafGate: ReturnType<typeof deferred> | undefined
   cancel = false
   fail = false
   constructor(readonly sessions: PiSessionSummary[]) { this.active = sessions[0]! }
@@ -56,6 +57,7 @@ class SlowSwitchTransport implements AgentTransport {
       return { cancelled: this.cancel } as T
     }
     if (command.type === 'get_state') return { model: null, thinkingLevel: 'off', isStreaming: false, sessionFile: this.active.path, sessionId: this.active.id } as T
+    if (command.type === 'get_leaf') { await this.leafGate?.promise; return { leafId: `${this.active.id}-99`, revision: 1 } as T }
     if (command.type === 'get_tree') { await this.treeGate?.promise; return { tree: [], leafId: `${this.active.id}-99` } as T }
     if (command.type === 'get_available_models') return { models: [] } as T
     if (command.type === 'get_available_thinking_levels') return { levels: ['off'] } as T
@@ -93,14 +95,14 @@ it('renders a bounded disk preview while Pi is blocked, without sending to the o
 })
 it('serves a scroll-up page requested while a fresh bundle is still loading its transcript', async () => {
   const { transport, sessions, dir } = await fixtureParts()
-  const gate = transport.treeGate = deferred()
+  const gate = transport.leafGate = deferred()
   const controller = new WorkbenchController(transport, dir, {
     sessionCatalog: { list: async () => sessions, createWorkspaceSession: async () => sessions[0]! },
     workspaceDiff: { load: async () => ({ status: 'ready', branch: '', files: [], additions: 0, deletions: 0 }) },
   })
   try {
     const starting = controller.start()
-    await until(() => transport.requests.some(r => r.type === 'get_tree'))
+    await until(() => transport.requests.some(r => r.type === 'get_leaf'))
     expect(controller.getSnapshot().messagesHasOlder).toBe(false)
     const paging = controller.loadEarlierMessages()
     gate.resolve()
@@ -149,5 +151,30 @@ it('slow optional commands do not block activation and stale metadata cannot ove
     await until(() => controller.getSnapshot().commands.some(c => c.name === 'command-c'))
     gate.resolve(); await Bun.sleep(10)
     expect(controller.getSnapshot().commands.some(c => c.name === 'command-b')).toBe(false)
+  } finally { gate.resolve(); await controller.dispose() }
+})
+it('loads the bootstrap transcript from leaf/revision without fetching the full tree', async () => {
+  const { controller, transport } = await fixture()
+  try {
+    expect(transport.requests.some(r => r.type === 'get_leaf')).toBe(true)
+    expect(transport.requests.some(r => r.type === 'get_tree')).toBe(false)
+    expect(controller.getSnapshot().connection).toBe('connected')
+    expect(controller.getSnapshot().messages.at(-1)?.content).toBe('a message 99')
+    await controller.openSessionTree()
+    expect(transport.requests.some(r => r.type === 'get_tree')).toBe(true)
+  } finally { await controller.dispose() }
+})
+it('drops a stale transcript load after a later selection', async () => {
+  const { controller, transport, sessions } = await fixture()
+  const gate = transport.leafGate = deferred()
+  try {
+    const first = controller.switchSession(sessions[1]!)
+    await until(() => transport.requests.filter(r => r.type === 'switch_session').length >= 1)
+    const second = controller.switchSession(sessions[2]!)
+    await until(() => controller.getSnapshot().session.sessionFile === sessions[2]!.path)
+    gate.resolve()
+    await Promise.all([first, second])
+    expect(controller.getSnapshot().session.sessionFile).toBe(sessions[2]!.path)
+    expect(controller.getSnapshot().messages.at(-1)?.content).toBe('c message 99')
   } finally { gate.resolve(); await controller.dispose() }
 })

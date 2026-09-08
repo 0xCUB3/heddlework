@@ -13,6 +13,7 @@ import type {
   TerminalSpawnRequest,
 } from './types.ts'
 import { VtEmulator } from './vt.ts'
+import { createTerminalTurnBudget, writeVtBounded, type TerminalTurnBudget } from './work-budget.ts'
 
 interface LiveSession {
   info: TerminalSessionInfo
@@ -26,6 +27,9 @@ interface LiveSession {
   synchronizedTimer: ReturnType<typeof setTimeout> | undefined
   lastInputAt: number
   cleanups: TerminalCleanup[]
+  produceBudget: TerminalTurnBudget
+  pendingVt: Uint8Array
+  produceTimer: ReturnType<typeof setTimeout> | undefined
 }
 
 const TERMINAL_FRAME_MS = 8
@@ -135,11 +139,19 @@ export class TerminalSessionService {
       synchronizedTimer: undefined,
       lastInputAt: Number.NEGATIVE_INFINITY,
       cleanups: [],
+      produceBudget: createTerminalTurnBudget(),
+      pendingVt: new Uint8Array(0),
+      produceTimer: undefined,
     }
     session.cleanups.push(process.onData((chunk, metadata) => {
       const wasSynchronized = session.vt.synchronizedOutput
       const previousScrollback = session.vt.scrollbackLength
-      session.vt.write(chunk)
+      session.produceBudget.beginTurn()
+      const rest = writeVtBounded((part) => { session.vt.write(part) }, chunk, session.produceBudget)
+      if (rest.byteLength > 0) {
+        session.pendingVt = concatBytes(session.pendingVt, rest)
+        session.produceTimer ??= setTimeout(() => this.#drainVt(session, metadata), 0)
+      }
       this.#anchorDetachedViewport(session, previousScrollback)
       const titleChanged = Boolean(session.vt.title && session.vt.title !== session.info.title)
       if (titleChanged) session.info = { ...session.info, title: session.vt.title }
@@ -235,6 +247,10 @@ export class TerminalSessionService {
     const session = this.#sessions.get(id)
     if (!session) return
     this.#releaseSynchronizedOutput(session)
+    if (session.produceTimer) {
+      clearTimeout(session.produceTimer)
+      session.produceTimer = undefined
+    }
     for (const cleanup of session.cleanups.splice(0)) cleanup()
     session.process.kill()
     this.#sessions.delete(id)
@@ -254,6 +270,21 @@ export class TerminalSessionService {
     this.#stateListeners.clear()
     this.#frameListeners.clear()
     this.#dirtyFrameIds.clear()
+  }
+
+  #drainVt(session: LiveSession, metadata?: { synchronizedFrame?: boolean }): void {
+    session.produceTimer = undefined
+    if (!this.#sessions.has(session.info.id) || session.pendingVt.byteLength === 0) return
+    const previousScrollback = session.vt.scrollbackLength
+    session.produceBudget.beginTurn()
+    const rest = writeVtBounded((part) => { session.vt.write(part) }, session.pendingVt, session.produceBudget)
+    session.pendingVt = rest
+    this.#anchorDetachedViewport(session, previousScrollback)
+    session.gridDirty = true
+    this.#scheduleFrame(session.info.id, metadata?.synchronizedFrame === true)
+    if (rest.byteLength > 0) {
+      session.produceTimer = setTimeout(() => this.#drainVt(session, metadata), 0)
+    }
   }
 
   #scheduleFrame(id: TerminalSessionId, immediate = false, stateChanged = false): void {
@@ -334,6 +365,15 @@ export class TerminalSessionService {
       generation: this.#generation,
     }
   }
+}
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  if (left.byteLength === 0) return right
+  if (right.byteLength === 0) return left
+  const next = new Uint8Array(left.byteLength + right.byteLength)
+  next.set(left, 0)
+  next.set(right, left.byteLength)
+  return next
 }
 
 function terminalAppearancesEqual(left: TerminalAppearance, right: TerminalAppearance): boolean {

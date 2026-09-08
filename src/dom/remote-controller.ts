@@ -5,7 +5,7 @@ import type { WorkbenchControllerSurface } from '../workbench/controller-surface
 import type { NavigateTreeOptions } from '../workbench/controller.ts'
 import type { WorkbenchState, ThreadPriority } from '../workbench/state.ts'
 import type { ThreadTitleSettings } from '../workbench/thread-titles.ts'
-import type { WorkbenchSnapshot, WorkbenchCommand } from '../protocol/index.ts'
+import { sameSessionFile, TRANSCRIPT_DETAIL_MAX_PAGES, TRANSCRIPT_DETAIL_PAGE_BYTES, type TranscriptDetail, type WorkbenchSnapshot, type WorkbenchCommand } from '../protocol/index.ts'
 import type { ComposerImage, PiModel, ThinkingLevel } from '../pi/types.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { AskUserSubmissionAnswer } from '../workbench/ask-user.ts'
@@ -26,12 +26,23 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   #snapshot: WorkbenchState
   #hostSnapshot: WorkbenchSnapshot | undefined
   #localEditorText: string | undefined
+  readonly #editorDrafts = new Map<string, string>()
   #editorTimer: ReturnType<typeof setTimeout> | undefined
+  #localSelection: string | undefined
+  #selectedSession: string | undefined
+  #navigationGeneration = 0
+  #disposed = false
+  #selectionTask: Promise<void> = Promise.resolve()
+  readonly #transcriptCache = new Map<string, { messages: WorkbenchState['messages']; hasOlder: boolean }>()
   #unsubscribe: () => void
 
   constructor(client: WorkspaceClient) {
     this.#client = client
     this.#snapshot = this.#materialize(client.getSnapshot().state)
+    this.#selectedSession = this.#snapshot.session?.sessionFile
+    if (this.#snapshot.session?.sessionFile && this.#snapshot.messages.length > 0) {
+      rememberTranscriptCache(this.#transcriptCache, this.#snapshot.session.sessionFile, this.#snapshot.messages, this.#snapshot.messagesHasOlder)
+    }
     this.#unsubscribe = client.subscribe(() => this.#pull())
   }
 
@@ -48,11 +59,57 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
     await this.#send({ type: 'loadEarlierMessages' })
   }
 
+  readonly getTranscriptDetail = async (
+    entryId: string,
+    options: { offset?: number; limit?: number } = {},
+  ): Promise<TranscriptDetail> => {
+    const generation = this.#navigationGeneration
+    const sessionFile = this.#snapshot.session.sessionFile
+    const limit = options.limit ?? TRANSCRIPT_DETAIL_PAGE_BYTES
+    let offset = options.offset ?? 0
+    const singlePage = options.offset !== undefined
+    let detail: TranscriptDetail | undefined
+    for (let page = 0; page < TRANSCRIPT_DETAIL_MAX_PAGES; page += 1) {
+      detail = await this.#client.getTranscriptDetail(entryId, { offset, limit })
+      if (generation !== this.#navigationGeneration || !sameSessionFile(this.#snapshot.session.sessionFile, sessionFile)) {
+        throw new Error('Session changed')
+      }
+      if (detail.sessionFile && sessionFile && !sameSessionFile(detail.sessionFile, sessionFile)) throw new Error('Session changed')
+      if (singlePage || detail.complete) return detail
+      if (detail.bytes <= 0) throw new Error('Transcript detail page made no progress')
+      offset = detail.offset + detail.bytes
+    }
+    if (!detail) throw new Error('Unknown transcript entry: ' + entryId)
+    return detail
+  }
+
   #pull(): void {
     const next = this.#client.getSnapshot().state
     if (next === this.#hostSnapshot) return
+    const selected = this.#selectedSession ?? this.#localSelection
+    const hostFile = next?.session.sessionFile
+    if (selected && hostFile && !sameSessionFile(hostFile, selected)) {
+      if (!this.#localSelection && this.#client.getSnapshot().status === 'open') {
+        this.#localSelection = selected
+        void this.#client.send({ type: 'switchSession', path: selected }).catch(() => undefined)
+      }
+      return
+    }
+    const openingEmpty = next?.activity === 'Opening thread'
+      && next.messages.length === 0
+      && this.#snapshot.messages.length > 0
+      && sameSessionFile(this.#snapshot.session.sessionFile, hostFile)
+    if (openingEmpty) return
+    if (this.#localSelection) {
+      if (!hostFile || !sameSessionFile(hostFile, this.#localSelection)) return
+      this.#localSelection = undefined
+    }
+    if (hostFile) this.#selectedSession = hostFile
     const previousHost = this.#hostSnapshot
     this.#hostSnapshot = next
+    if (next?.session.sessionFile && next.messages.length > 0) {
+      rememberTranscriptCache(this.#transcriptCache, next.session.sessionFile, next.messages, next.messagesHasOlder)
+    }
     if (previousHost && next && previousHost.editorText !== next.editorText && next.editorText !== this.#localEditorText) this.#localEditorText = undefined
     this.#snapshot = this.#materialize(next)
     this.#emit()
@@ -70,7 +127,41 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   #emit(): void { for (const listener of this.#listeners) listener() }
 
   #send(command: WorkbenchCommand): Promise<void> {
+    if (this.#disposed) return Promise.resolve()
+    if (command.type !== 'switchSession') {
+      return this.#selectionTask.then(() => this.#disposed ? undefined : this.#client.sendAndReport(command))
+    }
     return this.#client.sendAndReport(command)
+  }
+
+  #cancelEditorTimer(): void {
+    if (this.#editorTimer) clearTimeout(this.#editorTimer)
+    this.#editorTimer = undefined
+  }
+
+  #leaveEditorSession(): void {
+    const sessionFile = this.#snapshot.session.sessionFile
+    const text = this.#localEditorText
+    this.#cancelEditorTimer()
+    this.#localEditorText = undefined
+    if (text !== undefined) {
+      this.#snapshot = { ...this.#snapshot, editorText: '' }
+      this.#emit()
+    }
+    if (text === undefined || !sessionFile || this.#disposed) return
+    const hostFile = this.#client.getSnapshot().state?.session.sessionFile
+    if (!this.#localSelection && hostFile && sameSessionFile(hostFile, sessionFile)) {
+      void this.#client.sendAndReport({ type: 'setEditorText', text })
+    }
+  }
+
+  async #dispatchEditorText(sessionFile: string, text: string, generation: number): Promise<void> {
+    await this.#selectionTask
+    if (this.#disposed || generation !== this.#navigationGeneration) return
+    const hostFile = this.#client.getSnapshot().state?.session.sessionFile
+    if (!hostFile || !sameSessionFile(hostFile, sessionFile)) return
+    if (this.#editorDrafts.get(sessionFile) !== text) return
+    await this.#client.sendAndReport({ type: 'setEditorText', text })
   }
 
   acceptAgentEvent(_event: import('../pi/types.ts').RpcRecord): void {
@@ -83,6 +174,9 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   async start(): Promise<void> {}
   async reconnect(): Promise<void> { this.#client.reconnect() }
   async submit(text: string, options: { queue?: boolean } = {}): Promise<void> {
+    const sessionFile = this.#snapshot.session.sessionFile
+    this.#cancelEditorTimer()
+    if (sessionFile) this.#editorDrafts.delete(sessionFile)
     this.#localEditorText = undefined
     await this.#send({ type: 'submit', text, ...(options.queue ? { queue: true } : {}) })
   }
@@ -107,16 +201,90 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   async drainQueueMessages(): Promise<void> { await this.#send({ type: 'drainQueueMessages' }) }
   async pause(): Promise<void> { await this.#send({ type: 'pause' }) }
   async abort(): Promise<void> { await this.#send({ type: 'abort' }) }
-  async newSession(): Promise<void> { await this.#send({ type: 'newSession' }) }
-  async switchWorkspace(workspacePath: string): Promise<void> { await this.#send({ type: 'switchWorkspace', path: workspacePath }) }
-  async switchSession(session: PiSessionSummary): Promise<void> { await this.#send({ type: 'switchSession', path: session.path }) }
+  async newSession(): Promise<void> {
+    this.#leaveEditorSession()
+    this.#unpinSelectedSession()
+    await this.#send({ type: 'newSession' })
+  }
+  async switchWorkspace(workspacePath: string): Promise<void> {
+    this.#leaveEditorSession()
+    this.#unpinSelectedSession()
+    await this.#send({ type: 'switchWorkspace', path: workspacePath })
+  }
+  async switchSession(session: PiSessionSummary): Promise<void> {
+    this.#leaveEditorSession()
+    const generation = ++this.#navigationGeneration
+    this.#selectedSession = session.path
+    this.#localSelection = session.path
+    const draft = this.#editorDrafts.get(session.path)
+    this.#localEditorText = draft
+    const cached = this.#transcriptCache.get(session.path)
+      ?? [...this.#transcriptCache.entries()].find(([path]) => sameSessionFile(path, session.path))?.[1]
+      ?? (sameSessionFile(this.#snapshot.session.sessionFile, session.path) && this.#snapshot.messages.length > 0
+        ? { messages: this.#snapshot.messages, hasOlder: this.#snapshot.messagesHasOlder }
+        : undefined)
+    this.#snapshot = {
+      ...this.#snapshot,
+      ...(session.cwd ? { workspacePath: session.cwd } : {}),
+      session: { ...this.#snapshot.session, sessionId: session.id, sessionFile: session.path, sessionName: session.title, isStreaming: false },
+      connection: 'connecting',
+      connectionMessage: 'Opening thread',
+      activity: 'Opening thread',
+      messages: cached?.messages ?? [],
+      messagesHasOlder: cached?.hasOlder ?? false,
+      messagesLoadingEarlier: false,
+      liveAssistant: undefined,
+      liveTools: [],
+      forkMessages: [],
+      stats: undefined,
+      dialog: undefined,
+      dialogQueue: [],
+      statusItems: {},
+      widgets: {},
+      questionnaireSubmitting: undefined,
+      questionnaireCollapsed: undefined,
+      editorText: draft ?? '',
+      editorImages: [],
+    }
+    this.#emit()
+    let release!: () => void
+    const previous = this.#selectionTask
+    this.#selectionTask = new Promise<void>((resolve) => { release = resolve })
+    await previous
+    if (generation !== this.#navigationGeneration) {
+      release()
+      return
+    }
+    try {
+      await this.#client.send({ type: 'switchSession', path: session.path })
+    } catch (error) {
+      if (generation === this.#navigationGeneration && sameSessionFile(this.#selectedSession, session.path)) {
+        this.#localSelection = undefined
+        this.#selectedSession = undefined
+        this.#snapshot = {
+          ...this.#snapshot,
+          connection: 'error',
+          connectionMessage: error instanceof Error ? error.message : String(error),
+          activity: 'Ready',
+        }
+        this.#emit()
+        this.#client.reportError(error)
+      }
+    } finally {
+      release()
+    }
+  }
   async refreshSessions(): Promise<void> { await this.#send({ type: 'refreshSessions' }) }
   async loadMoreSessions(): Promise<void> { await this.#send({ type: 'loadMoreSessions' }) }
   async openSessionTree(_options: { preserveQueue?: boolean } = {}): Promise<void> {
     throw new Error('Session tree editing is not available on attach clients')
   }
   async navigateTree(entryId: string, _options: NavigateTreeOptions = {}): Promise<void> { await this.#send({ type: 'navigateTree', entryId }) }
-  async cloneSession(): Promise<void> { await this.#send({ type: 'cloneSession' }) }
+  async cloneSession(): Promise<void> {
+    this.#leaveEditorSession()
+    this.#unpinSelectedSession()
+    await this.#send({ type: 'cloneSession' })
+  }
   async forkFrom(entryId: string, _options: { preserveQueue?: boolean } = {}): Promise<void> { await this.#send({ type: 'navigateTree', entryId }) }
   async exportSession(): Promise<string | undefined> { await this.#send({ type: 'exportSession' }); return undefined }
   async setModel(model: PiModel): Promise<void> { await this.#send({ type: 'setModel', provider: model.provider, id: model.id }) }
@@ -124,11 +292,18 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   async compact(): Promise<void> { await this.#send({ type: 'compact' }) }
   completeUiRequest(id: number): void { void this.#send({ type: 'completeUiRequest', id }) }
   setEditorText(text: string): void {
+    const sessionFile = this.#snapshot.session.sessionFile
     this.#localEditorText = text
+    if (sessionFile) this.#editorDrafts.set(sessionFile, text)
     this.#snapshot = { ...this.#snapshot, editorText: text }
     this.#emit()
     if (this.#editorTimer) clearTimeout(this.#editorTimer)
-    this.#editorTimer = setTimeout(() => { void this.#send({ type: 'setEditorText', text }) }, 250)
+    const generation = this.#navigationGeneration
+    this.#editorTimer = setTimeout(() => {
+      this.#editorTimer = undefined
+      if (!sessionFile || text !== this.#editorDrafts.get(sessionFile)) return
+      void this.#dispatchEditorText(sessionFile, text, generation)
+    }, 250)
   }
   addEditorImage(image: ComposerImage): void { void this.#send({ type: 'addEditorImage', image }) }
   removeEditorImage(id: string): void { void this.#send({ type: 'removeEditorImage', id }) }
@@ -164,8 +339,36 @@ export class RemoteWorkbenchController implements WorkbenchControllerSurface {
   markThreadsRead(threads: readonly { path: string; updatedAt: number }[]): void { void this.#send({ type: 'markThreadsRead', threads: [...threads] }) }
   async refreshWorkspaceDiff(): Promise<void> { await this.#send({ type: 'refreshWorkspaceDiff' }) }
   respondToDialog(response: { value?: string; confirmed?: boolean; cancelled?: boolean }): void { void this.#send({ type: 'respondToDialog', ...response }) }
-  submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[]): void { void this.#send({ type: 'submitAskUserQuestionnaire', toolCallId, answers: [...answers] }) }
+  submitAskUserQuestionnaire(toolCallId: string, answers: readonly AskUserSubmissionAnswer[], note?: string): void { void this.#send({ type: 'submitAskUserQuestionnaire', toolCallId, answers: [...answers], ...(note === undefined ? {} : { note }) }) }
   cancelAskUserQuestionnaire(toolCallId: string): void { void this.#send({ type: 'cancelAskUserQuestionnaire', toolCallId }) }
   setAskUserQuestionnaireCollapsed(toolCallId: string, collapsed: boolean): void { void this.#send({ type: 'setAskUserQuestionnaireCollapsed', toolCallId, collapsed }) }
-  async dispose(): Promise<void> { this.#unsubscribe(); this.#listeners.clear() }
+  async dispose(): Promise<void> {
+    this.#disposed = true
+    this.#cancelEditorTimer()
+    this.#unsubscribe()
+    this.#listeners.clear()
+  }
+
+  #unpinSelectedSession(): void {
+    this.#navigationGeneration += 1
+    this.#selectedSession = undefined
+    this.#localSelection = undefined
+  }
+}
+
+const MAX_REMOTE_TRANSCRIPT_CACHE = 16
+
+function rememberTranscriptCache(
+  cache: Map<string, { messages: WorkbenchState['messages']; hasOlder: boolean }>,
+  path: string,
+  messages: WorkbenchState['messages'],
+  hasOlder: boolean,
+): void {
+  cache.delete(path)
+  cache.set(path, { messages, hasOlder })
+  while (cache.size > MAX_REMOTE_TRANSCRIPT_CACHE) {
+    const oldest = cache.keys().next().value
+    if (!oldest) break
+    cache.delete(oldest)
+  }
 }

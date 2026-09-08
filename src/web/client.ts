@@ -1,5 +1,5 @@
 import type { BrowserIntegrationSnapshot } from '../browser/integration-types.ts'
-import { applySnapshotPatch, FrameAssembler, normalizeHostIdentity, parseServerMessage, type AttentionEvent, type HostIdentity, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
+import { applySnapshotPatch, FrameAssembler, mergeTranscriptDetail, normalizeHostIdentity, parseServerMessage, PROTOCOL_VERSION, sameSessionFile, snapshotNeedsLiveResync, TranscriptExpansionCache, type AttentionEvent, type HostIdentity, type TranscriptDetail, type WorkbenchCommand, type WorkbenchSnapshot } from '../protocol/index.ts'
 import type { FlowRuntimeSnapshot } from '../flows/types.ts'
 import type { SleepPreventionSnapshot } from '../power/types.ts'
 
@@ -38,6 +38,9 @@ export class WorkspaceClient {
   #listeners = new Set<() => void>()
   #attentionListeners = new Set<(event: AttentionEvent) => void>()
   #frames = new FrameAssembler()
+  #liveSeq = 0
+  #expansion = new TranscriptExpansionCache()
+  #detailInflight = new Map<string, Promise<TranscriptDetail>>()
   #view: WorkspaceClientView = { status: 'closed', workspacePath: '', state: undefined, flows: undefined }
 
   connect(url: string, token: string, alternates: readonly string[] = []): void {
@@ -103,6 +106,41 @@ export class WorkspaceClient {
     )
   }
 
+  async getTranscriptDetail(entryId: string, options: { offset?: number; limit?: number } = {}): Promise<TranscriptDetail> {
+    const sessionFile = this.#view.state?.session?.sessionFile
+    const offset = options.offset ?? 0
+    const inflightKey = `${sessionFile ?? ''}\0${entryId}\0${offset}\0${options.limit ?? ''}`
+    const pending = this.#detailInflight.get(inflightKey)
+    if (pending) return pending
+    const request = this.#fetchTranscriptDetail(entryId, options, sessionFile)
+    this.#detailInflight.set(inflightKey, request)
+    try {
+      return await request
+    } finally {
+      if (this.#detailInflight.get(inflightKey) === request) this.#detailInflight.delete(inflightKey)
+    }
+  }
+
+  async #fetchTranscriptDetail(
+    entryId: string,
+    options: { offset?: number; limit?: number },
+    sessionFile: string | undefined,
+  ): Promise<TranscriptDetail> {
+    const value = await this.send({
+      type: 'getTranscriptDetail',
+      entryId,
+      ...(sessionFile ? { sessionFile } : {}),
+      ...(options.offset !== undefined ? { offset: options.offset } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    }) as TranscriptDetail
+    const state = this.#view.state
+    if (!state || !value || (value.kind !== 'message' && value.kind !== 'tool' && value.kind !== 'liveAssistant')) return value
+    if (sessionFile && state.session?.sessionFile && !sameSessionFile(state.session.sessionFile, sessionFile)) return value
+    if (value.sessionFile && state.session?.sessionFile && !sameSessionFile(value.sessionFile, state.session.sessionFile)) return value
+    this.#set({ state: mergeTranscriptDetail(state, value, this.#expansion) })
+    return value
+  }
+
   reconnect(): void {
     if (!this.#url) return
     this.connect(this.#url, this.#token, this.#candidates)
@@ -121,12 +159,12 @@ export class WorkspaceClient {
       if (this.#socket !== socket) return
       this.#backoff = MIN_BACKOFF_MS
       this.#failures = 0
-      socket.send(JSON.stringify({ kind: 'hello', protocol: 1 }))
+      socket.send(JSON.stringify({ kind: 'hello', protocol: PROTOCOL_VERSION }))
     })
     socket.addEventListener('message', (event) => {
       if (this.#socket !== socket) return
       if (typeof event.data !== 'string') return
-      let assembled: string | undefined
+      let assembled: unknown
       try {
         assembled = this.#frames.push(event.data)
       } catch (error) {
@@ -140,11 +178,26 @@ export class WorkspaceClient {
         this.#candidates = mergeCandidates(this.#url, message.hostUrls)
         // A fresh welcome supersedes any error from the previous socket (rejected sends, socket errors), otherwise the
         // red status line outlives the outage it described.
-        this.#set({ status: 'open', lastError: undefined, workspacePath: message.workspacePath, host: normalizeHostIdentity(message.host), url: this.#url, state: normalizeSettledSnapshot(message.snapshot), flows: message.flows, browserIntegrations: message.browserIntegrations, sleepPrevention: message.sleepPrevention })
+        this.#liveSeq = 0
+        this.#expansion.switchSession()
+        this.#detailInflight.clear()
+        this.#set({ status: 'open', lastError: undefined, workspacePath: message.workspacePath, host: normalizeHostIdentity(message.host), url: this.#url, state: this.#expansion.overlay(normalizeSettledSnapshot(message.snapshot)), flows: message.flows, browserIntegrations: message.browserIntegrations, sleepPrevention: message.sleepPrevention })
         return
       }
       if (message.kind === 'patch' && this.#view.state) {
-        this.#set({ state: normalizeSettledSnapshot(applySnapshotPatch(this.#view.state, message.patch)) })
+        if (snapshotNeedsLiveResync(this.#liveSeq, message.patch)) {
+          this.reconnect()
+          return
+        }
+        if (message.patch.seq != null) this.#liveSeq = message.patch.seq
+        if (message.patch.liveOps) this.#expansion.noteLiveOps(this.#view.state, message.patch.liveOps)
+        const previousFile = this.#view.state.session?.sessionFile
+        const next = normalizeSettledSnapshot(applySnapshotPatch(this.#view.state, message.patch))
+        if (previousFile && next.session?.sessionFile && !sameSessionFile(previousFile, next.session.sessionFile)) {
+          this.#expansion.switchSession()
+          this.#detailInflight.clear()
+        }
+        this.#set({ state: this.#expansion.overlay(next) })
         return
       }
       if (message.kind === 'browserIntegrations') {
@@ -253,4 +306,3 @@ export function readConnectionSettings(search = '', storage: Pick<Storage, 'getI
     token: params.get('token') ?? storage?.getItem('heddlework.token') ?? '',
   }
 }
-

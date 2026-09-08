@@ -80,7 +80,7 @@ export const SettingsView = React.memo(function SettingsView({
   onRenderForTest,
 }: SettingsViewProps) {
   onRenderForTest?.()
-  const { mobile, compact, contentGutter } = useResponsiveLayout()
+  const { mobile, compact } = useResponsiveLayout()
   const resolvedTitlebarInset = titlebarInset ?? (compact ? (hasNativeTrafficLights() ? 132 : 54) : 18)
   return (
     <div testId="settings-view" style={{ height: '100%', minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', backgroundColor: colors.background }}>
@@ -90,69 +90,84 @@ export const SettingsView = React.memo(function SettingsView({
         <Button testId="settings-done" label="Done" compact onClick={onClose} />
       </MotionDiv>
       <div testId="settings-scroll" style={{ flexGrow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <NativeVirtualList testId="settings-scroll-native" alignment="top" estimatedItemHeight={620} overdraw={320} style={{ width: '100%', flexGrow: 1, minHeight: 0, minWidth: 0, paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
-          {/* The native list stretches each item to full width, so a row wrapper is what centers the column. */}
-          <div testId="settings-global-row" style={{ width: '100%', flexShrink: 0, display: 'flex', flexDirection: 'row', justifyContent: 'center' }}>
-          <div testId="settings-global" style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minHeight: mobile ? 0 : 620, minWidth: 0, flexShrink: 1, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
-          <SettingsSection title="Runtime" description={onStopAllAndQuit ? "Agents keep running when you close or update the app. Reopen to reconnect." : "Global Pi connection settings for this application."}>
-            <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
-            <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
-            <SettingsActions>
-              <Button label="Reconnect" compact icon="refresh" onClick={() => void controller.reconnect()} />
-              {onStopAllAndQuit ? <Button testId="runtime-stop-all" label="Stop all agents and quit" compact onClick={() => void onStopAllAndQuit().catch(error => controller.notify('error', error instanceof Error ? error.message : String(error)))} /> : null}
-            </SettingsActions>
-          </SettingsSection>
+        <NativeVirtualList testId="settings-scroll-native" alignment="top" estimatedItemHeight={220} overdraw={440} style={{ width: '100%', flexGrow: 1, minHeight: 0, minWidth: 0, paddingTop: mobile ? 18 : 28, paddingBottom: 52 }}>
+          <SettingsListRow mobile={mobile} testId="settings-global-row" contentTestId="settings-global">
+            <SettingsSection title="Runtime" description={onStopAllAndQuit ? "Agents keep running when you close or update the app. Reopen to reconnect." : "Global Pi connection settings for this application."}>
+              <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
+              <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
+              <SettingsActions>
+                <Button label="Reconnect" compact icon="refresh" onClick={() => void controller.reconnect()} />
+                {onStopAllAndQuit ? <Button testId="runtime-stop-all" label="Stop all agents and quit" compact onClick={() => void onStopAllAndQuit().catch(error => controller.notify('error', error instanceof Error ? error.message : String(error)))} /> : null}
+              </SettingsActions>
+            </SettingsSection>
+          </SettingsListRow>
 
-          {sleepPrevention ? <PowerSettings service={sleepPrevention} controller={controller} /> : null}
+          {sleepPrevention ? <SettingsListRow mobile={mobile}><PowerSettings service={sleepPrevention} controller={controller} /></SettingsListRow> : null}
 
-          <SettingsSection title="Interface" description="Application-wide presentation and navigation defaults.">
-            <SettingsControlRow label="Appearance">
-              <ThemeModePicker theme={theme} onChange={onThemeModeChange} />
-            </SettingsControlRow>
-            {onFontsChange ? <>
-              <SettingsControlRow label="Interface font" description="Installed font family for menus and chat text. Changes apply immediately on this desktop.">
-                <FontFamilyControl value={theme.fonts.fontSans} testId="interface-font-family" onApply={(fontSans) => onFontsChange({ fontSans })} />
+          <SettingsListRow mobile={mobile}>
+            <SettingsSection title="Interface" description="Application-wide presentation and navigation defaults.">
+              <SettingsControlRow label="Appearance">
+                <ThemeModePicker theme={theme} onChange={onThemeModeChange} />
               </SettingsControlRow>
-              <SettingsControlRow label="Code font" description="Installed monospaced font family for code and diffs. Terminal fonts are configured separately.">
-                <FontFamilyControl value={theme.fonts.fontMono} testId="interface-code-font-family" onApply={(fontMono) => onFontsChange({ fontMono })} />
+              {onFontsChange ? <>
+                <SettingsControlRow label="Interface font" description="Installed font family for menus and chat text. Changes apply immediately on this desktop.">
+                  <FontFamilyControl value={theme.fonts.fontSans} testId="interface-font-family" onApply={(fontSans) => onFontsChange({ fontSans })} />
+                </SettingsControlRow>
+                <SettingsControlRow label="Code font" description="Installed monospaced font family for code and diffs. Terminal fonts are configured separately.">
+                  <FontFamilyControl value={theme.fonts.fontMono} testId="interface-code-font-family" onApply={(fontMono) => onFontsChange({ fontMono })} />
+                </SettingsControlRow>
+                {onFontsReset ? <SettingsActions><Button testId="interface-fonts-reset" label="Reset interface fonts" compact onClick={onFontsReset} /></SettingsActions> : null}
+              </> : <SettingsRow icon="terminal" label="Code font" value={nativeTheme.fontMono} />}
+              <SettingsControlRow label="Notifications" description="Completions, failures, and input requests. Copy confirmations stay as toasts. Background alerts while this Mac is offline need a hosted push relay, which is not configured." >
+                <Button label={osNotificationCapability().permission === 'granted' ? 'Alerts on' : 'Enable alerts'} compact onClick={() => void requestOsNotifications()} />
               </SettingsControlRow>
-              {onFontsReset ? <SettingsActions><Button testId="interface-fonts-reset" label="Reset interface fonts" compact onClick={onFontsReset} /></SettingsActions> : null}
-            </> : <SettingsRow icon="terminal" label="Code font" value={nativeTheme.fontMono} />}
-            <SettingsControlRow label="Notifications" description="Completions, failures, and input requests. Copy confirmations stay as toasts. Background alerts while this Mac is offline need a hosted push relay, which is not configured." >
-              <Button label={osNotificationCapability().permission === 'granted' ? 'Alerts on' : 'Enable alerts'} compact onClick={() => void requestOsNotifications()} />
-            </SettingsControlRow>
-            <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" />
-          </SettingsSection>
+              <SettingsRow icon="list" label="History loading" value="Seamless infinite scroll" divider={false} />
+            </SettingsSection>
+          </SettingsListRow>
 
-          <ThreadsSettings state={state} controller={controller} />
+          <SettingsListRow mobile={mobile}><ThreadsSettings state={state} controller={controller} /></SettingsListRow>
 
-          {hostSwitcher ? <ComputersSection switcher={hostSwitcher} /> : null}
-          {remoteAccess ? <RemoteAccessSection service={remoteAccess} tailnetServe={tailnetServe} controller={controller} /> : null}
-          {updates ? <UpdatesSection service={updates} controller={controller} /> : null}
-          {pluginHost ? <PluginsSection pluginHost={pluginHost} /> : null}
-          {terminals ? <TerminalSettings service={terminals} /> : null}
-          {browserIntegrations ? <BrowserIntegrationSettings service={browserIntegrations} onUseResult={(text) => controller.setEditorText(text)} /> : null}
-          {browsers ? <BrowserSettings service={browsers} /> : null}
+          {hostSwitcher ? <SettingsListRow mobile={mobile}><ComputersSection switcher={hostSwitcher} /></SettingsListRow> : null}
+          {remoteAccess ? <SettingsListRow mobile={mobile}><RemoteAccessSection service={remoteAccess} tailnetServe={tailnetServe} controller={controller} /></SettingsListRow> : null}
+          {updates ? <SettingsListRow mobile={mobile}><UpdatesSection service={updates} controller={controller} /></SettingsListRow> : null}
+          {pluginHost ? <SettingsListRow mobile={mobile}><PluginsSection pluginHost={pluginHost} /></SettingsListRow> : null}
+          {terminals ? <SettingsListRow mobile={mobile}><TerminalSettings service={terminals} /></SettingsListRow> : null}
+          {browserIntegrations ? <SettingsListRow mobile={mobile}><BrowserIntegrationSettings service={browserIntegrations} onUseResult={(text) => controller.setEditorText(text)} /></SettingsListRow> : null}
+          {browsers ? <SettingsListRow mobile={mobile}><BrowserSettings service={browsers} /></SettingsListRow> : null}
 
-          <SettingsSection title="Keyboard" description="Default shortcuts for navigation, threads, and the command palette.">
-            {SHORTCUTS.map((binding) => (
-              <SettingsControlRow key={`${binding.action}:${binding.key}`} label={binding.label}>
-                <text style={{ color: colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{formatShortcut(binding.key)}</text>
-              </SettingsControlRow>
-            ))}
-          </SettingsSection>
+          <SettingsListRow mobile={mobile}>
+            <SettingsSection title="Keyboard" description="Default shortcuts for navigation, threads, and the command palette.">
+              {SHORTCUTS.map((binding, index) => (
+                <SettingsControlRow key={`${binding.action}:${binding.key}`} label={binding.label} divider={index < SHORTCUTS.length - 1}>
+                  <text style={{ color: colors.textMuted, fontSize: 11, fontFamily: nativeTheme.fontMono }}>{formatShortcut(binding.key)}</text>
+                </SettingsControlRow>
+              ))}
+            </SettingsSection>
+          </SettingsListRow>
 
-          <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
-            <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
-          </SettingsSection>
+          <SettingsListRow mobile={mobile}>
+            <SettingsSection title="About" description="A native GPUix control surface for Pi, visually adapted from the MIT-licensed T3 Code project.">
+              <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" divider={false} />
+            </SettingsSection>
+          </SettingsListRow>
           <div testId="settings-bottom-spacer" style={{ height: 52, flexShrink: 0 }} />
-          </div>
-          </div>
         </NativeVirtualList>
       </div>
     </div>
   )
 })
+
+function SettingsListRow({ mobile, children, testId, contentTestId }: { mobile: boolean; children: React.ReactNode; testId?: string; contentTestId?: string }) {
+  const { contentGutter } = useResponsiveLayout()
+  const gutter = mobile ? contentGutter : 28
+  return (
+    <div {...(testId ? { testId } : {})} style={{ width: '100%', flexShrink: 0, display: 'flex', flexDirection: 'row', justifyContent: 'center', paddingLeft: gutter, paddingRight: gutter, paddingBottom: mobile ? 20 : 24 }}>
+      <div {...(contentTestId ? { testId: contentTestId } : {})} style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minWidth: 0, flexShrink: 1 }}>
+        {children}
+      </div>
+    </div>
+  )
+}
 
 export function updateStatusLabel(state: UpdateState): string {
   switch (state.status) {
@@ -266,7 +281,7 @@ function PowerSettings({ service, controller }: { service: SleepPreventionServic
       </SettingsControlRow>
       <SettingsRow testId="settings-sleep-status" icon="circle" label="Status" value={statusLabel} tone={statusTone} />
       <SettingsRow testId="settings-sleep-reason" icon="panel" label="Now" value={snapshot.reason} />
-      <SettingsRow testId="settings-sleep-limits" icon="panel" label="Limits" value={snapshot.limits} />
+      <SettingsRow testId="settings-sleep-limits" icon="panel" label="Limits" value={snapshot.limits} divider={false} />
     </SettingsSection>
   )
 }
@@ -567,7 +582,7 @@ function SettingsSection({ title, description, children, testId }: { title: stri
   )
 }
 
-function SettingsRow({ icon, label, value, tone = 'normal', testId }: { icon: Parameters<typeof Icon>[0]['name']; label: string; value: string; tone?: 'normal' | 'success'; testId?: string }) {
+function SettingsRow({ icon, label, value, tone = 'normal', testId, divider = true }: { icon: Parameters<typeof Icon>[0]['name']; label: string; value: string; tone?: 'normal' | 'success'; testId?: string; divider?: boolean }) {
   const { mobile } = useResponsiveLayout()
   const labelContent = (
     <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -576,7 +591,7 @@ function SettingsRow({ icon, label, value, tone = 'normal', testId }: { icon: Pa
     </div>
   )
   return (
-    <div {...(testId ? { testId } : {})} style={{ minHeight: 46, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: mobile ? 7 : 10, paddingTop: mobile ? 11 : 0, paddingBottom: mobile ? 11 : 0, paddingLeft: 13, paddingRight: 13, borderWidth: 1, borderColor: colors.border }}>
+    <div {...(testId ? { testId } : {})} style={{ minHeight: 46, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: mobile ? 7 : 10, paddingTop: mobile ? 11 : 0, paddingBottom: mobile ? 11 : 0, paddingLeft: 13, paddingRight: 13, borderBottomWidth: divider ? 1 : 0, borderColor: colors.border }}>
       {labelContent}
       {!mobile && <div style={{ flexGrow: 1 }} />}
       <text style={{ width: mobile ? '100%' : 'auto', color: tone === 'success' ? colors.success : colors.textMuted, fontSize: 11, maxWidth: mobile ? '100%' : 390, whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{value}</text>
@@ -584,10 +599,10 @@ function SettingsRow({ icon, label, value, tone = 'normal', testId }: { icon: Pa
   )
 }
 
-function SettingsControlRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+function SettingsControlRow({ label, description, children, divider = true }: { label: string; description?: string; children: React.ReactNode; divider?: boolean }) {
   const { mobile } = useResponsiveLayout()
   return (
-    <div style={{ minHeight: 54, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: 12, paddingTop: mobile ? 10 : 0, paddingBottom: mobile ? 10 : 0, paddingLeft: 13, paddingRight: 10, borderWidth: 1, borderColor: colors.border }}>
+    <div style={{ minHeight: 54, display: 'flex', flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', gap: 12, paddingTop: mobile ? 10 : 0, paddingBottom: mobile ? 10 : 0, paddingLeft: 13, paddingRight: 10, borderBottomWidth: divider ? 1 : 0, borderColor: colors.border }}>
       {/* The label column keeps a share of the row so a wide control such as the font input cannot squeeze it to one character per line. */}
       <div style={{ minWidth: 0, flexGrow: 1, flexShrink: 1, ...(mobile ? {} : { flexBasis: 0 }), display: 'flex', flexDirection: 'column', gap: 2 }}>
         <text style={{ color: colors.text, fontSize: 12, fontWeight: 550 }}>{label}</text>
@@ -602,9 +617,9 @@ function BrowserSettings({ service }: { service: BrowserSessionService }) {
   const snapshot = useSyncExternalStore(service.subscribe, service.getSnapshot, service.getSnapshot)
   return (
     <SettingsSection title="Browser" description="App-owned profiles keep browser identities separate. Personal profiles are never exposed to agents; workspace profiles require the policy shown below.">
-      <SettingsRow icon="globe" label="Native engine" value={snapshot.engine.available ? snapshot.engine.message : 'Unavailable'} tone={snapshot.engine.available ? 'success' : 'normal'} />
-      {snapshot.profiles.map((profile) => (
-        <SettingsControlRow key={profile.id} label={profile.name} description={`${profile.persistent ? 'Persistent' : 'Ephemeral'} · Agent access ${profile.agentAccess}`}>
+      <SettingsRow icon="globe" label="Native engine" value={snapshot.engine.available ? snapshot.engine.message : 'Unavailable'} tone={snapshot.engine.available ? 'success' : 'normal'} divider={snapshot.profiles.length > 0} />
+      {snapshot.profiles.map((profile, index) => (
+        <SettingsControlRow key={profile.id} label={profile.name} divider={index < snapshot.profiles.length - 1} description={`${profile.persistent ? 'Persistent' : 'Ephemeral'} · Agent access ${profile.agentAccess}`}>
           {profile.id === snapshot.defaultProfileId
             ? <text style={{ color: colors.success, fontSize: 10, fontWeight: 650 }}>Default</text>
             : profile.persistent

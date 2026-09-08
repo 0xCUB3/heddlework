@@ -1,3 +1,4 @@
+import type { NativeQuestion } from './native-question.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import type { PiSessionTreeOption } from '../pi/session-tree.ts'
 import { BUILTIN_SLASH_COMMANDS } from '../pi/slash-commands.ts'
@@ -46,6 +47,8 @@ export interface LiveBlock {
   index: number
   kind: 'text' | 'thinking'
   text: string
+  textOffset?: number
+  detailRef?: { entryId: string; bytes: number; omitted: true; preview?: string }
 }
 
 export interface LiveAssistant {
@@ -59,14 +62,16 @@ export interface ToolRun {
   args?: unknown | undefined
   argsText?: string | undefined
   output?: string | undefined
+  outputOffset?: number
   details?: unknown | undefined
   status: 'preparing' | 'running' | 'complete'
   isError: boolean
+  detailRef?: { entryId: string; bytes: number; omitted: true; preview?: string }
 }
 
 export interface ExtensionDialog {
   id: string
-  method: 'select' | 'confirm' | 'input' | 'editor' | 'tree'
+  method: 'select' | 'confirm' | 'input' | 'editor' | 'tree' | 'unsupported'
   title: string
   message?: string
   options?: string[]
@@ -76,6 +81,7 @@ export interface ExtensionDialog {
   timeout?: number
   createdAt: number
   deadlineAt?: number
+  nativeQuestion?: NativeQuestion
 }
 
 export interface ExtensionWidget {

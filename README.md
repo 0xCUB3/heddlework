@@ -193,7 +193,7 @@ Pi does not currently expose RPC operations for `/scoped-models`, `/import`, `/s
 
 ### Pi extension UI
 
-Extension interactions are hosted in the main conversation area rather than embedded in the composer. Heddlework queues concurrent requests, shows searchable described choices and timeout countdowns, renders extension statuses, discovers slash commands, and retains visible custom-message media. Known contracts add a full tabbed `ask_user_question` questionnaire and recursive `/fabric settings` navigation without moving execution or persistence authority out of Pi. See [Pi extension UI](docs/pi-extension-ui.md).
+Extension interactions are hosted in the main conversation area rather than embedded in the composer. Heddlework queues concurrent requests, shows searchable described choices and timeout countdowns, renders extension statuses, discovers slash commands, and retains visible custom-message media. Q&A-shaped tools and `ctx.ui` dialogs render as native forms, including math in stems and option labels; tabbed questionnaires and `/fabric settings` keep using their existing contracts. Arbitrary custom TUI factories stay in the terminal with a visible fallback. See [Pi extension UI](docs/pi-extension-ui.md).
 
 ## Install from a package manager
 
@@ -340,6 +340,10 @@ bun run build
 
 `bun run install:dev` builds the Chromium-bundled app and installs it as `~/Applications/Heddlework Dev.app`, with its own bundle identifier so it sits beside a release install. Add `--watch` to rebuild and relaunch it whenever `src/`, `scripts/`, or `packaging/` change (a rebuild takes about ten seconds). `--dir <folder>` or `HEDDLEWORK_DEV_DIR` picks another folder, and `--no-launch` skips opening it. The updater recognises these bundles and stays out of the way.
 
+To update another arm64 Mac with each install, put its SSH alias in `~/.config/heddlework/dev-hosts.json`, for example `["mbp2"]`. The remote Mac needs key-based SSH and Bun at `~/.bun/bin/bun`. Each install (including watch rebuilds) transfers the same app bundle, verifies its signature, and starts or upgrades its background runtime without opening a GUI. Busy runtimes keep their current version until idle. The previous app stays beside the new one as `Heddlework Dev.app.previous`.
+
+Remote deployment failures fail the install command; rerun it to retry. `--local-only` skips remote deployment. Remote apps install under `~/Applications` regardless of the local `--dir` setting. Open the remote app yourself when needed, and approve any macOS folder-access prompt for `heddlework-runtime`; a healthy network connection does not mean Pi has permission to load its files.
+
 ### Icons
 
 Every platform icon derives from `media/heddlework-icon.svg`. `bun run icons` regenerates the macOS `.icns`, the Windows `.ico`, the Linux hicolor PNG set, the PWA PNGs, and the iOS marketing icon; it needs macOS for `sips` and `iconutil`. Commit the outputs, since CI on the other platforms only consumes them.
@@ -348,7 +352,7 @@ Every platform icon derives from `media/heddlework-icon.svg`. `bun run icons` re
 
 The native terminal, the Chromium panel, shimmer text, and a few motion and event fixes need changes to GPUix that are not in the published `@gpuix/*` packages yet. `patches/gpuix-0.7.0-heddlework.patch` carries them. `package.json` pins `@gpuix/react` and `@gpuix/native` to tarballs under `vendor/gpuix/`, which are gitignored and come from one of two places.
 
-`bun run gpuix:fetch` downloads the prebuilt tarballs from the fork's `gpuix-0.7.0-heddlework.1` release and checks them against `vendor/gpuix/SHA256SUMS`. This is what CI does.
+`bun run gpuix:fetch` downloads the prebuilt tarballs from the fork's `gpuix-0.7.0-heddlework.4` release and checks them against `vendor/gpuix/SHA256SUMS`. This is what CI does.
 
 `bun run gpuix:build` clones GPUix at the `@gpuix/native@0.7.0` tag beside this checkout, applies the patch to it and its zed submodule, builds the native addon with the CEF feature, and packs both packages. It needs Rust, cmake, ninja, and the Xcode Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`). Bump `GPUIX_BUILD_VERSION`, the tarball names in `package.json`, and the release tag together when the patch changes.
 

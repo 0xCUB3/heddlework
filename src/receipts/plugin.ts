@@ -1,7 +1,7 @@
 import { serviceToken, type WorkbenchPlugin } from '../core/kernel.ts'
 import { workbenchControllerToken, workspaceDiffToken } from '../workbench/plugins.ts'
 import { createReceiptRecorder } from './recorder.ts'
-import { FileReceiptStore, type ReceiptStoreService } from './store.ts'
+import { FileReceiptStore, sharedReceiptStore, type ReceiptStoreService } from './store.ts'
 
 export const receiptStoreToken = serviceToken<ReceiptStoreService>('receipt-store')
 
@@ -10,10 +10,17 @@ export function createReceiptPlugin(options: { path: string | false; store?: Rec
     id: 'receipts',
     requires: [workbenchControllerToken, workspaceDiffToken],
     activate(ctx) {
-      const store = options.store ?? new FileReceiptStore(options.path)
+      const store = options.store ?? sharedReceiptStore(options.path)
       ctx.provide(receiptStoreToken, store)
       const controller = ctx.get(workbenchControllerToken)
-      ctx.effect(() => createReceiptRecorder({ controller, workspaceDiff: ctx.get(workspaceDiffToken), store }))
+      ctx.effect(() => {
+        const stop = createReceiptRecorder({ controller, workspaceDiff: ctx.get(workspaceDiffToken), store })
+        return async () => {
+          stop()
+          if (store.dispose) await store.dispose()
+          else await store.flushed?.()
+        }
+      })
     },
   }
 }

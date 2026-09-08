@@ -3,11 +3,14 @@ import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { withSessionBranches } from './session-branches.ts'
-import { watchPiSessions } from './session-watch.ts'
+import { watchPiSessions, type PiSessionWatchListener } from './session-watch.ts'
 import { discoverPiLiveBridges, type PiLiveBridgeAdvertisement } from './live-bridge.ts'
 import { asRecord, contentText } from '../workbench/state.ts'
+import { compareSessionsByActivity } from './session-activity.ts'
+
+export { compareSessionsByActivity } from './session-activity.ts'
 
 export interface PiSessionSummary {
   id: string
@@ -33,6 +36,11 @@ export interface SessionCatalogOptions {
   concurrency?: number
   cachePath?: string | false
   liveBridgeDirectory?: string | false
+  watchSessions?: (
+    directory: string,
+    changed: PiSessionWatchListener,
+    options?: { recursive?: boolean; debounceMs?: number; retryMs?: number },
+  ) => () => void
 }
 
 interface SessionFileMeta {
@@ -40,12 +48,18 @@ interface SessionFileMeta {
   mtimeMs: number
   birthtimeMs: number
   size: number
+  ino: number
 }
 
 interface SessionCacheEntry {
   mtimeMs: number
   size: number
+  ino: number
   summary: PiSessionSummary
+}
+
+function sameFileIdentity(left: { mtimeMs: number; size: number; ino: number }, right: { mtimeMs: number; size: number; ino: number }): boolean {
+  return left.mtimeMs === right.mtimeMs && left.size === right.size && left.ino === right.ino
 }
 
 interface HeaderAccumulator {
@@ -71,13 +85,22 @@ const SESSION_META_CONCURRENCY = 64
 export class PiSessionCatalog {
   readonly #options: SessionCatalogOptions
   readonly #cache = new Map<string, SessionCacheEntry>()
+  readonly #index = new Map<string, SessionFileMeta>()
+  readonly #dirty = new Set<string>()
   readonly #scans = new Map<string, Promise<PiSessionSummary[]>>()
   readonly #watches = new Map<string, { listeners: Set<() => void>; close: () => void }>()
   #persisted: PiSessionSummary[]
+  #dirtyAll = false
+  #indexed = false
+  #statCount = 0
 
   constructor(options: SessionCatalogOptions = {}) {
     this.#options = options
     this.#persisted = readPersistedSessions(options.cachePath)
+  }
+
+  get statCount(): number {
+    return this.#statCount
   }
 
   cached(cwd: string, limit = this.#options.limit): PiSessionSummary[] {
@@ -93,23 +116,7 @@ export class PiSessionCatalog {
     if (!scan) {
       // Limits affect presentation, not the shared cache. A second thread asking
       // for a different page must not repeat the same directory scan.
-      const { limit: _limit, ...options } = this.#options
-      scan = listPiSessionsCached(cwd, options, this.#cache).then(async (persisted) => {
-        const sessions = this.#options.liveBridgeDirectory
-          ? mergeLiveSessionSummaries(persisted, discoverPiLiveBridges(this.#options.liveBridgeDirectory), this.#options.scope === 'cwd' ? cwd : undefined)
-          : persisted
-        const previous = new Map(this.#persisted.map((session) => [session.path, session]))
-        const stable = sessions.map((session) => {
-          const old = previous.get(session.path)
-          return old && sameSummary(old, session) ? old : session
-        })
-        const changed = stable.length !== this.#persisted.length || stable.some((session, index) => session !== this.#persisted[index])
-        if (changed) {
-          this.#persisted = stable
-          await persistSessions(this.#options.cachePath, stable)
-        }
-        return changed ? stable : this.#persisted
-      }).finally(() => { this.#scans.delete(key) })
+      scan = this.#refreshCatalog(cwd).finally(() => { this.#scans.delete(key) })
       this.#scans.set(key, scan)
     }
     const sessions = await scan
@@ -119,16 +126,21 @@ export class PiSessionCatalog {
   subscribe(cwd: string, listener: () => void): () => void {
     const scoped = this.#options.scope === 'cwd'
     const root = scoped ? getPiSessionDirectory(cwd, this.#options.agentDir) : getPiSessionRoot(this.#options.agentDir)
-    const closeSessions = this.#subscribeDirectory(root, listener, !scoped)
-    const closeLive = this.#options.liveBridgeDirectory ? this.#subscribeDirectory(this.#options.liveBridgeDirectory, listener, false) : undefined
+    const closeSessions = this.#subscribeDirectory(root, listener, !scoped, 'sessions')
+    const closeLive = this.#options.liveBridgeDirectory ? this.#subscribeDirectory(this.#options.liveBridgeDirectory, listener, false, 'live') : undefined
     return () => { closeSessions(); closeLive?.() }
   }
 
-  #subscribeDirectory(root: string, listener: () => void, recursive: boolean): () => void {
+  #subscribeDirectory(root: string, listener: () => void, recursive: boolean, kind: 'sessions' | 'live'): () => void {
     let entry = this.#watches.get(root)
     if (!entry) {
       const listeners = new Set<() => void>()
-      entry = { listeners, close: watchPiSessions(root, () => {
+      const watchSessions = this.#options.watchSessions ?? watchPiSessions
+      entry = { listeners, close: watchSessions(root, (paths) => {
+        if (kind === 'sessions') {
+          if (!paths || paths.length === 0) this.#dirtyAll = true
+          else for (const path of paths) this.#dirty.add(path)
+        }
         for (const callback of listeners) callback()
       }, { recursive }) }
       this.#watches.set(root, entry)
@@ -151,7 +163,140 @@ export class PiSessionCatalog {
     const path = join(directory, `${timestamp.replace(/[:.]/g, '-')}_${id}.jsonl`)
     await mkdir(directory, { recursive: true })
     await writeFile(path, `${JSON.stringify({ type: 'session', version: 3, id, timestamp, cwd: workspace })}\n`, { encoding: 'utf8', flag: 'wx' })
+    this.#dirty.add(path)
     return { id, path, cwd: workspace, title: '(no messages)', firstMessage: '', messageCount: 0, createdAt: Date.parse(timestamp), modifiedAt: Date.parse(timestamp) }
+  }
+
+  async #refreshCatalog(cwd: string): Promise<PiSessionSummary[]> {
+    const watching = this.#watches.size > 0
+    let spins = 0
+    do {
+      const dirtyAll = this.#dirtyAll
+      const dirty = [...this.#dirty]
+      this.#dirtyAll = false
+      this.#dirty.clear()
+      if (!this.#indexed || !watching || dirtyAll) {
+        await this.#rebuildIndex(cwd)
+        this.#indexed = true
+      } else if (dirty.length > 0) {
+        await this.#applyDirtyPaths(dirty)
+      }
+    } while ((this.#dirtyAll || this.#dirty.size > 0) && ++spins < 8)
+    return this.#stabilize(cwd)
+  }
+
+  async #rebuildIndex(cwd: string): Promise<void> {
+    const { limit: _ignored, ...options } = this.#options
+    const paths = await listSessionPaths(cwd, options)
+    const metas = (await mapConcurrent(paths, options.concurrency ?? SESSION_META_CONCURRENCY, (path) => this.#statSession(path)))
+      .filter((meta): meta is SessionFileMeta => meta !== null)
+    this.#index.clear()
+    const livePaths = new Set(metas.map((meta) => meta.path))
+    for (const path of this.#cache.keys()) if (!livePaths.has(path)) this.#cache.delete(path)
+    for (const meta of metas) this.#index.set(meta.path, meta)
+    await mapConcurrent(metas, options.concurrency ?? DEFAULT_CONCURRENCY, (meta) => readPiSessionSummary(meta, this.#cache))
+  }
+
+  async #applyDirtyPaths(paths: string[]): Promise<void> {
+    const parents = new Set<string>()
+    for (const path of paths) {
+      const resolved = resolve(path)
+      if (!this.#ownsPath(resolved)) continue
+      if (!resolved.endsWith('.jsonl')) {
+        this.#statCount += 1
+        try {
+          const info = await stat(resolved)
+          if (info.isDirectory()) await this.#reconcileDirectory(resolved, true)
+        } catch {
+          this.#removeTree(resolved)
+        }
+        continue
+      }
+      this.#cache.delete(resolved)
+      const meta = await this.#statSession(resolved)
+      if (!meta) this.#removeSession(resolved)
+      else await this.#readAndIndex(meta)
+      parents.add(dirname(resolved))
+    }
+    for (const dir of parents) await this.#reconcileDirectory(dir)
+  }
+
+  async #reconcileDirectory(directory: string, restatExisting = false): Promise<void> {
+    const dir = resolve(directory)
+    let names: string[]
+    try {
+      names = await readdir(dir)
+    } catch {
+      this.#removeTree(dir)
+      return
+    }
+    const live = new Set(names.filter((name) => name.endsWith('.jsonl')).map((name) => resolve(dir, name)))
+    for (const path of [...this.#index.keys()]) {
+      if (dirname(path) === dir && !live.has(path)) this.#removeSession(path)
+    }
+    for (const path of live) {
+      const previous = this.#index.get(path)
+      if (previous && !restatExisting) continue
+      const meta = await this.#statSession(path)
+      if (!meta) {
+        this.#removeSession(path)
+        continue
+      }
+      const cached = this.#cache.get(path)
+      if (previous && cached && sameFileIdentity(previous, meta) && sameFileIdentity(cached, meta)) continue
+      await this.#readAndIndex(meta)
+    }
+  }
+
+  async #readAndIndex(meta: SessionFileMeta): Promise<void> {
+    this.#index.set(meta.path, meta)
+    await readPiSessionSummary(meta, this.#cache)
+  }
+
+  #removeSession(path: string): void {
+    this.#index.delete(path)
+    this.#cache.delete(path)
+  }
+
+  #removeTree(root: string): void {
+    const resolved = resolve(root)
+    const prefix = resolved + sep
+    for (const path of [...this.#index.keys()]) {
+      if (path === resolved || path.startsWith(prefix)) this.#removeSession(path)
+    }
+  }
+
+  #ownsPath(path: string): boolean {
+    const root = resolve(getPiSessionRoot(this.#options.agentDir))
+    const resolved = resolve(path)
+    return resolved === root || resolved.startsWith(root + sep)
+  }
+
+  async #statSession(path: string): Promise<SessionFileMeta | null> {
+    this.#statCount += 1
+    return sessionMeta(path)
+  }
+
+  async #stabilize(cwd: string): Promise<PiSessionSummary[]> {
+    const summaries = [...this.#index.keys()]
+      .map((path) => this.#cache.get(path)?.summary)
+      .filter((summary): summary is PiSessionSummary => summary !== undefined)
+      .sort(compareSessionsByActivity)
+    const branched = await withSessionBranches(summaries)
+    const sessions = this.#options.liveBridgeDirectory
+      ? mergeLiveSessionSummaries(branched, discoverPiLiveBridges(this.#options.liveBridgeDirectory), this.#options.scope === 'cwd' ? cwd : undefined)
+      : branched
+    const previous = new Map(this.#persisted.map((session) => [session.path, session]))
+    const stable = sessions.map((session) => {
+      const old = previous.get(session.path)
+      return old && sameSummary(old, session) ? old : session
+    })
+    const changed = stable.length !== this.#persisted.length || stable.some((session, index) => session !== this.#persisted[index])
+    if (changed) {
+      this.#persisted = stable
+      await persistSessions(this.#options.cachePath, stable)
+    }
+    return changed ? stable : this.#persisted
   }
 }
 
@@ -174,7 +319,7 @@ export function mergeLiveSessionSummaries(persisted: PiSessionSummary[], bridges
       live: true,
     })
   }
-  return [...byPath.values()].sort((left, right) => right.modifiedAt - left.modifiedAt)
+  return [...byPath.values()].sort(compareSessionsByActivity)
 }
 
 function sameSummary(left: PiSessionSummary, right: PiSessionSummary): boolean {
@@ -199,7 +344,7 @@ async function listPiSessionsCached(
   for (const path of cache.keys()) if (!livePaths.has(path)) cache.delete(path)
   const sessions = (await mapConcurrent(metas, options.concurrency ?? DEFAULT_CONCURRENCY, (meta) => readPiSessionSummary(meta, cache)))
     .filter((session): session is PiSessionSummary => session !== null)
-    .sort((left, right) => right.modifiedAt - left.modifiedAt)
+    .sort(compareSessionsByActivity)
   return withSessionBranches(options.limit === undefined ? sessions : sessions.slice(0, Math.max(0, options.limit)))
 }
 
@@ -212,9 +357,10 @@ async function listSessionPaths(cwd: string, options: SessionCatalogOptions): Pr
   } catch {
     return []
   }
+  const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl')).map((entry) => join(root, entry.name))
   const directories = entries.filter((entry) => entry.isDirectory()).map((entry) => join(root, entry.name))
   const nested = await mapConcurrent(directories, 12, jsonlFiles)
-  return nested.flat()
+  return [...files, ...nested.flat()]
 }
 
 async function jsonlFiles(directory: string): Promise<string[]> {
@@ -234,6 +380,7 @@ async function sessionMeta(path: string): Promise<SessionFileMeta | null> {
       mtimeMs: fileStats.mtimeMs,
       birthtimeMs: fileStats.birthtimeMs,
       size: fileStats.size,
+      ino: fileStats.ino,
     }
   } catch {
     return null
@@ -251,7 +398,7 @@ function readPersistedSessions(path: string | false | undefined): PiSessionSumma
   try {
     const value = JSON.parse(readFileSync(path, 'utf8')) as { sessions?: unknown }
     if (!Array.isArray(value.sessions)) return []
-    return value.sessions.filter(isSessionSummary).sort((left, right) => right.modifiedAt - left.modifiedAt)
+    return value.sessions.filter(isSessionSummary).sort(compareSessionsByActivity)
   } catch {
     return []
   }
@@ -290,7 +437,7 @@ async function readPiSessionSummary(
   cache: Map<string, SessionCacheEntry>,
 ): Promise<PiSessionSummary | null> {
   const cached = cache.get(meta.path)
-  if (cached?.mtimeMs === meta.mtimeMs && cached.size === meta.size) return cached.summary
+  if (cached && sameFileIdentity(cached, meta)) return cached.summary
   const accumulator: HeaderAccumulator = {
     id: '',
     cwd: '',
@@ -358,7 +505,7 @@ async function readPiSessionSummary(
     ...(accumulator.lastAssistantText ? { lastAssistantText: accumulator.lastAssistantText } : {}),
     ...(accumulator.lastAssistantStopReason ? { lastAssistantStopReason: accumulator.lastAssistantStopReason } : {}),
   }
-  cache.set(meta.path, { mtimeMs: meta.mtimeMs, size: meta.size, summary })
+  cache.set(meta.path, { mtimeMs: meta.mtimeMs, size: meta.size, ino: meta.ino, summary })
   return summary
 }
 

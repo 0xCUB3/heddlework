@@ -61,7 +61,29 @@ export function createComposerImage(bytes: Uint8Array, mimeType?: string, fileNa
   }
 }
 
-export function hydrateMessageImages(messages: PiMessage[]): PiMessage[] {
+export function hydrateMessageImages(messages: PiMessage[], _options?: { eager?: boolean }): PiMessage[] {
+  return messages
+}
+
+export function messageHydrationIdentity(message: PiMessage): string {
+  return typeof message.workbenchEntryId === 'string' && message.workbenchEntryId ? message.workbenchEntryId : ''
+}
+
+export function imageHydrationWork(): { hashes: number; writes: number } {
+  return { hashes: 0, writes: 0 }
+}
+
+export function imageHydrationBackend(): 'worker' | 'async' | 'idle' {
+  return 'idle'
+}
+
+export function resetImageHydrationCache(): void {}
+
+export async function prepareVisibleMessageImages(
+  messages: PiMessage[],
+  _visibleIds: ReadonlySet<string>,
+  _options?: { signal?: AbortSignal },
+): Promise<PiMessage[]> {
   return messages
 }
 

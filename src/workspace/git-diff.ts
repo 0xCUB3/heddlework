@@ -1,73 +1,172 @@
-import { join } from 'node:path'
 import type { WorkspaceDiff, WorkspaceDiffFile } from '../workbench/state.ts'
+import { abortError, ByteBudget, DiffJob, isAbortError, spawnCancellableGit } from './diff-job.ts'
 
-const MAX_PATCH_BYTES = 1_500_000
+export const MAX_PATCH_BYTES = 1_500_000
 const MAX_UNTRACKED_FILES = 24
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 
-export async function loadWorkspaceDiff(cwd: string): Promise<WorkspaceDiff> {
-  try {
-    const branch = (await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-    const trackedPatch = await runGit(cwd, ['diff', '--no-ext-diff', '--unified=3', 'HEAD', '--'])
-    const numstat = await runGit(cwd, ['diff', '--numstat', 'HEAD', '--'])
-    const untracked = (await runGit(cwd, ['ls-files', '--others', '--exclude-standard', '--']))
-      .split('\n')
-      .map((path) => path.trim())
-      .filter(Boolean)
-      .slice(0, MAX_UNTRACKED_FILES)
+export { DiffJob, readBoundedText } from './diff-job.ts'
 
-    const untrackedPatches = await Promise.all(untracked.map(async (path) => {
-      const result = await runGit(cwd, ['diff', '--no-index', '--no-ext-diff', '--unified=3', '--', NULL_DEVICE, path], [0, 1])
-      return normalizeNoIndexPatch(result, cwd, path)
-    }))
-    const patch = [trackedPatch, ...untrackedPatches].filter(Boolean).join('\n')
-    if (Buffer.byteLength(patch, 'utf8') > MAX_PATCH_BYTES) {
-      return {
-        status: 'error',
-        branch,
-        files: [],
-        additions: 0,
-        deletions: 0,
-        error: 'Working tree diff is too large to render.',
+export function startWorkspaceDiffJob(
+  cwd: string,
+  options: { signal?: AbortSignal; maxBytes?: number } = {},
+): DiffJob<WorkspaceDiff> {
+  const maxBytes = options.maxBytes ?? MAX_PATCH_BYTES
+  return new DiffJob(async (job) => {
+    try {
+      return await collectWorkspaceDiff(cwd, job, maxBytes)
+    } catch (error) {
+      if (job.cancelled || isAbortError(error)) return errorDiff('Diff cancelled.')
+      return errorDiff(error instanceof Error ? error.message : String(error))
+    }
+  }, options.signal)
+}
+
+export async function loadWorkspaceDiff(
+  cwd: string,
+  options: { signal?: AbortSignal; maxBytes?: number } = {},
+): Promise<WorkspaceDiff> {
+  return startWorkspaceDiffJob(cwd, options).result
+}
+
+export class SharedWorkspaceDiffLoader {
+  readonly #jobs = new Map<string, { job: DiffJob<WorkspaceDiff>; subscribers: number }>()
+
+  load(workspacePath: string, options: { signal?: AbortSignal; maxBytes?: number } = {}): Promise<WorkspaceDiff> {
+    const existing = this.#jobs.get(workspacePath)
+    if (existing && !existing.job.cancelled) {
+      existing.subscribers += 1
+      return this.#subscribe(workspacePath, existing, options.signal)
+    }
+    existing?.job.cancel()
+    const job = startWorkspaceDiffJob(workspacePath, options)
+    const entry = { job, subscribers: 1 }
+    this.#jobs.set(workspacePath, entry)
+    void job.result.finally(() => {
+      if (this.#jobs.get(workspacePath) === entry) this.#jobs.delete(workspacePath)
+    })
+    return this.#subscribe(workspacePath, entry, options.signal)
+  }
+
+  #subscribe(workspacePath: string, entry: { job: DiffJob<WorkspaceDiff>; subscribers: number }, signal?: AbortSignal): Promise<WorkspaceDiff> {
+    if (!signal) return entry.job.result
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const onAbort = () => {
+        if (settled) return
+        settled = true
+        entry.subscribers -= 1
+        if (entry.subscribers <= 0) {
+          entry.job.cancel()
+          this.#jobs.delete(workspacePath)
+        }
+        reject(abortError())
       }
-    }
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      void entry.job.result.then(
+        (value) => {
+          if (settled) return
+          settled = true
+          signal.removeEventListener('abort', onAbort)
+          resolve(value)
+        },
+        (error) => {
+          if (settled) return
+          settled = true
+          signal.removeEventListener('abort', onAbort)
+          reject(error)
+        },
+      )
+    })
+  }
 
-    const stats = parseNumstat(numstat)
-    for (const path of untracked) {
-      const text = await Bun.file(join(cwd, path)).text().catch(() => '')
-      stats.set(path, { additions: text ? text.split('\n').length : 0, deletions: 0 })
+  cancel(workspacePath?: string): void {
+    if (workspacePath) {
+      this.#jobs.get(workspacePath)?.job.cancel()
+      this.#jobs.delete(workspacePath)
+      return
     }
-    const files = parsePatchFiles(patch, stats)
-    return {
-      status: 'ready',
-      branch,
-      files,
-      additions: files.reduce((sum, file) => sum + file.additions, 0),
-      deletions: files.reduce((sum, file) => sum + file.deletions, 0),
-    }
-  } catch (error) {
-    return {
-      status: 'error',
-      branch: '',
-      files: [],
-      additions: 0,
-      deletions: 0,
-      error: error instanceof Error ? error.message : String(error),
+    for (const [key, entry] of this.#jobs) {
+      entry.job.cancel()
+      this.#jobs.delete(key)
     }
   }
 }
 
-async function runGit(cwd: string, args: string[], allowedExitCodes = [0]): Promise<string> {
-  const process = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
-  ])
-  if (!allowedExitCodes.includes(exitCode)) {
-    throw new Error(stderr.trim() || `git ${args[0] ?? ''} exited with ${exitCode}`)
+async function collectWorkspaceDiff(cwd: string, job: DiffJob<WorkspaceDiff>, maxBytes: number): Promise<WorkspaceDiff> {
+  if (job.cancelled) return errorDiff('Diff cancelled.')
+  const budget = new ByteBudget(maxBytes)
+  const git = (
+    args: readonly string[],
+    extra: { allowedExitCodes?: readonly number[]; budget?: ByteBudget; maxBytes?: number } = {},
+  ) => spawnCancellableGit({
+    cwd,
+    args,
+    signal: job.signal,
+    onSpawn: (child) => job.addChild(child),
+    ...(extra.allowedExitCodes ? { allowedExitCodes: extra.allowedExitCodes } : {}),
+    ...(extra.budget ? { budget: extra.budget } : { maxBytes: extra.maxBytes ?? 256_000 }),
+  })
+
+  const branch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()
+  if (job.cancelled) return errorDiff('Diff cancelled.', branch)
+
+  const tracked = await git(['diff', '--no-ext-diff', '--unified=3', 'HEAD', '--'], { budget })
+  if (tracked.truncated || budget.exceeded) return tooLarge(branch)
+  if (job.cancelled) return errorDiff('Diff cancelled.', branch)
+
+  const numstat = await git(['diff', '--numstat', 'HEAD', '--'])
+  if (job.cancelled) return errorDiff('Diff cancelled.', branch)
+
+  const untracked = (await git(['ls-files', '--others', '--exclude-standard', '--'])).stdout
+    .split('\n')
+    .map((path) => path.trim())
+    .filter(Boolean)
+    .slice(0, MAX_UNTRACKED_FILES)
+
+  const untrackedPatches: string[] = []
+  for (const path of untracked) {
+    if (job.cancelled) return errorDiff('Diff cancelled.', branch)
+    if (budget.exceeded) return tooLarge(branch)
+    const result = await git(
+      ['diff', '--no-index', '--no-ext-diff', '--unified=3', '--', NULL_DEVICE, path],
+      { allowedExitCodes: [0, 1], budget },
+    )
+    if (result.truncated || budget.exceeded) return tooLarge(branch)
+    if (result.stdout) untrackedPatches.push(normalizeNoIndexPatch(result.stdout, cwd, path))
   }
-  return stdout
+
+  const patch = [tracked.stdout, ...untrackedPatches].filter(Boolean).join('\n')
+  if (Buffer.byteLength(patch, 'utf8') > maxBytes) return tooLarge(branch)
+
+  const stats = parseNumstat(numstat.stdout)
+  const files = parsePatchFiles(patch, stats)
+  return {
+    status: 'ready',
+    branch,
+    files,
+    additions: files.reduce((sum, file) => sum + file.additions, 0),
+    deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+  }
+}
+
+function tooLarge(branch = ''): WorkspaceDiff {
+  return errorDiff('Working tree diff is too large to render.', branch)
+}
+
+function errorDiff(error: string, branch = ''): WorkspaceDiff {
+  return {
+    status: 'error',
+    branch,
+    files: [],
+    additions: 0,
+    deletions: 0,
+    error,
+  }
 }
 
 function parseNumstat(value: string): Map<string, { additions: number; deletions: number }> {

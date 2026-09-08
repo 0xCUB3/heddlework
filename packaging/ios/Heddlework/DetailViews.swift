@@ -542,6 +542,9 @@ struct DialogView: View {
                 if let message = dialog.message { Text(message) }
                 if dialog.method == "select" { Picker(dialog.title, selection: $value) { ForEach(dialog.options ?? [], id: \.self) { Text($0).tag($0) } } }
                 else if dialog.method == "input" || dialog.method == "editor" { TextField(dialog.placeholder ?? dialog.title, text: $value, axis: .vertical).lineLimit(3...10) }
+                else if dialog.method == "unsupported" {
+                    Text("This extension is drawing a custom terminal component. Heddlework cannot convert arbitrary TUI factories into a native form.")
+                }
                 else { Text(dialog.method == "confirm" ? "Confirm this request." : "This dialog type has no native controls.") }
             }
             .navigationTitle(dialog.title)
@@ -551,6 +554,110 @@ struct DialogView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("OK") { client.send(CommandFactory.respondToDialog(value: value, confirmed: true), label: "Respond to dialog"); dismiss() } }
             }
         }
+    }
+}
+
+struct NativeQuestionView: View {
+    let question: NativeQuestion
+    @ObservedObject var client: WorkspaceClient
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected = Set<String>()
+    @State private var custom = ""
+    @State private var note = ""
+    @State private var unknown = false
+    @State private var useCustom = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    RichMarkdownView(source: question.stem, style: .body)
+                    if let description = question.description, !description.isEmpty {
+                        RichMarkdownView(source: description, style: .compact)
+                    }
+                }
+                if question.kind == "text" {
+                    Section("Answer") { TextField("Write your answer", text: $custom, axis: .vertical).lineLimit(3...10) }
+                } else {
+                    Section("Choices") {
+                        ForEach(question.options) { option in
+                            Button {
+                                unknown = false
+                                useCustom = false
+                                if question.multiSelect {
+                                    if selected.contains(option.value) { selected.remove(option.value) } else { selected.insert(option.value) }
+                                } else {
+                                    selected = [option.value]
+                                }
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        RichMarkdownView(source: option.label, style: .compact)
+                                        if let description = option.description, !description.isEmpty {
+                                            RichMarkdownView(source: description, style: .compact)
+                                        }
+                                    }
+                                    Spacer()
+                                    if selected.contains(option.value) { Image(systemName: "checkmark") }
+                                }
+                            }
+                            .accessibilityIdentifier("native-question-option-\(option.id)")
+                        }
+                        if question.allowUnknown {
+                            Button("I don't know") {
+                                unknown = true
+                                useCustom = false
+                                selected = []
+                            }
+                            .accessibilityIdentifier("native-question-unknown")
+                        }
+                        if question.allowCustom {
+                            Button("Type something else") { unknown = false; useCustom = true }
+                            if useCustom { TextField("Custom answer", text: $custom, axis: .vertical).lineLimit(2...5) }
+                        }
+                    }
+                }
+                if question.allowNote {
+                    Section("Note (optional)") { TextField("Add a note", text: $note, axis: .vertical).lineLimit(2...5).accessibilityIdentifier("native-question-note") }
+                }
+            }
+            .navigationTitle(question.toolName.isEmpty ? "Question" : question.toolName)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        client.send(CommandFactory.cancelAskUserQuestionnaire(toolCallId: question.requestId), label: "Cancel question")
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Submit") { submit(); dismiss() }.disabled(!complete)
+                }
+            }
+        }
+        .accessibilityIdentifier("native-question-overlay")
+    }
+
+    private var complete: Bool {
+        if question.kind == "text" { return !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if unknown { return true }
+        if useCustom { return !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return !selected.isEmpty
+    }
+
+    private func submit() {
+        var answers: [[String: JSONValue]] = []
+        if unknown {
+            answers = [["kind": .string("unknown")]]
+        } else if question.kind == "text" || useCustom {
+            answers = [["kind": .string(question.kind == "text" ? "text" : "custom"), "value": .string(custom)]]
+        } else if question.multiSelect {
+            let indices: [JSONValue] = question.options.enumerated().compactMap { selected.contains($0.element.value) ? JSONValue.number(Double($0.offset)) : nil }
+            answers = [["kind": .string("multi"), "optionIndices": .array(indices)]]
+        } else if let index = question.options.firstIndex(where: { selected.contains($0.value) }) {
+            answers = [["kind": .string("option"), "optionIndex": .number(Double(index))]]
+        }
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        client.send(CommandFactory.submitAskUserQuestionnaire(toolCallId: question.requestId, answers: answers, note: trimmed.isEmpty ? nil : trimmed), label: "Submit question")
     }
 }
 

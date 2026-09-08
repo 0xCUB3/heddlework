@@ -2,10 +2,10 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { WorkbenchKernel } from '../core/kernel.ts'
 import { createFlowRuntimePlugin, flowRuntimeToken } from '../flows/plugin.ts'
-import { PiSessionCatalog, sessionSidebarCachePath } from '../pi/session-catalog.ts'
+import { PiSessionCatalog, sessionSidebarCachePath, type SessionCatalogOptions } from '../pi/session-catalog.ts'
 import { ensureHeddleworkLiveBridgeInstalled, piLiveBridgeDirectory } from '../pi/live-bridge.ts'
 import { createReceiptPlugin } from '../receipts/plugin.ts'
-import { FileReceiptStore, receiptStorePath } from '../receipts/store.ts'
+import { receiptStorePath, sharedReceiptStore } from '../receipts/store.ts'
 import { coreToolPresentersPlugin } from '../ui/tool-presenters.ts'
 import { createAgentTransportPlugin, createSessionCatalogPlugin, createWorkbenchControllerPlugin, localWorkspaceDiffPlugin, workbenchControllerToken } from '../workbench/plugins.ts'
 import { FileQueueStore } from '../workbench/queue-store.ts'
@@ -17,12 +17,16 @@ import { startExternalPlugins } from '../plugins/host.ts'
 
 export interface SessionFactoryInput { workspacePath: string; sessionPath?: string | undefined; id: string }
 
-export function createRuntimeSessionFactory(directory: string, demo = false) {
+export function createRuntimeSessionFactory(directory: string, demo = false, catalogOptions: SessionCatalogOptions = {}) {
   const isolated = demo || process.env.HEDDLEWORK_RUNTIME_TEST === '1'
-  const receipts = new FileReceiptStore(isolated ? false : receiptStorePath())
+  const receipts = sharedReceiptStore(isolated ? false : receiptStorePath())
   const metadata = new FileThreadMetadataStore(isolated ? false : threadMetadataStorePath())
   const titleSettings = new FileThreadTitleSettingsStore(isolated ? false : threadTitleSettingsPath())
-  const sessionCatalog = new PiSessionCatalog({ cachePath: isolated ? false : sessionSidebarCachePath(), liveBridgeDirectory: isolated ? false : piLiveBridgeDirectory() })
+  const sessionCatalog = new PiSessionCatalog({
+    cachePath: isolated ? false : sessionSidebarCachePath(),
+    liveBridgeDirectory: isolated ? false : piLiveBridgeDirectory(),
+    ...catalogOptions,
+  })
   let bridgeInstallError: string | undefined
   if (!isolated) {
     try { ensureHeddleworkLiveBridgeInstalled() } catch (error) {

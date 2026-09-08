@@ -73,6 +73,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
   const sessionLastOffset = useRef(0)
   const sessionListRef = useRef<NativeElementHandle | null>(null)
   const initialSessionScrollApplied = useRef(false)
+  const [heldListRows, setHeldListRows] = useState<SidebarListRow[] | null>(null)
   const activePath = state.session.sessionFile
   const persistedSessions = useMemo(() => orderedActiveSessions(state.sessions), [state.sessions])
   const activeSummary = useMemo(
@@ -194,11 +195,13 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
     if (visibleSessions.length === 0 && !state.sessionsLoading) next.push({ id: 'empty', kind: 'empty', searching: Boolean(normalizedSearch) })
     return next
   }, [activeSessions, normalizedSearch, renderedSettledSessions, settledExpanded, settledSessions, snoozedSessions, state.sessionsLoading, visibleSessions.length])
-  const listIds = useMemo(() => listRows.map((row) => row.id), [listRows])
+  const displayRows = heldListRows ?? listRows
+  const listIds = useMemo(() => displayRows.map((row) => row.id), [displayRows])
   const prepended = usePrependCount(listIds, `${projectScope}:${normalizedSearch}`)
-  const virtualWindow = useNativeVirtualWindow(listRows.length, `${projectScope}:${normalizedSearch}`, 0, SIDEBAR_VIRTUAL_WINDOW_SIZE, { prepended })
-  const windowed = listRows.length > SIDEBAR_VIRTUAL_WINDOW_SIZE
-  const visibleListRows = windowed ? listRows.slice(virtualWindow.windowStart, virtualWindow.windowEnd) : listRows
+  const virtualWindow = useNativeVirtualWindow(displayRows.length, `${projectScope}:${normalizedSearch}`, 0, SIDEBAR_VIRTUAL_WINDOW_SIZE, { prepended })
+  const windowed = displayRows.length > SIDEBAR_VIRTUAL_WINDOW_SIZE
+  const visibleListRows = windowed ? displayRows.slice(virtualWindow.windowStart, virtualWindow.windowEnd) : displayRows
+  const releaseHeldRows = () => { if (heldListRows) setHeldListRows(null) }
 
   const handleSessionScroll = (event: NativeScrollEvent) => {
     const offset = renderer.getScrollOffset?.(event.elementId)?.[1] ?? sessionLastOffset.current
@@ -255,7 +258,7 @@ export const WorkbenchSidebar = React.memo(function WorkbenchSidebar({
         </div>
       </div>
 
-      <div testId="sidebar-session-region" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div testId="sidebar-session-region" style={{ position: 'relative', flexGrow: 1, minHeight: 0, width: '100%', display: 'flex', flexDirection: 'column' }} onMouseDown={() => { if (!heldListRows) setHeldListRows(listRows) }} onMouseUp={releaseHeldRows} onMouseLeave={releaseHeldRows}>
       <NativeVirtualList testId="sidebar-session-list" elementRef={sessionListRef} alignment="top" estimatedItemHeight={78} overdraw={280} {...(windowed ? { itemCount: listRows.length, windowStart: virtualWindow.windowStart, onVisibleRange: virtualWindow.onVisibleRange } : {})} onScroll={handleSessionScroll} style={{ flexGrow: 1, minHeight: 0, width: '100%' }}>
         {windowed ? visibleListRows.map((row) => {
           if (row.kind === 'session') return renderSession(row.session, row.lifecycle)
@@ -405,8 +408,8 @@ function syntheticActiveSession(state: WorkbenchState): PiSessionSummary | null 
     ...(state.session.sessionName ? { name: state.session.sessionName } : {}),
     firstMessage: firstMessage || '(no messages)',
     messageCount: state.messages.length,
-    createdAt: Date.now(),
-    modifiedAt: state.messages.at(-1)?.timestamp ?? Date.now(),
+    createdAt: typeof firstUser?.timestamp === 'number' ? firstUser.timestamp : 0,
+    modifiedAt: state.messages.at(-1)?.timestamp ?? 0,
   }
 }
 

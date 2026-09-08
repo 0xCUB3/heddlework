@@ -6,10 +6,26 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 gpuix_tag="@gpuix/native@0.7.0"
-build_version="${GPUIX_BUILD_VERSION:-0.7.0-heddlework.3}"
+build_version="${GPUIX_BUILD_VERSION:-0.7.0-heddlework.4}"
 checkout="${GPUIX_CHECKOUT:-$root/../gpuix-heddlework-0.7}"
 patch="$root/patches/gpuix-0.7.0-heddlework.patch"
 out="$root/vendor/gpuix"
+
+# A separately installed Metal toolchain need not choose the host linker too.
+# DEVELOPER_DIR still selects clang/ld/SDK; this optional override affects only Metal.
+if [ -n "${GPUIX_METAL_DEVELOPER_DIR:-}" ]; then
+  toolchain_bin="$(mktemp -d)"
+  trap 'rm -rf "$toolchain_bin"' EXIT
+  cat > "$toolchain_bin/xcrun" <<'SH'
+#!/bin/sh
+for argument in "$@"; do
+  case "$argument" in metal|metallib) DEVELOPER_DIR="$GPUIX_METAL_DEVELOPER_DIR" exec /usr/bin/xcrun "$@" ;; esac
+done
+exec /usr/bin/xcrun "$@"
+SH
+  chmod +x "$toolchain_bin/xcrun"
+  export PATH="$toolchain_bin:$PATH"
+fi
 
 if [ ! -d "$checkout/.git" ]; then
   git clone --depth 1 --branch "$gpuix_tag" https://github.com/remorses/gpuix "$checkout"
@@ -21,12 +37,23 @@ split="$(grep -n '^diff --git a/crates/gpui' "$patch" | head -1 | cut -d: -f1)"
 root_patch="$(mktemp)"; zed_patch="$(mktemp)"
 sed -n "1,$((split - 1))p" "$patch" > "$root_patch"
 sed -n "${split},\$p" "$patch" > "$zed_patch"
-if git -C "$checkout" apply --check "$root_patch" 2>/dev/null; then git -C "$checkout" apply "$root_patch"; else echo "[gpuix] root patch already applied"; fi
-if git -C "$checkout/zed" apply --check "$zed_patch" 2>/dev/null; then git -C "$checkout/zed" apply "$zed_patch"; else echo "[gpuix] zed patch already applied"; fi
+if git -C "$checkout" apply --check "$root_patch" 2>/dev/null; then git -C "$checkout" apply "$root_patch"
+elif git -C "$checkout" apply --check --reverse "$root_patch" 2>/dev/null; then echo "[gpuix] root patch already applied"
+else echo "[gpuix] root patch conflicts with checkout; refusing to build an unpatched renderer" >&2; exit 1; fi
+if git -C "$checkout/zed" apply --check "$zed_patch" 2>/dev/null; then git -C "$checkout/zed" apply "$zed_patch"
+elif git -C "$checkout/zed" apply --check --reverse "$zed_patch" 2>/dev/null; then echo "[gpuix] zed patch already applied"
+else echo "[gpuix] zed patch conflicts with checkout; refusing to build an unpatched renderer" >&2; exit 1; fi
 rm -f "$root_patch" "$zed_patch"
 
 (cd "$checkout" && bun install)
 (cd "$checkout/packages/native" && bun run build:browser)
+# Reject an unloadable addon before packing. CEF readiness needs the packaged
+# browser smoke: the offscreen test renderer intentionally reports no browser.
+(cd "$checkout/packages/native" && bun -e '
+  const {TestGpuixRenderer}=require("./index.js"); const renderer=new TestGpuixRenderer(100,100);
+  try { if (!renderer.supportsNativeTerminal()) throw new Error("GPUix terminal support is required"); }
+  finally { renderer.shutdown(); }
+')
 (cd "$checkout/packages/react" && bun run build)
 
 mkdir -p "$out"
@@ -43,4 +70,4 @@ pack "$checkout/packages/native" "const fs=require('fs');const p=JSON.parse(fs.r
 pack "$checkout/packages/react" "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='$build_version';p.dependencies['@gpuix/native']='$build_version';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 
 (cd "$root" && shasum -a 256 vendor/gpuix/*.tgz > vendor/gpuix/SHA256SUMS && cat vendor/gpuix/SHA256SUMS)
-echo "[gpuix] packed $build_version into $out; run bun install to pick it up"
+echo "[gpuix] packed $build_version into $out; refresh the local tarball lock integrity before a frozen install (see docs/validation/scroll-correctness.md)"

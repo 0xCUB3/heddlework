@@ -29,6 +29,7 @@ struct TimelineItem: Equatable {
     var tokensBefore: Double?
     var source: String?
     var tone: String?
+    var detailRef: TranscriptDetailRef?
 }
 
 struct WorkTrace: Equatable {
@@ -122,19 +123,19 @@ enum TranscriptProjection {
                 userMessageIndex += 1
                 let fork = entryId.flatMap { forkByEntry[$0] } ?? positional
                 revertEntryId = fork?.entryId ?? entryId
-                items.append(TimelineItem(id: "\(base)-user", kind: .user, text: messageText(message), images: messageImages(message), timestamp: message.timestamp, revertEntryId: revertEntryId))
+                items.append(TimelineItem(id: "\(base)-user", kind: .user, text: messageText(message), images: messageImages(message), timestamp: message.timestamp, revertEntryId: revertEntryId, detailRef: message.detailRef))
                 continue
             }
             if message.role == "assistant" {
                 if case .string(let content)? = message.content {
                     if !content.isEmpty {
-                        items.append(TimelineItem(id: "\(base)-assistant", kind: .assistant, text: content, timestamp: message.timestamp, revertEntryId: revertEntryId))
+                        items.append(TimelineItem(id: "\(base)-assistant", kind: .assistant, text: content, timestamp: message.timestamp, revertEntryId: revertEntryId, detailRef: message.detailRef))
                     }
                     continue
                 }
                 for (blockIndex, block) in (message.content?.blocks ?? []).enumerated() {
                     if block.type == "text", let text = block.text, !text.isEmpty {
-                        items.append(TimelineItem(id: "\(base)-text-\(blockIndex)", kind: .assistant, text: text, timestamp: message.timestamp, revertEntryId: revertEntryId))
+                        items.append(TimelineItem(id: "\(base)-text-\(blockIndex)", kind: .assistant, text: text, timestamp: message.timestamp, revertEntryId: revertEntryId, detailRef: message.detailRef))
                     } else if block.type == "thinking", let thinking = block.thinking, !thinking.isEmpty {
                         items.append(TimelineItem(id: "\(base)-thinking-\(blockIndex)", kind: .thinking, text: thinking, timestamp: message.timestamp, revertEntryId: revertEntryId))
                     } else if block.type == "toolCall" {
@@ -165,11 +166,12 @@ enum TranscriptProjection {
                         tool = result
                         tool.args = args
                         existing.tool = tool
+                        existing.detailRef = message.detailRef
                         items[existingIndex] = existing
                     }
                 } else {
                     toolIndexes[id] = items.count
-                    items.append(TimelineItem(id: "tool-\(id)", kind: .tool, timestamp: message.timestamp, revertEntryId: revertEntryId, tool: result))
+                    items.append(TimelineItem(id: "tool-\(id)", kind: .tool, timestamp: message.timestamp, revertEntryId: revertEntryId, tool: result, detailRef: message.detailRef))
                 }
                 continue
             }
@@ -596,6 +598,20 @@ enum TranscriptProjection {
         }
         appendRemaining()
         return merged
+    }
+
+    static func expandCollapsedRows(_ rows: [TranscriptProjectionRow], expandedTraceIds: Set<String>, traceLimits: [String: Int] = [:]) -> [TranscriptProjectionRow] {
+        guard !expandedTraceIds.isEmpty else { return rows }
+        var next: [TranscriptProjectionRow] = []
+        next.reserveCapacity(rows.count)
+        for row in rows {
+            next.append(row)
+            guard row.kind == .traceHeader, let trace = row.trace, expandedTraceIds.contains(trace.id) else { continue }
+            if rows.contains(where: { $0.kind == .traceEntry && $0.traceId == trace.id }) { continue }
+            let extras = projectTranscriptRows([.workTrace(trace)], expandedTraceIds: expandedTraceIds, traceLimits: traceLimits)
+            next.append(contentsOf: extras.dropFirst())
+        }
+        return next
     }
 
     static func reuseRows(_ previous: [TranscriptProjectionRow], next: [TranscriptProjectionRow]) -> [TranscriptProjectionRow] {

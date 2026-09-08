@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import { SESSION_HISTORY_PAGE_MESSAGES } from '../src/pi/session-history.ts'
 import type { PiMessage } from '../src/pi/types.ts'
-import { diffSnapshots, serializeSnapshot, type WorkbenchSnapshot } from '../src/protocol/snapshot.ts'
-import type { ServerMessage } from '../src/protocol/index.ts'
-import { pushSocketSnapshot, revealEarlierMessages, SOCKET_TRANSCRIPT_WINDOW_MESSAGES, withTranscriptWindow, type TranscriptWindow } from '../src/host/server-runtime.ts'
+import { diffSnapshots, findTranscriptDetail, projectWorkbenchSnapshot, serializeSnapshot, type ServerMessage, type WorkbenchSnapshot } from '../src/protocol/index.ts'
+import { lookupSocketTranscriptDetail, pushSocketSnapshot, revealEarlierMessages, SOCKET_TRANSCRIPT_WINDOW_MESSAGES, socketAttachment, withTranscriptWindow, type TranscriptWindow } from '../src/host/server-runtime.ts'
 import { createInitialState, type WorkbenchState } from '../src/workbench/state.ts'
 import type { WorkbenchController } from '../src/workbench/controller.ts'
 
@@ -92,5 +91,55 @@ describe('socket transcript window', () => {
     expect(a.messages[0]?.workbenchEntryId).toBe('a-50')
     expect(b.messages[0]?.workbenchEntryId).toBe('b-5')
     expect(diffSnapshots(a, b).changed.messages).toHaveLength(SOCKET_TRANSCRIPT_WINDOW_MESSAGES)
+  })
+
+  it('projects giant tool results in the socket window and still retrieves them by entry id', () => {
+    const socket = fakeSocket()
+    const giant = 'G'.repeat(160 * 1024)
+    const all = thread(10).map((message, index) => index === 3
+      ? { ...message, role: 'toolResult' as const, toolCallId: 'tool-3', toolName: 'read', content: giant }
+      : message)
+    const next = withTranscriptWindow(socket, projectWorkbenchSnapshot(serializeSnapshot(state(all))))
+    const stub = next.messages.find((message) => message.workbenchEntryId === 'm-3')
+    expect(stub?.detailRef).toMatchObject({ omitted: true, entryId: 'm-3' })
+    expect(String(stub?.content ?? '')).not.toHaveLength(giant.length)
+    const detail = findTranscriptDetail({ messages: all }, 'm-3')
+    expect(detail?.kind === 'message' ? detail.message.content : '').toBe(giant)
+    const fromPreview = lookupSocketTranscriptDetail(state([]), { sessionFile: '/tmp/window.jsonl', messages: all, hasOlder: false }, 'm-3')
+    expect(fromPreview?.kind === 'message' ? fromPreview.message.content : '').toBe(giant)
+  })
+
+  it('does not rebind a preview socket onto the default live session', () => {
+    const selected = '/tmp/history.jsonl'
+    const live = {
+      controller: { getSnapshot: () => ({ session: { sessionFile: '/tmp/live.jsonl' } }) },
+      flows: {},
+    }
+    const runtime = {
+      bundleForKey: (key: string) => key === selected ? undefined : live,
+      attach: () => ({ ...live, sessionKey: '/tmp/live.jsonl', sessionPath: '/tmp/live.jsonl' }),
+    }
+    const socket = { data: { sessionKey: selected } }
+    const attached = socketAttachment(
+      { runtime, controller: live.controller, flows: live.flows } as never,
+      socket as never,
+    )
+    expect(socket.data.sessionKey).toBe(selected)
+    expect(attached.sessionKey).toBe(selected)
+    expect(attached.leased).toBe(false)
+  })
+
+  it('resolves a toolResult by toolCallId for detail paging', () => {
+    const messages: PiMessage[] = [{
+      role: 'toolResult',
+      workbenchEntryId: 'hist-9',
+      toolCallId: 'call-9',
+      toolName: 'bash',
+      content: 'full tool output',
+      timestamp: 3,
+    }]
+    const found = lookupSocketTranscriptDetail(state(messages), undefined, 'call-9')
+    expect(found?.kind).toBe('message')
+    expect(found?.entryId).toBe('hist-9')
   })
 })

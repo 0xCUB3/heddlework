@@ -10,13 +10,17 @@ import {
 } from '../pi/session-tree.ts'
 import type { WorkbenchControllerSurface } from '../workbench/controller-surface.ts'
 import {
-  questionnaireFromTool,
-  questionnaireMatchesDialog,
   type AskUserQuestion,
   type AskUserQuestionnaire,
   type AskUserSubmissionAnswer,
 } from '../workbench/ask-user.ts'
+import {
+  activeQuestionSurface,
+  DONT_KNOW_LABEL,
+  type NativeQuestion,
+} from '../workbench/native-question.ts'
 import type { ExtensionDialog, WorkbenchState } from '../workbench/state.ts'
+import { MathMarkdown } from './math-markdown.tsx'
 import { Button, NativeVirtualList, useNativeVirtualWindow, type NativeElementHandle } from './primitives.tsx'
 import { colors, nativeTheme } from './theme.ts'
 import { filterExtensionOptions, parseExtensionOption, parseExtensionTitle, type ParsedExtensionOption } from './extension-ui.ts'
@@ -38,39 +42,260 @@ interface AnswerDraft {
 
 export function ConversationExtensionOverlay({ state, controller }: { state: WorkbenchState; controller: WorkbenchControllerSurface }) {
   const { mobile } = useResponsiveLayout()
-  const questionnaire = useMemo(() => {
-    const candidates = state.liveTools.flatMap((tool) => {
-      const parsed = questionnaireFromTool(tool)
-      return parsed ? [parsed] : []
-    })
-    return candidates.find((candidate) => (
-      candidate.toolCallId === state.questionnaireSubmitting
-      || candidate.toolCallId === state.questionnaireCollapsed
-      || questionnaireMatchesDialog(candidate, state.dialog)
-    ))
-  }, [state.dialog, state.liveTools, state.questionnaireCollapsed, state.questionnaireSubmitting])
-  if (questionnaire && questionnaire.toolCallId === state.questionnaireCollapsed) return null
-  if (!questionnaire && !state.dialog) return null
+  const surface = useMemo(() => activeQuestionSurface(state), [state.dialog, state.liveTools, state.questionnaireCollapsed, state.questionnaireSubmitting])
+  const collapsed = surface && (
+    (surface.kind === 'tabbed' && surface.questionnaire.toolCallId === state.questionnaireCollapsed)
+    || (surface.kind === 'question' && (surface.question.requestId === state.questionnaireCollapsed || surface.question.toolCallId === state.questionnaireCollapsed))
+  )
+  if (collapsed) return null
+  if (!surface && !state.dialog) return null
+  const fill = surface?.kind === 'tabbed' || surface?.kind === 'question' || surface?.kind === 'unsupported'
   return (
     <div
       testId="conversation-extension-overlay"
       style={{
         position: 'absolute',
-        ...(questionnaire
+        ...(fill
           ? { top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.background }
           : { top: mobile ? 8 : 12, right: mobile ? 8 : 16, bottom: mobile ? 8 : 12, left: mobile ? 8 : 16 }),
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: questionnaire ? 'center' : 'flex-end',
+        justifyContent: fill ? 'center' : 'flex-end',
         pointerEvents: 'none',
       }}
     >
-      {questionnaire
-        ? <QuestionnaireOverlay key={questionnaire.toolCallId} questionnaire={questionnaire} submitting={state.questionnaireSubmitting === questionnaire.toolCallId} controller={controller} />
-        : state.dialog
-          ? <GenericDialogSurface dialog={state.dialog} queued={state.dialogQueue.length} onRespond={(response) => controller.respondToDialog(response)} />
-          : null}
+      {surface?.kind === 'tabbed'
+        ? <QuestionnaireOverlay key={surface.questionnaire.toolCallId} questionnaire={surface.questionnaire} submitting={state.questionnaireSubmitting === surface.questionnaire.toolCallId} controller={controller} />
+        : surface?.kind === 'unsupported'
+          ? <UnsupportedCustomSurface question={surface.question} controller={controller} />
+          : surface?.kind === 'question'
+            ? <NativeQuestionOverlay key={surface.question.requestId} question={surface.question} submitting={state.questionnaireSubmitting === surface.question.requestId || state.questionnaireSubmitting === surface.question.toolCallId} controller={controller} />
+            : state.dialog
+              ? <GenericDialogSurface dialog={state.dialog} queued={state.dialogQueue.length} onRespond={(response) => controller.respondToDialog(response)} />
+              : null}
+    </div>
+  )
+}
+
+function UnsupportedCustomSurface({ question, controller }: { question: NativeQuestion; controller: WorkbenchControllerSurface }) {
+  return (
+    <div testId="native-question-unsupported" style={{ pointerEvents: 'auto', width: '100%', maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 12, padding: 20, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.card }}>
+      <text style={{ color: colors.warning, fontSize: 9, fontWeight: 750 }}>TERMINAL-ONLY EXTENSION UI</text>
+      <text style={{ color: colors.text, fontSize: 14, fontWeight: 650, whiteSpace: 'normal' }}>{question.stem}</text>
+      <text style={{ color: colors.textMuted, fontSize: 12, lineHeight: 18, whiteSpace: 'normal' }}>{question.unsupportedReason ?? question.description ?? 'This extension is drawing a custom terminal component. Heddlework cannot convert arbitrary TUI factories into a native form.'}</text>
+      <text style={{ color: colors.textFaint, fontSize: 10, whiteSpace: 'normal' }}>Answer it in the Pi terminal, or cancel from here. This is not a claim that every extension UI becomes native.</text>
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 8 }}>
+        <Button label="Cancel" compact tone="quiet" onClick={() => controller.cancelAskUserQuestionnaire(question.requestId)} />
+      </div>
+    </div>
+  )
+}
+
+function NativeQuestionOverlay({ question, submitting, controller }: { question: NativeQuestion; submitting: boolean; controller: WorkbenchControllerSurface }) {
+  const { mobile } = useResponsiveLayout()
+  const [focus, setFocus] = useState<'options' | 'note'>('options')
+  const [optionIndex, setOptionIndex] = useState(0)
+  const [draft, setDraft] = useState<AnswerDraft>(() => ({
+    kind: question.multiSelect ? 'multi' : question.kind === 'text' ? 'custom' : 'none',
+    optionIndex: undefined,
+    optionIndices: [],
+    custom: '',
+  }))
+  const [note, setNote] = useState('')
+  const [unknown, setUnknown] = useState(false)
+  const optionCount = question.options.length + (question.allowUnknown ? 1 : 0) + (question.allowCustom ? 1 : 0)
+  const complete = question.kind === 'text'
+    ? draft.custom.trim().length > 0 || !question.required
+    : unknown
+      || draft.kind === 'option'
+      || (draft.kind === 'custom' && draft.custom.trim().length > 0)
+      || (question.multiSelect && draft.optionIndices.length > 0)
+
+  const submit = () => {
+    if (!complete || submitting) return
+    const answers: AskUserSubmissionAnswer[] = unknown
+      ? [{ kind: 'unknown' }]
+      : question.kind === 'text'
+        ? [{ kind: 'text', value: draft.custom }]
+        : draft.kind === 'custom'
+          ? [{ kind: 'custom', value: draft.custom }]
+          : question.multiSelect
+            ? [{ kind: 'multi', optionIndices: draft.optionIndices }]
+            : [{ kind: 'option', optionIndex: draft.optionIndex! }]
+    controller.submitAskUserQuestionnaire(question.requestId, answers, question.allowNote ? note : undefined)
+  }
+
+  const onKeyDown = (event: { key?: string }) => {
+    const key = event.key?.toLowerCase()
+    if (key === 'escape') {
+      if (focus === 'note') {
+        setFocus('options')
+        return
+      }
+      controller.cancelAskUserQuestionnaire(question.requestId)
+      return
+    }
+    if (key === 'tab') {
+      if (!question.allowNote) return
+      setFocus((current) => current === 'options' ? 'note' : 'options')
+      return
+    }
+    if (focus === 'note') {
+      if (key === 'enter') setFocus('options')
+      return
+    }
+    if (key === 'arrowup' || key === 'up') {
+      setOptionIndex((value) => Math.max(0, value - 1))
+      return
+    }
+    if (key === 'arrowdown' || key === 'down') {
+      setOptionIndex((value) => Math.min(Math.max(0, optionCount - 1), value + 1))
+      return
+    }
+    if (key === 'enter') {
+      if (question.kind === 'text') {
+        if (draft.custom.trim() || !question.required) controller.submitAskUserQuestionnaire(question.requestId, [{ kind: 'text', value: draft.custom }], question.allowNote ? note : undefined)
+        return
+      }
+      if (question.allowUnknown && optionIndex === question.options.length) {
+        setUnknown(true)
+        controller.submitAskUserQuestionnaire(question.requestId, [{ kind: 'unknown' }], question.allowNote ? note : undefined)
+        return
+      }
+      if (question.allowCustom && optionIndex === question.options.length + (question.allowUnknown ? 1 : 0)) {
+        setUnknown(false)
+        setDraft((current) => ({ ...current, kind: 'custom' }))
+        return
+      }
+      if (question.multiSelect) {
+        chooseOption(optionIndex)
+        return
+      }
+      setDraft((current) => ({ ...current, kind: 'option', optionIndex, optionIndices: [], custom: '' }))
+      controller.submitAskUserQuestionnaire(question.requestId, [{ kind: 'option', optionIndex }], question.allowNote ? note : undefined)
+    }
+  }
+
+  const chooseOption = (index: number) => {
+    setUnknown(false)
+    setDraft((current) => {
+      if (question.multiSelect) {
+        const present = current.kind === 'multi' ? current.optionIndices : []
+        return {
+          ...current,
+          kind: 'multi',
+          custom: '',
+          optionIndex: undefined,
+          optionIndices: present.includes(index) ? present.filter((value) => value !== index) : [...present, index],
+        }
+      }
+      return { ...current, kind: 'option', optionIndex: index, optionIndices: [], custom: '' }
+    })
+  }
+
+  return (
+    <div
+      testId="native-question-overlay"
+      tabIndex={0}
+      autoFocus
+      onKeyDown={onKeyDown}
+      style={{ pointerEvents: 'auto', width: '100%', height: '100%', maxWidth: 1040, minWidth: 0, display: 'flex', flexDirection: 'column', borderRadius: 9, borderWidth: 0, backgroundColor: colors.background, overflow: 'hidden' }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 62, paddingLeft: mobile ? 14 : 20, paddingRight: mobile ? 8 : 12, borderBottomWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background }}>
+        <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <text style={{ color: colors.warning, fontSize: 9, fontWeight: 750 }}>{question.toolName ? question.toolName.replaceAll('_', ' ').toUpperCase() : 'QUESTION'}</text>
+          <text style={{ color: colors.text, fontSize: 13, fontWeight: 650 }}>The agent needs an answer before it can continue</text>
+        </div>
+        <Button label="Hide" compact tone="quiet" onClick={() => controller.setAskUserQuestionnaireCollapsed(question.requestId, true)} testId="native-question-collapse" />
+      </div>
+
+      <div style={{ minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 12, padding: mobile ? 14 : 20, overflow: 'hidden' }}>
+        <MathMarkdown source={question.stem} theme={questionnaireMarkdownTheme()} testId="native-question-stem" style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => openExternal(String(event.value ?? ''))} />
+        {question.description && (
+          <MathMarkdown source={question.description} theme={questionnaireMarkdownTheme()} testId="native-question-description" style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => openExternal(String(event.value ?? ''))} />
+        )}
+        {question.kind === 'text' ? (
+          <textarea testId="native-question-text" value={draft.custom} placeholder="Write your answer…" minRows={4} maxRows={10} autoFocus theme={nativeTheme} style={{ width: '100%', minWidth: 0, padding: 9, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 12, lineHeight: 18 }} onChange={(event) => setDraft((current) => ({ ...current, custom: String(event.value ?? '') }))} />
+        ) : (
+          <NativeQuestionOptions question={question} draft={draft} unknown={unknown} focusedIndex={focus === 'options' ? optionIndex : -1} onChoose={chooseOption} onUnknown={() => { setUnknown(true); setDraft((current) => ({ ...current, kind: 'none', optionIndex: undefined, optionIndices: [] })) }} onCustom={() => { setUnknown(false); setDraft((current) => ({ ...current, kind: 'custom' })) }} onCustomChange={(value) => setDraft((current) => ({ ...current, custom: value }))} />
+        )}
+        {question.allowNote && (
+          <div testId="native-question-note-field" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <text style={{ color: focus === 'note' ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650 }}>Note (optional):</text>
+            <textarea testId="native-question-note" value={note} placeholder="Add a note…" minRows={2} maxRows={5} theme={nativeTheme} style={{ width: '100%', minWidth: 0, padding: 8, borderRadius: 7, borderWidth: 1, borderColor: focus === 'note' ? colors.primary : colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 11, lineHeight: 17 }} onChange={(event) => setNote(String(event.value ?? ''))} onFocus={() => setFocus('note')} onBlur={() => setFocus('options')} />
+          </div>
+        )}
+        <text style={{ color: colors.textFaint, fontSize: 10 }}>{question.allowNote ? '↑↓ navigate · Enter answer · Tab note · Esc cancel' : '↑↓ navigate · Enter answer · Esc cancel'}</text>
+      </div>
+
+      <div style={{ minHeight: 56, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14, paddingRight: 14, borderTopWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background }}>
+        <Button label="Cancel" compact tone="quiet" disabled={submitting} onClick={() => controller.cancelAskUserQuestionnaire(question.requestId)} testId="native-question-cancel" />
+        <div style={{ flexGrow: 1 }} />
+        <Button label={submitting ? 'Sending…' : 'Submit'} compact tone="primary" disabled={!complete || submitting} onClick={submit} testId="native-question-submit" />
+      </div>
+    </div>
+  )
+}
+
+function NativeQuestionOptions({
+  question,
+  draft,
+  unknown,
+  focusedIndex,
+  onChoose,
+  onUnknown,
+  onCustom,
+  onCustomChange,
+}: {
+  question: NativeQuestion
+  draft: AnswerDraft
+  unknown: boolean
+  focusedIndex: number
+  onChoose(index: number): void
+  onUnknown(): void
+  onCustom(): void
+  onCustomChange(value: string): void
+}) {
+  const optionWindow = useNativeVirtualWindow(question.options.length, `native-question:${question.requestId}:${question.options.length}`)
+  const visibleOptions = question.options.slice(optionWindow.windowStart, optionWindow.windowEnd)
+  return (
+    <div style={{ minHeight: 0, flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <NativeVirtualList testId="native-question-option-list" alignment="top" estimatedItemHeight={62} overdraw={186} itemCount={Math.max(1, question.options.length)} windowStart={optionWindow.windowStart} onVisibleRange={optionWindow.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
+        {visibleOptions.map((option, visibleIndex) => {
+          const optionIndex = optionWindow.windowStart + visibleIndex
+          const selected = draft.kind === 'option'
+            ? draft.optionIndex === optionIndex
+            : draft.kind === 'multi' && draft.optionIndices.includes(optionIndex)
+          return (
+            <QuestionOption
+              key={`${optionIndex}-${option.value}`}
+              index={optionIndex}
+              label={option.label}
+              description={option.description ?? ''}
+              selected={selected}
+              focused={focusedIndex === optionIndex}
+              multi={question.multiSelect}
+              math
+              testId={`native-question-option-${optionIndex}`}
+              onClick={() => onChoose(optionIndex)}
+            />
+          )
+        })}
+      </NativeVirtualList>
+      {question.allowUnknown && (
+        <div testId="native-question-unknown" tabIndex={0} style={{ minHeight: 44, display: 'flex', alignItems: 'center', paddingLeft: 10, paddingRight: 10, borderRadius: 8, backgroundColor: unknown || focusedIndex === question.options.length ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onUnknown} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onUnknown() }}>
+          <text style={{ color: unknown ? colors.warning : colors.textMuted, fontSize: 12, fontWeight: 650 }}>{DONT_KNOW_LABEL}</text>
+        </div>
+      )}
+      {question.allowCustom && (
+        <div testId="native-question-custom" tabIndex={0} style={{ display: 'flex', flexDirection: 'column', gap: 7, minHeight: 48, paddingTop: 12, paddingRight: 10, paddingBottom: 12, paddingLeft: 10, borderRadius: 8, backgroundColor: draft.kind === 'custom' ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onCustom}>
+          <text style={{ color: draft.kind === 'custom' ? colors.text : colors.textMuted, fontSize: 11, fontWeight: 650 }}>Type something else</text>
+          {draft.kind === 'custom' && (
+            <textarea testId="native-question-custom-input" value={draft.custom} placeholder="Enter your answer…" minRows={2} maxRows={5} autoFocus theme={nativeTheme} style={{ width: '100%', minWidth: 0, padding: 8, borderRadius: 7, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.input, color: colors.text, fontSize: 11, lineHeight: 17 }} onChange={(event) => onCustomChange(String(event.value ?? ''))} />
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -172,7 +397,7 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
       <div style={{ width: mobile ? '100%' : hasPreviews ? '42%' : '100%', height: mobile && hasPreviews ? '58%' : 'auto', minWidth: mobile ? 0 : hasPreviews ? 280 : 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 0, paddingTop: mobile ? 14 : 18, paddingRight: mobile ? 14 : 18, paddingBottom: mobile ? 14 : 18, paddingLeft: mobile ? 14 : 18, borderRightWidth: hasPreviews && !mobile ? 1 : 0, borderBottomWidth: hasPreviews && mobile ? 1 : 0, borderColor: colors.borderStrong, backgroundColor: colors.background, overflow: 'hidden' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5, paddingBottom: 15 }}>
           <text style={{ color: colors.textFaint, fontSize: 9, fontWeight: 700 }}>{`QUESTION ${index + 1} · ${question.header.toUpperCase()}`}</text>
-          <text testId="ask-user-question" style={{ color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: 650, whiteSpace: 'normal' }}>{question.question}</text>
+          <MathMarkdown source={question.question} theme={questionnaireMarkdownTheme()} testId="ask-user-question" style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => openExternal(String(event.value ?? ''))} />
           {question.multiSelect && <text style={{ color: colors.textMuted, fontSize: 10 }}>Choose any number of options, or enter a custom answer.</text>}
         </div>
         <NativeVirtualList testId="ask-user-option-list" alignment="top" estimatedItemHeight={62} overdraw={186} itemCount={Math.max(1, question.options.length)} windowStart={optionWindow.windowStart} onVisibleRange={optionWindow.onVisibleRange} style={{ width: '100%', flexGrow: 1, minHeight: 0 }}>
@@ -214,13 +439,19 @@ function QuestionPage({ question, index, draft, onChange }: { question: AskUserQ
   )
 }
 
-function QuestionOption({ index, label, description, selected, multi, onClick }: { index: number; label: string; description: string; selected: boolean; multi: boolean; onClick(): void }) {
+function QuestionOption({ index, label, description, selected, multi, onClick, focused = false, math = false, testId }: { index: number; label: string; description: string; selected: boolean; multi: boolean; onClick(): void; focused?: boolean; math?: boolean; testId?: string }) {
   return (
-    <div testId={`ask-user-option-${index}`} tabIndex={0} style={{ minHeight: 62, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingTop: 12, paddingRight: 10, paddingBottom: 12, paddingLeft: 10, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: selected ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
+    <div testId={testId ?? `ask-user-option-${index}`} tabIndex={0} style={{ minHeight: 62, flexShrink: 0, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingTop: 12, paddingRight: 10, paddingBottom: 12, paddingLeft: 10, borderRadius: 8, borderWidth: 0, borderBottomWidth: 0, backgroundColor: selected || focused ? colors.raised : colors.transparent, cursor: 'pointer', hover: { backgroundColor: colors.sidebarHover } }} onClick={onClick} onKeyDown={(event) => { if (event.key === 'enter' || event.key === 'space') onClick() }}>
       <div style={{ width: 20, height: 18, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}><text style={{ color: selected ? colors.info : colors.textFaint, fontSize: 9, fontWeight: selected ? 700 : 500 }}>{selected ? '✓' : multi ? '□' : String(index + 1).padStart(2, '0')}</text></div>
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <text style={{ color: selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: 650, whiteSpace: 'normal' }}>{label}</text>
-        <text style={{ color: colors.textFaint, fontSize: 10, lineHeight: 15, whiteSpace: 'normal' }}>{description}</text>
+        {math
+          ? <MathMarkdown source={label} theme={questionnaireMarkdownTheme()} testId={`native-question-option-label-${index}`} style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => openExternal(String(event.value ?? ''))} />
+          : <text style={{ color: selected ? colors.text : colors.textMuted, fontSize: 12, fontWeight: 650, whiteSpace: 'normal' }}>{label}</text>}
+        {description
+          ? math
+            ? <MathMarkdown source={description} theme={questionnaireMarkdownTheme()} testId={`native-question-option-description-${index}`} style={{ width: '100%', minWidth: 0 }} onLinkClick={(event) => openExternal(String(event.value ?? ''))} />
+            : <text style={{ color: colors.textFaint, fontSize: 10, lineHeight: 15, whiteSpace: 'normal' }}>{description}</text>
+          : null}
       </div>
     </div>
   )
@@ -322,6 +553,12 @@ function GenericDialog({ dialog, interactive, queued, onRespond }: { dialog: Ext
           <Button label="Confirm" tone="primary" onClick={() => onRespond({ confirmed: true })} />
           <Button label="Decline" onClick={() => onRespond({ confirmed: false })} />
           <Button label={cancelLabel} tone="quiet" onClick={() => onRespond({ cancelled: true })} />
+        </div>
+      )}
+      {dialog.method === 'unsupported' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <text style={{ color: colors.textMuted, fontSize: 11, lineHeight: 17, whiteSpace: 'normal' }}>This extension is drawing a custom terminal component. Heddlework cannot convert arbitrary TUI factories into a native form.</text>
+          <Button label={cancelLabel} tone="quiet" compact onClick={() => onRespond({ cancelled: true })} />
         </div>
       )}
       {(dialog.method === 'input' || dialog.method === 'editor') && (

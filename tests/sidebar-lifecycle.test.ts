@@ -43,6 +43,13 @@ describe('sidebar session lifecycle', () => {
     ])
   })
 
+  it('breaks recency ties by path so equal activity does not shuffle', () => {
+    const zebra = { ...session(now), id: 'zebra', path: '/tmp/zebra.jsonl', title: 'Zebra' }
+    const alpha = { ...session(now), id: 'alpha', path: '/tmp/alpha.jsonl', title: 'Alpha' }
+    expect(sortActiveSessions([zebra, alpha], {}).map((entry) => entry.id)).toEqual(['alpha', 'zebra'])
+    expect(sortActiveSessions([alpha, zebra], {}).map((entry) => entry.id)).toEqual(['alpha', 'zebra'])
+  })
+
   it('clears pinnedAt when a thread is settled and keeps it when snoozed', async () => {
     const controller = new WorkbenchController(new DemoTransport(), '/tmp/project', testControllerDependencies())
     try {

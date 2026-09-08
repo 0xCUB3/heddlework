@@ -6,8 +6,10 @@ import type { SleepPreventionService } from '../power/service.ts'
 import {
   diffSnapshots,
   encodeFrames,
+  isLiveOnlyPatch,
   isPatchEmpty,
   isWorkbenchCommand,
+  LIVE_QUEUE_BUDGET_BYTES,
   MAX_ASSEMBLED_BYTES,
   parseClientMessage,
   PROTOCOL_VERSION,
@@ -16,6 +18,7 @@ import {
   type RemoteTerminalFrame,
   type RemoteTerminalSnapshot,
   type ServerMessage,
+  type SnapshotPatch,
   type WorkbenchSnapshot,
 } from '../protocol/index.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
@@ -42,6 +45,7 @@ export interface WorkspaceHostOptions {
   extraHostUrls?: (() => readonly string[]) | undefined
   runtime?: SessionRuntime | undefined
   loadSessionHistory?: RuntimeCommandHostOptions['loadSessionHistory']
+  loadSessionEntry?: RuntimeCommandHostOptions['loadSessionEntry']
   // Who this machine is, sent in every welcome and on /health so clients can label and distinguish hosts.
   identity?: HostIdentity | undefined
 }
@@ -59,6 +63,9 @@ export interface WorkspaceHost {
 interface SocketData {
   lastSnapshot: WorkbenchSnapshot | undefined
   scheduled: boolean
+  queuedBytes: number
+  liveSeq: number
+  needsLiveResync: boolean
   presence?: ClientPresence
   clientId: string
   sessionKey: string
@@ -71,6 +78,19 @@ interface SocketData {
 export const DEFAULT_HOST_PORT = 4817
 export const DEFAULT_HOST_BIND = '127.0.0.1'
 const TERMINAL_FRAME_MS = 33
+
+interface SessionCatalogSlice {
+  sessions: WorkbenchSnapshot['sessions']
+  sessionsLoading: boolean
+  sessionsHasMore: boolean
+}
+
+function sameSessionCatalog(left: SessionCatalogSlice, right: SessionCatalogSlice): boolean {
+  if (left.sessionsLoading !== right.sessionsLoading || left.sessionsHasMore !== right.sessionsHasMore) return false
+  if (left.sessions === right.sessions) return true
+  if (left.sessions.length !== right.sessions.length) return false
+  return left.sessions.every((session, index) => session === right.sessions[index])
+}
 
 export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHost {
   const hostname = options.hostname ?? DEFAULT_HOST_BIND
@@ -120,7 +140,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
       const url = new URL(request.url)
       if (url.pathname === '/ws') {
         if (!authorized(request, url, options.token)) return new Response('Unauthorized', { status: 401 })
-        const upgraded = bunServer.upgrade(request, { data: { lastSnapshot: undefined, scheduled: false, clientId: crypto.randomUUID(), sessionKey: options.runtime?.defaultSessionKey ?? 'default' } })
+        const upgraded = bunServer.upgrade(request, { data: { lastSnapshot: undefined, scheduled: false, queuedBytes: 0, liveSeq: 0, needsLiveResync: false, clientId: crypto.randomUUID(), sessionKey: options.runtime?.defaultSessionKey ?? 'default' } })
         return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 426 })
       }
       if (url.pathname === '/health') {
@@ -132,6 +152,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
     websocket: {
       open(socket) {
         sockets.add(socket)
+        options.runtime?.retainSocket?.(socket.data.sessionKey)
         const attachment = socketAttachment({
           runtime: options.runtime,
           controller: options.controller,
@@ -157,6 +178,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
         sendCurrentTerminal(socket)
       },
       close(socket) {
+        options.runtime?.releaseSocket?.(socket.data.sessionKey)
         const attachment = socketAttachment({
           runtime: options.runtime,
           controller: options.controller,
@@ -194,6 +216,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
           sleepPrevention: options.sleepPrevention,
           terminals: options.terminals,
           loadSessionHistory: options.loadSessionHistory,
+          loadSessionEntry: options.loadSessionEntry,
         }
         try {
           const commandValue = await executeSocketCommand(hostCommand, socket, message, (target, payload) => send(target as Bun.ServerWebSocket<SocketData>, payload))
@@ -215,26 +238,99 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
     },
   })
 
+  const publishScheduled = new Set<string>()
+  let publishedCatalog: SessionCatalogSlice | undefined
+
+  const deliverGroupedPatches = (groups: Map<string, { json: string; members: Array<{ socket: Bun.ServerWebSocket<SocketData>; next: WorkbenchSnapshot; seq: number }> }>): void => {
+    for (const group of groups.values()) {
+      const frames = encodePayloadFrames(group.json)
+      if (!frames) {
+        for (const member of group.members) {
+          member.socket.data.liveSeq = member.seq
+          member.socket.data.lastSnapshot = member.next
+          send(member.socket, { kind: 'error', message: 'Workspace snapshot is too large to send (' + utf8ByteLength(group.json) + ' bytes). Open a smaller session.' })
+        }
+        continue
+      }
+      for (const member of group.members) {
+        member.socket.data.needsLiveResync = false
+        member.socket.data.liveSeq = member.seq
+        member.socket.data.lastSnapshot = member.next
+        sendFrames(member.socket, frames, utf8ByteLength(group.json))
+      }
+    }
+  }
+
+  const queueSocketPatch = (
+    groups: Map<string, { json: string; members: Array<{ socket: Bun.ServerWebSocket<SocketData>; next: WorkbenchSnapshot; seq: number }> }>,
+    socket: Bun.ServerWebSocket<SocketData>,
+    next: WorkbenchSnapshot,
+    patch: SnapshotPatch,
+  ): void => {
+    const seq = socket.data.liveSeq + 1
+    const sequenced: SnapshotPatch = { ...patch, seq, contentRevision: seq }
+    const json = JSON.stringify({ kind: 'patch', patch: sequenced } satisfies ServerMessage)
+    const group = groups.get(json) ?? { json, members: [] }
+    group.members.push({ socket, next, seq })
+    groups.set(json, group)
+  }
+
+  const publishCatalog = (state: { sessions: WorkbenchSnapshot['sessions']; sessionsLoading: boolean; sessionsHasMore: boolean }): void => {
+    const catalog = { sessions: state.sessions, sessionsLoading: state.sessionsLoading, sessionsHasMore: state.sessionsHasMore }
+    if (publishedCatalog && sameSessionCatalog(publishedCatalog, catalog)) return
+    publishedCatalog = catalog
+    const groups = new Map<string, { json: string; members: Array<{ socket: Bun.ServerWebSocket<SocketData>; next: WorkbenchSnapshot; seq: number }> }>()
+    for (const socket of sockets) {
+      const current = socket.data.lastSnapshot
+      if (!current || !sockets.has(socket)) continue
+      if (sameSessionCatalog(current, catalog)) continue
+      const next = { ...current, ...catalog }
+      const patch = diffSnapshots(current, next)
+      if (isPatchEmpty(patch)) {
+        socket.data.lastSnapshot = next
+        continue
+      }
+      queueSocketPatch(groups, socket, next, patch)
+    }
+    deliverGroupedPatches(groups)
+  }
+
   const publishSession = (sessionKey: string): void => {
+    if (publishScheduled.has(sessionKey)) return
+    publishScheduled.add(sessionKey)
+    queueMicrotask(() => {
+      publishScheduled.delete(sessionKey)
+      flushSession(sessionKey)
+    })
+  }
+
+  const flushSession = (sessionKey: string): void => {
     const bundle = options.runtime?.bundleForKey(sessionKey)
     const controller = bundle?.controller ?? options.controller
+    const state = controller.getSnapshot()
+    publishCatalog(state)
+    const groups = new Map<string, { json: string; members: Array<{ socket: Bun.ServerWebSocket<SocketData>; next: WorkbenchSnapshot; seq: number }> }>()
     for (const socket of sockets) {
       if (socket.data.sessionKey !== sessionKey) continue
       // A bundle that is still booting for this socket publishes an empty Ready snapshot before its
       // transcript loads. The switch preview already owns the socket; resyncSocket lands the real bundle.
       if (socket.data.pendingNavigation && socket.data.pendingNavigation.error === undefined) continue
-      if (socket.data.scheduled) continue
-      socket.data.scheduled = true
-      queueMicrotask(() => {
-        socket.data.scheduled = false
-        if (!sockets.has(socket)) return
-        if (socket.data.sessionKey !== sessionKey) return
-        const next = socketSnapshot(socket, controller.getSnapshot())
-        const patch = diffSnapshots(socket.data.lastSnapshot, next)
+      if (!sockets.has(socket)) continue
+      const next = socketSnapshot(socket, state)
+      const resyncLive = socket.data.needsLiveResync
+      const patch = diffSnapshots(socket.data.lastSnapshot, next, resyncLive ? { resyncLive: true } : {})
+      if (isPatchEmpty(patch)) {
         socket.data.lastSnapshot = next
-        if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
-      })
+        continue
+      }
+      const liveOnly = isLiveOnlyPatch(patch)
+      if (liveOnly && socket.data.queuedBytes > LIVE_QUEUE_BUDGET_BYTES) {
+        socket.data.needsLiveResync = true
+        continue
+      }
+      queueSocketPatch(groups, socket, next, patch)
     }
+    deliverGroupedPatches(groups)
   }
 
   const unsubscribeBrowser = options.browserIntegrations?.subscribe(() => {
@@ -294,7 +390,10 @@ export function createWorkspaceHost(options: WorkspaceHostOptions): WorkspaceHos
 
   const unsubscribeSessionKeys = options.runtime?.subscribeSessionKeys((fromKey, toKey) => {
     for (const socket of sockets) {
-      if (socket.data.sessionKey === fromKey) socket.data.sessionKey = toKey
+      if (socket.data.sessionKey !== fromKey) continue
+      socket.data.sessionKey = toKey
+      options.runtime?.releaseSocket?.(fromKey)
+      options.runtime?.retainSocket?.(toKey)
     }
   })
 
@@ -432,19 +531,38 @@ function authorized(request: Request, url: URL, token: string): boolean {
   return timingSafeEqualToken(token, url.searchParams.get('token')) || timingSafeEqualToken(token, bearer)
 }
 
+function encodePayloadFrames(json: string): string[] | undefined {
+  const bytes = utf8ByteLength(json)
+  if (bytes > MAX_ASSEMBLED_BYTES) return undefined
+  return encodeFrames(json)
+}
+
+function sendFrames(socket: Bun.ServerWebSocket<SocketData>, frames: readonly string[], bytes: number): void {
+  try {
+    socket.data.queuedBytes += bytes
+    for (const frame of frames) socket.send(frame)
+    setTimeout(() => {
+      socket.data.queuedBytes = Math.max(0, socket.data.queuedBytes - bytes)
+    }, 16)
+  } catch {
+    // A socket closing mid-send is dropped by the close handler.
+  }
+}
+
 function send(socket: Bun.ServerWebSocket<SocketData>, message: ServerMessage): void {
   try {
     const json = JSON.stringify(message)
     const bytes = utf8ByteLength(json)
     if (bytes > MAX_ASSEMBLED_BYTES) {
       if (message.kind === 'error') return
-      socket.send(JSON.stringify({
+      const error = JSON.stringify({
         kind: 'error',
-        message: `Workspace snapshot is too large to send (${bytes} bytes). Open a smaller session.`,
-      } satisfies ServerMessage))
+        message: 'Workspace snapshot is too large to send (' + bytes + ' bytes). Open a smaller session.',
+      } satisfies ServerMessage)
+      sendFrames(socket, [error], utf8ByteLength(error))
       return
     }
-    for (const frame of encodeFrames(json)) socket.send(frame)
+    sendFrames(socket, encodeFrames(json), bytes)
   } catch {
     // A socket closing mid-send is dropped by the close handler.
   }

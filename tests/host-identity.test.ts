@@ -40,7 +40,7 @@ describe('host identity persistence', () => {
     const second = loadOrCreateHostIdentity({ path, os: 'darwin', arch: 'arm64', probe: { name: 'Bench renamed', model: 'Mac Studio' }, version: 'test' })
     expect(second.id).toBe(first.id)
     expect(first.machine).toBe('mac-mini')
-    expect(second).toMatchObject({ name: 'Bench renamed', machine: 'mac-studio', os: 'darwin', arch: 'arm64', version: 'test', protocol: 1 })
+    expect(second).toMatchObject({ name: 'Bench renamed', machine: 'mac-studio', os: 'darwin', arch: 'arm64', version: 'test', protocol: 2 })
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ id: first.id })
   })
 

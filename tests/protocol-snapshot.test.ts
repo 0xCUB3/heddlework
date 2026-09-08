@@ -50,6 +50,17 @@ describe('workbench snapshot protocol', () => {
     expect(diffSnapshots(withTail, replaced).changed.messages).toEqual(replaced.messages)
   })
 
+  it('round-trips live append ops without sending the whole liveAssistant', () => {
+    const base = serializeSnapshot(createInitialState('/tmp/snap'))
+    const first = { ...base, liveAssistant: { id: 'live', blocks: [{ index: 0, kind: 'text' as const, text: 'Hel' }] } }
+    const second = { ...first, liveAssistant: { id: 'live', blocks: [{ index: 0, kind: 'text' as const, text: 'Hello' }] } }
+    const patch = diffSnapshots(first, second)
+    const wire = JSON.parse(JSON.stringify(patch))
+    expect(wire.changed.liveAssistant).toBeUndefined()
+    expect(wire.liveOps[0]).toEqual({ op: 'append', target: 'assistant', id: 'live', blockIndex: 0, text: 'lo' })
+    expect(applySnapshotPatch(first, wire).liveAssistant?.blocks[0]?.text).toBe('Hello')
+  })
+
   it('clears optional state after a JSON wire roundtrip', () => {
     const base = { ...serializeSnapshot(createInitialState('/tmp/snap')), dialog: { id: 'dialog-1', method: 'confirm' as const, title: 'Continue?', createdAt: 1 } }
     const patch = diffSnapshots(base, { ...base, dialog: undefined })

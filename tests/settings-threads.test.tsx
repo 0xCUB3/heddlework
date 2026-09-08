@@ -7,6 +7,7 @@ import { createInitialState } from '../src/workbench/state.ts'
 import type { ThreadTitleSettings } from '../src/workbench/thread-titles.ts'
 import { SettingsView } from '../src/ui/settings-view.tsx'
 import { DEFAULT_INTERFACE_FONTS } from '../src/ui/theme.ts'
+import { ResponsiveLayoutProvider, resolveResponsiveLayout } from '../src/ui/responsive.tsx'
 import { DEFAULT_TERMINAL_APPEARANCE } from '../src/terminal/appearance.ts'
 import type { TerminalSessionService } from '../src/terminal/service.ts'
 import { WorkbenchApp } from '../src/ui/app.tsx'
@@ -67,7 +68,7 @@ describeNative('thread title settings', () => {
       const viewport = await automation.getByTestId('settings-scroll').bounds()
       const scroll = root.renderer.findByTestId('settings-scroll-native')!
       expect(scroll.type).toBe('virtual-list')
-      const before = await automation.getByTestId('settings-alpha').bounds()
+      expect(root.renderer.getPaintedText()).not.toContain('Alpha')
       const point = { x: viewport.x + viewport.width / 2, y: viewport.y + 40 }
       const started = performance.now()
       for (let index = 0; index < 40; index++) {
@@ -76,9 +77,38 @@ describeNative('thread title settings', () => {
       root.renderer.flush()
       const elapsed = performance.now() - started
       const after = await automation.getByTestId('settings-alpha').bounds()
-      expect(after.y).toBeLessThan(before.y - 100)
       expect(root.renderer.getScrollOffset(scroll.id)?.[1] ?? 0).toBeLessThan(-100)
+      expect(after.y + after.height).toBeLessThanOrEqual(viewport.y + viewport.height + 1)
       expect(elapsed).toBeLessThan(process.env.CI ? 800 : 400)
+    } finally {
+      await automation.close()
+      root.unmount()
+    }
+  })
+
+  it('keeps narrow Settings rows inside the responsive content gutter', async () => {
+    const root = createTestRoot({ width: 390, height: 760 })
+    root.render(
+      <ResponsiveLayoutProvider layout={resolveResponsiveLayout(390)}>
+        <SettingsView
+          state={createInitialState('/tmp/settings-mobile-gutter')}
+          controller={{ reconnect() {}, setThreadTitleSettings() {} } as unknown as WorkbenchControllerSurface}
+          theme={{ mode: 'dark', resolved: 'dark', fonts: DEFAULT_INTERFACE_FONTS }}
+          onThemeModeChange={() => undefined}
+          onClose={() => undefined}
+        />
+      </ResponsiveLayoutProvider>,
+    )
+    const automation = await connectTest(root.renderer)
+    try {
+      root.renderer.flush()
+      const viewport = await automation.getByTestId('settings-scroll').bounds()
+      const row = await automation.getByTestId('settings-global-row').bounds()
+      const content = await automation.getByTestId('settings-global').bounds()
+      expect(row.x).toBeGreaterThanOrEqual(viewport.x)
+      expect(content.x).toBeGreaterThan(viewport.x)
+      expect(viewport.x + viewport.width - content.x - content.width).toBeGreaterThan(0)
+      expect(Math.abs((content.x - viewport.x) - (viewport.x + viewport.width - content.x - content.width))).toBeLessThanOrEqual(1)
     } finally {
       await automation.close()
       root.unmount()

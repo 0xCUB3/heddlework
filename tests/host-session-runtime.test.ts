@@ -20,7 +20,7 @@ class TestClient {
     this.socket.addEventListener('message', (event) => {
       const assembled = this.#frames.push(String(event.data))
       if (assembled === undefined) return
-      const message = JSON.parse(assembled) as ServerMessage
+      const message = (typeof assembled === 'string' ? JSON.parse(assembled) : assembled) as ServerMessage
       this.messages.push(message)
       for (const waiter of [...this.#waiters]) {
         if (waiter.predicate(message)) {
@@ -164,23 +164,8 @@ describe('session runtime routing', () => {
       expect(preview.kind === 'patch' && preview.patch.changed.connection).toBe('connecting')
       const transcript = await client.next((message) => message.kind === 'patch' && Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.length > 0)
       expect(transcript.kind).toBe('patch')
-      // Once the bundle lands the socket is fully connected to beta, not stuck on the preview.
-      const connected = await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connected')
-      // The booting bundle's empty Ready snapshot must never reach the socket between the preview and the live bundle.
-      const between = client.messages.slice(client.messages.indexOf(preview) + 1, client.messages.indexOf(connected))
-      for (const message of between) {
-        if (message.kind !== 'patch') continue
-        expect(Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.length === 0).toBe(false)
-        expect(message.patch.changed.activity).not.toBe('Ready')
-        expect(message.patch.changed.connectionMessage).not.toBe('Starting Pi…')
-      }
-      // The live bundle's first patch keeps the disk transcript instead of emptying it while its own load finishes.
-      expect(connected.kind === 'patch' && Array.isArray(connected.patch.changed.messages) && connected.patch.changed.messages.length === 0).toBe(false)
-      await Bun.sleep(200)
-      for (const message of client.messages.slice(client.messages.indexOf(connected) + 1)) {
-        if (message.kind !== 'patch') continue
-        expect(Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.length === 0).toBe(false)
-      }
+      expect(runtime.hasExecutionLease(files.beta.path)).toBe(false)
+      expect(runtime.executionLeaseCount()).toBe(1)
     } finally {
       await client.close().catch(() => undefined)
       await host.close()
@@ -216,21 +201,16 @@ describe('session runtime routing', () => {
     }
   }, 20_000)
 
-  it('does not route commands to the old thread while a new bundle is opening', async () => {
+  it('does not route browse edits to the old thread, and submit starts the selected lease', async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-pending-route-'))
     const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-pending-route-rt-'))
     const files = writeLongSessionFiles(workspacePath)
     const baseFactory = createRuntimeSessionFactory(runtimeDir, true)
     const initial = await baseFactory({ workspacePath, id: 'default', sessionPath: files.alpha.path })
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
     let beta: Awaited<ReturnType<typeof baseFactory>> | undefined
     const createSession: ReturnType<typeof createRuntimeSessionFactory> = async (input) => {
       const created = await baseFactory(input)
-      if (input.sessionPath === files.beta.path) {
-        beta = created
-        await gate
-      }
+      if (input.sessionPath === files.beta.path) beta = created
       return created
     }
     const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
@@ -241,17 +221,18 @@ describe('session runtime routing', () => {
       await client.open()
       await client.next((message) => message.kind === 'welcome')
       client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
-      await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
+      await client.next((message) => message.kind === 'result' && message.id === 1)
+      expect(runtime.hasExecutionLease(files.beta.path)).toBe(false)
       client.send({ kind: 'command', id: 2, command: { type: 'setEditorText', text: 'beta-during-open' } })
-      await Bun.sleep(20)
-      expect(initial.controller.getSnapshot().editorText).not.toBe('beta-during-open')
-      expect(client.messages.some((message) => message.kind === 'result' && message.id === 2)).toBe(false)
-      release()
       await client.next((message) => message.kind === 'result' && message.id === 2)
-      expect(beta?.controller.getSnapshot().editorText).toBe('beta-during-open')
+      expect(initial.controller.getSnapshot().editorText).not.toBe('beta-during-open')
+      expect(runtime.hasExecutionLease(files.beta.path)).toBe(false)
+      client.send({ kind: 'command', id: 3, command: { type: 'submit', text: 'act on beta' } })
+      await client.next((message) => message.kind === 'result' && message.id === 3)
+      expect(runtime.hasExecutionLease(files.beta.path)).toBe(true)
+      expect(beta).toBeDefined()
       expect(initial.controller.getSnapshot().editorText).not.toBe('beta-during-open')
     } finally {
-      release()
       await client.close().catch(() => undefined)
       await host.close()
       await runtime.dispose()
@@ -262,19 +243,8 @@ describe('session runtime routing', () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-latest-route-'))
     const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-latest-route-rt-'))
     const files = writeLongSessionFiles(workspacePath)
-    const baseFactory = createRuntimeSessionFactory(runtimeDir, true)
-    const initial = await baseFactory({ workspacePath, id: 'default', sessionPath: files.alpha.path })
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
-    let beta: Awaited<ReturnType<typeof baseFactory>> | undefined
-    const createSession: ReturnType<typeof createRuntimeSessionFactory> = async (input) => {
-      const created = await baseFactory(input)
-      if (input.sessionPath === files.beta.path) {
-        beta = created
-        await gate
-      }
-      return created
-    }
+    const createSession = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await createSession({ workspacePath, id: 'default', sessionPath: files.alpha.path })
     const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
     await runtime.startInitial()
     const host = createWorkspaceHost({ controller: initial.controller, flows: initial.flows, runtime, workspacePath, port: 0, token: generateHostToken() })
@@ -283,18 +253,17 @@ describe('session runtime routing', () => {
       await client.open()
       await client.next((message) => message.kind === 'welcome')
       client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
-      await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
+      await client.next((message) => message.kind === 'result' && message.id === 1)
       client.send({ kind: 'command', id: 2, command: { type: 'switchSession', path: files.alpha.path } })
       await client.next((message) => message.kind === 'result' && message.id === 2)
-      release()
-      await client.next((message) => message.kind === 'result' && message.id === 1)
-      client.send({ kind: 'command', id: 3, command: { type: 'setEditorText', text: 'latest-alpha' } })
+      expect(runtime.executionLeaseCount()).toBe(1)
+      expect(runtime.hasExecutionLease(files.beta.path)).toBe(false)
+      client.send({ kind: 'command', id: 3, command: { type: 'submit', text: 'latest-alpha' } })
       const setResult = await client.next((message) => message.kind === 'result' && message.id === 3)
       expect(setResult).toMatchObject({ kind: 'result', ok: true })
-      expect(runtime.attach(files.alpha.path).controller.getSnapshot().editorText).toBe('latest-alpha')
-      expect(beta?.controller.getSnapshot().editorText).not.toBe('latest-alpha')
+      expect(runtime.hasExecutionLease(files.alpha.path)).toBe(true)
+      expect(runtime.hasExecutionLease(files.beta.path)).toBe(false)
     } finally {
-      release()
       await client.close().catch(() => undefined)
       await host.close()
       await runtime.dispose()
@@ -326,6 +295,7 @@ describe('session runtime routing', () => {
       await client.next((message) => message.kind === 'welcome')
       client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
       await client.next((message) => message.kind === 'result' && message.id === 1)
+      client.send({ kind: 'command', id: 2, command: { type: 'submit', text: 'start beta' } })
       const connected = await client.next((message) => message.kind === 'patch' && message.patch.changed.connection === 'connected')
       const connectedIndex = client.messages.indexOf(connected)
       releaseHistory()
@@ -362,7 +332,7 @@ describe('session runtime routing', () => {
       await client.next((message) => message.kind === 'welcome')
       client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
       await client.next((message) => message.kind === 'patch' && message.patch.changed.session?.sessionFile === files.beta.path)
-      client.send({ kind: 'command', id: 2, command: { type: 'setEditorText', text: 'must-not-land' } })
+      client.send({ kind: 'command', id: 2, command: { type: 'submit', text: 'must-not-land' } })
       client.send({ kind: 'command', id: 3, command: { type: 'switchSession', path: files.alpha.path } })
       await client.next((message) => message.kind === 'result' && message.id === 3)
       release()
@@ -396,12 +366,74 @@ describe('session runtime routing', () => {
       await client.open()
       await client.next((message) => message.kind === 'welcome')
       client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
-      client.send({ kind: 'command', id: 2, command: { type: 'setEditorText', text: 'must-not-rollback' } })
-      await client.next((message) => message.kind === 'result' && message.id === 1 && !message.ok)
-      const rejected = await client.next((message) => message.kind === 'result' && message.id === 2)
+      await client.next((message) => message.kind === 'result' && message.id === 1)
+      client.send({ kind: 'command', id: 2, command: { type: 'submit', text: 'must-not-rollback' } })
+      const rejected = await client.next((message) => message.kind === 'result' && message.id === 2 && !message.ok)
       expect(rejected).toMatchObject({ kind: 'result', ok: false })
       expect(initial.controller.getSnapshot().editorText).not.toBe('must-not-rollback')
+      expect(runtime.hasExecutionLease(files.beta.path)).toBe(false)
     } finally {
+      await client.close().catch(() => undefined)
+      await host.close()
+      await runtime.dispose()
+    }
+  }, 20_000)
+
+  it('drops a stale preview history page when loadEarlier is superseded by a session switch', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'heddlework-session-stale-earlier-'))
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'heddlework-session-stale-earlier-rt-'))
+    const files = writeLongSessionFiles(workspacePath)
+    const createSession = createRuntimeSessionFactory(runtimeDir, true)
+    const initial = await createSession({ workspacePath, id: 'default', sessionPath: files.alpha.path })
+    const runtime = new SessionRuntime({ initial, createSession, path: join(runtimeDir, 'registry.json') })
+    await runtime.startInitial()
+    let calls = 0
+    let releaseEarlier!: () => void
+    const earlierGate = new Promise<void>((resolve) => { releaseEarlier = resolve })
+    let markEarlierStarted!: (sessionPath: string) => void
+    const earlierStarted = new Promise<string>((resolve) => { markEarlierStarted = resolve })
+    const host = createWorkspaceHost({
+      controller: initial.controller,
+      flows: initial.flows,
+      runtime,
+      workspacePath,
+      port: 0,
+      token: generateHostToken(),
+      loadSessionHistory: async (sessionPath) => {
+        calls += 1
+        if (calls === 1) return { messages: [{ role: 'user', content: 'beta preview', timestamp: 1, workbenchEntryId: 'beta-preview' }], hasOlder: true }
+        if (sessionPath === files.beta.path) {
+          markEarlierStarted(sessionPath)
+          await earlierGate
+          return { messages: [{ role: 'user', content: 'STALE_BETA_EARLIER', timestamp: 0, workbenchEntryId: 'beta-stale' }], hasOlder: false }
+        }
+        return { messages: [{ role: 'user', content: 'alpha preview', timestamp: 1, workbenchEntryId: 'alpha-preview' }], hasOlder: false }
+      },
+    })
+    const client = new TestClient(wsUrl(host))
+    try {
+      await client.open()
+      await client.next((message) => message.kind === 'welcome')
+      client.send({ kind: 'command', id: 1, command: { type: 'switchSession', path: files.beta.path } })
+      await client.next((message) => message.kind === 'result' && message.id === 1)
+      await client.next((message) => message.kind === 'patch' && Array.isArray(message.patch.changed.messages) && message.patch.changed.messages.some((entry) => String(entry.content).includes('beta preview')))
+
+      client.send({ kind: 'command', id: 2, command: { type: 'loadEarlierMessages' } })
+      expect(await earlierStarted).toBe(files.beta.path)
+      client.send({ kind: 'command', id: 4, command: { type: 'loadEarlierMessages' } })
+      client.send({ kind: 'command', id: 3, command: { type: 'switchSession', path: files.alpha.path } })
+      await client.next((message) => message.kind === 'result' && message.id === 3)
+      const afterSwitch = client.messages.length
+      releaseEarlier()
+      await client.next((message) => message.kind === 'result' && message.id === 2)
+      await client.next((message) => message.kind === 'result' && message.id === 4)
+      await Bun.sleep(20)
+      const stale = client.messages.slice(afterSwitch).some((message) => message.kind === 'patch'
+        && (message.patch.changed.messages ?? message.patch.messagesPrepend ?? []).some((entry) => String(entry.content).includes('STALE_BETA_EARLIER')))
+      expect(stale).toBe(false)
+      expect(calls).toBe(3)
+    } finally {
+      releaseEarlier()
       await client.close().catch(() => undefined)
       await host.close()
       await runtime.dispose()

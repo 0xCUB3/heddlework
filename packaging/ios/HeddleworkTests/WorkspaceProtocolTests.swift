@@ -29,17 +29,37 @@ final class WorkspaceProtocolTests: XCTestCase {
     }
 
     func testPatchRemovedClearsOptionalWireKeys() throws {
-        let base: [String: JSONValue] = [
-            "workspacePath": .string("/tmp/project"),
-            "dialog": .object(["id": .string("d1"), "method": .string("input"), "title": .string("Name")]),
-            "notices": .array([.object(["id": .number(1), "kind": .string("error"), "message": .string("old"), "createdAt": .number(10)])])
-        ]
         let wire = Data(#"{"version":1,"changed":{"activity":"Ready"},"removed":["dialog","notices"]}"#.utf8)
         let patch = try JSONDecoder().decode(SnapshotPatch.self, from: wire)
-        let next = mergeSnapshotJSON(base, patch: patch.changed, removing: patch.removed ?? [])
-        XCTAssertNil(next["dialog"])
-        XCTAssertNil(next["notices"])
-        XCTAssertEqual(next["activity"], .string("Ready"))
+        var snapshot = WorkbenchSnapshot()
+        snapshot.dialog = ExtensionDialog(id: "d1", method: "input", title: "Name")
+        snapshot.notices = [Notice(id: 1, kind: "error", message: "old", createdAt: 10)]
+        snapshot.activity = "Working"
+        let next = applySnapshotPatch(snapshot, patch: patch)
+        XCTAssertNil(next.dialog)
+        XCTAssertNil(next.notices)
+        XCTAssertEqual(next.activity, "Ready")
+    }
+
+    func testInvalidChangedPayloadKeepsModeledFields() throws {
+        var snapshot = WorkbenchSnapshot()
+        snapshot.messages = [PiMessage(role: "user", content: .string("Hi"), workbenchEntryId: "e1")]
+        snapshot.activity = "Ready"
+        let wire = Data(#"{"version":1,"changed":{"messages":{"nope":true},"activity":"Working"}}"#.utf8)
+        let patch = try JSONDecoder().decode(SnapshotPatch.self, from: wire)
+        let next = applySnapshotPatch(snapshot, patch: patch)
+        XCTAssertEqual(next.messages?.first?.workbenchEntryId, "e1")
+        XCTAssertEqual(next.activity, "Working")
+    }
+
+    func testTrimLiveOpDropsPrefixBytes() throws {
+        var snapshot = WorkbenchSnapshot()
+        snapshot.liveAssistant = LiveAssistant(id: "live", blocks: [LiveBlock(index: 0, kind: "text", text: "abcdef")])
+        let wire = Data(#"{"version":1,"changed":{},"liveOps":[{"op":"trim","target":"assistant","id":"live","blockIndex":0,"bytes":2},{"op":"append","target":"assistant","id":"live","blockIndex":0,"text":"gh"}]}"#.utf8)
+        let patch = try JSONDecoder().decode(SnapshotPatch.self, from: wire)
+        let next = applySnapshotPatch(snapshot, patch: patch)
+        XCTAssertEqual(next.liveAssistant?.blocks.first?.text, "cdefgh")
+        XCTAssertEqual(next.liveAssistant?.blocks.first?.textOffset, 2)
     }
 
     func testThreadLifecycleDecodesTitleSourceAndGeneratingAt() throws {
@@ -84,6 +104,39 @@ final class WorkspaceProtocolTests: XCTestCase {
         XCTAssertEqual(snapshot.threadTitles?.titleModel, "demo/cheap")
     }
 
+    func testGetTranscriptDetailCommandShape() {
+        let command = CommandFactory.getTranscriptDetail(entryId: "entry-9")
+        XCTAssertEqual(command["type"], .string("getTranscriptDetail"))
+        XCTAssertEqual(command["entryId"], .string("entry-9"))
+    }
+
+    func testSameSessionFileAndToolCallIdentity() {
+        XCTAssertTrue(sameSessionFile("/tmp/a.jsonl", "/tmp/a.jsonl"))
+        XCTAssertTrue(sameSessionFile("/tmp/a.jsonl/", "/tmp/a.jsonl"))
+        XCTAssertFalse(sameSessionFile("/tmp/a.jsonl", "/tmp/b.jsonl"))
+        var message = PiMessage(role: "toolResult", content: .string("out"), workbenchEntryId: "hist-1")
+        message.toolCallId = "call-1"
+        XCTAssertTrue(messageMatchesTranscriptEntry(message, entryId: "hist-1"))
+        XCTAssertTrue(messageMatchesTranscriptEntry(message, entryId: "call-1"))
+        XCTAssertFalse(messageMatchesTranscriptEntry(message, entryId: "other"))
+    }
+
+    func testTypedLivePatchDoesNotRebuildUnchangedMessages() throws {
+        var snapshot = WorkbenchSnapshot()
+        snapshot.messages = [PiMessage(role: "user", content: .string("Hi"), workbenchEntryId: "e1")]
+        snapshot.liveAssistant = LiveAssistant(id: "live", blocks: [LiveBlock(index: 0, kind: "text", text: "He")])
+        snapshot.activity = "Ready"
+        let originalMessages = snapshot.messages
+        let wire = Data(#"{"version":1,"changed":{"activity":"Working"},"liveOps":[{"op":"append","target":"assistant","id":"live","blockIndex":0,"text":"llo"}]}"#.utf8)
+        let patch = try JSONDecoder().decode(SnapshotPatch.self, from: wire)
+        let next = applySnapshotPatch(snapshot, patch: patch)
+        XCTAssertEqual(next.messages, originalMessages)
+        XCTAssertEqual(next.messages?.first?.workbenchEntryId, "e1")
+        XCTAssertEqual(next.liveAssistant?.blocks.first?.text, "Hello")
+        XCTAssertEqual(next.activity, "Working")
+        XCTAssertNil(patch.changed["messages"])
+    }
+
     func testSetThreadTitleSettingsCommandShape() {
         let command = CommandFactory.setThreadTitleSettings(autoTitles: false, titleModel: "openai/gpt-4o-mini", instructions: "Short")
         XCTAssertEqual(command["type"], .string("setThreadTitleSettings"))
@@ -93,5 +146,39 @@ final class WorkspaceProtocolTests: XCTestCase {
             "instructions": .string("Short"),
         ]))
         XCTAssertEqual(CommandFactory.withString("regenerateThreadTitle", key: "path", value: "/tmp/a.jsonl")["type"], .string("regenerateThreadTitle"))
+    }
+
+    func testNativeQuestionParsesQuizShapeWithoutLeakingAnswers() throws {
+        let args = JSONValue.object([
+            "question": .string("Let $A=U\\Sigma V^*$ be invertible."),
+            "details": .string("This jumps ahead deliberately."),
+            "options": .array([
+                .object(["label": .string("$b=u_n$"), "value": .string("un")]),
+                .object(["label": .string("$b=u_1$"), "value": .string("u1")]),
+            ]),
+            "correctAnswer": .string("un"),
+            "explanation": .string("Do not show this."),
+        ])
+        let tool = ToolRun(id: "quiz-1", name: "probe", args: args, status: "running", isError: false)
+        let question = try XCTUnwrap(NativeQuestion.from(tool: tool))
+        XCTAssertEqual(question.requestId, "quiz-1")
+        XCTAssertEqual(question.stem, "Let $A=U\\Sigma V^*$ be invertible.")
+        XCTAssertEqual(question.description, "This jumps ahead deliberately.")
+        XCTAssertEqual(question.options.map(\.value), ["un", "u1"])
+        XCTAssertTrue(question.allowUnknown)
+        XCTAssertTrue(question.allowNote)
+        XCTAssertFalse(question.allowCustom)
+        XCTAssertFalse(question.stem.contains("Do not show"))
+    }
+
+    func testSubmitAskUserQuestionnaireCommandShape() {
+        let command = CommandFactory.submitAskUserQuestionnaire(
+            toolCallId: "quiz-1",
+            answers: [["kind": .string("option"), "optionIndex": .number(0)]],
+            note: "maybe the last singular vector"
+        )
+        XCTAssertEqual(command["type"], .string("submitAskUserQuestionnaire"))
+        XCTAssertEqual(command["toolCallId"], .string("quiz-1"))
+        XCTAssertEqual(command["note"], .string("maybe the last singular vector"))
     }
 }

@@ -1,15 +1,23 @@
 import { resolve } from 'node:path'
 import type { BrowserIntegrationService } from '../browser/integrations.ts'
-import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_MESSAGES } from '../pi/session-history.ts'
+import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_MAX_MESSAGES, SESSION_HISTORY_PAGE_MESSAGES } from '../pi/session-history.ts'
 import { createQueueState } from '../workbench/queue.ts'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import type { SleepPreventionService } from '../power/service.ts'
 import {
   applyWorkbenchCommand,
+  clampTranscriptDetailLimit,
   diffSnapshots,
+  findOmittedTranscriptEntry,
+  findTranscriptDetail,
   isPatchEmpty,
+  pageTranscriptDetail,
+  projectWorkbenchSnapshot,
+  sameSessionFile,
   serializeSnapshot,
   type ServerMessage,
+  type TranscriptDetail,
+  type TranscriptDetailSource,
   type WorkbenchCommand,
 } from '../protocol/index.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
@@ -50,9 +58,10 @@ function anchorAt(messages: readonly PiMessage[], index: number, sessionFile: st
 
 export function withTranscriptWindow(socket: Bun.ServerWebSocket<WindowSocketData>, next: WorkbenchSnapshot): WorkbenchSnapshot {
   const messages = next.messages
-  if (messages.length === 0) return next
   const sessionFile = next.session.sessionFile ? resolve(next.session.sessionFile) : undefined
   const current = socket.data.transcriptWindow
+  if (current && sessionFile && current.sessionFile !== sessionFile) socket.data.transcriptWindow = undefined
+  if (messages.length === 0) return next
   let start = current && current.sessionFile === sessionFile ? windowAnchorIndex(messages, current) : -1
   if (start < 0) {
     start = Math.max(0, messages.length - SOCKET_TRANSCRIPT_WINDOW_MESSAGES)
@@ -68,7 +77,7 @@ export function withTranscriptWindow(socket: Bun.ServerWebSocket<WindowSocketDat
 }
 
 export function socketSnapshot(socket: Bun.ServerWebSocket<PreviewSocketData & WindowSocketData>, state: WorkbenchState): WorkbenchSnapshot {
-  return withTranscriptWindow(socket, withPreviewTranscript(socket, serializeSnapshot(state)))
+  return projectWorkbenchSnapshot(withTranscriptWindow(socket, withPreviewTranscript(socket, serializeSnapshot(state))))
 }
 
 export function pushSocketSnapshot(
@@ -113,6 +122,7 @@ export interface RuntimeCommandHostOptions {
   sleepPrevention?: SleepPreventionService | undefined
   terminals?: TerminalSessionService | undefined
   loadSessionHistory?: ((sessionPath: string) => Promise<{ messages: WorkbenchState['messages']; hasOlder: boolean }>) | undefined
+  loadSessionEntry?: ((sessionPath: string, entryId: string) => Promise<PiMessage | undefined>) | undefined
 }
 
 export interface PendingNavigation {
@@ -128,16 +138,72 @@ export class HostCommandSignal extends Error {
   }
 }
 
+function commandNeedsExecutionLease(type: WorkbenchCommand['type']): boolean {
+  return type === 'submit'
+    || type === 'queueInput'
+    || type === 'updateQueuedInput'
+    || type === 'removeQueuedInput'
+    || type === 'moveQueuedInput'
+    || type === 'moveQueuedInputToLane'
+    || type === 'toggleQueuedInputPause'
+    || type === 'steerQueuedInput'
+    || type === 'resumeQueue'
+    || type === 'pause'
+    || type === 'abort'
+    || type === 'compact'
+    || type === 'setModel'
+    || type === 'setThinkingLevel'
+    || type === 'navigateTree'
+    || type === 'cloneSession'
+    || type === 'exportSession'
+    || type === 'drainQueueMessages'
+    || type === 'cancelBlockingQueueActivity'
+    || type === 'queueFabricPeerGate'
+    || type === 'removeQueuedFlow'
+    || type === 'respondToDialog'
+    || type === 'submitAskUserQuestionnaire'
+    || type === 'cancelAskUserQuestionnaire'
+    || type === 'renameThread'
+}
+
+export function commandAllowedWithoutLease(type: WorkbenchCommand['type']): boolean {
+  return type === 'reportPresence'
+    || type === 'refreshSessions'
+    || type === 'loadMoreSessions'
+    || type === 'pinThread'
+    || type === 'unpinThread'
+    || type === 'settleThread'
+    || type === 'snoozeThread'
+    || type === 'wakeThread'
+    || type === 'setThreadPriority'
+    || type === 'setThreadLabels'
+    || type === 'markThreadRead'
+    || type === 'markThreadsRead'
+    || type === 'setThreadTitleSettings'
+    || type === 'dismissNotice'
+    || type === 'markNoticeRead'
+    || type === 'markNoticesRead'
+    || type === 'clearNotices'
+    || type === 'getTranscriptDetail'
+    || type === 'loadEarlierMessages'
+    || type === 'setEditorText'
+    || type === 'addEditorImage'
+    || type === 'removeEditorImage'
+    || type === 'refreshWorkspaceDiff'
+    || type === 'clearReceipts'
+}
+
 export function socketAttachment(
   options: RuntimeCommandHostOptions,
   socket: Bun.ServerWebSocket<{ sessionKey: string }>,
-): { controller: WorkbenchController; flows: FlowRuntime; sessionKey: string } {
+): { controller: WorkbenchController; flows: FlowRuntime; sessionKey: string; leased: boolean } {
   if (options.runtime) {
-    const attachment = options.runtime.attach(socket.data.sessionKey)
-    socket.data.sessionKey = attachment.sessionKey
-    return { controller: attachment.controller, flows: attachment.flows, sessionKey: attachment.sessionKey }
+    const requested = socket.data.sessionKey
+    const bundle = options.runtime.bundleForKey(requested)
+    if (bundle) return { controller: bundle.controller, flows: bundle.flows, sessionKey: requested, leased: true }
+    return { controller: options.controller, flows: options.flows, sessionKey: requested, leased: false }
   }
-  return { controller: options.controller, flows: options.flows, sessionKey: socket.data.sessionKey }
+  return { controller: options.controller, flows: options.flows, sessionKey: socket.data.sessionKey, leased: true }
 }
 
 function sendNewSessionPreview(
@@ -157,7 +223,7 @@ function sendNewSessionPreview(
     workspaceDiff: { status: 'idle', branch: '', files: [], additions: 0, deletions: 0 },
   }
   socket.data.previewTranscript = undefined
-  const next = withTranscriptWindow(socket, serializeSnapshot(preview))
+  const next = projectWorkbenchSnapshot(withTranscriptWindow(socket, serializeSnapshot(preview)))
   const patch = diffSnapshots(socket.data.lastSnapshot, next)
   socket.data.lastSnapshot = next
   if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
@@ -187,19 +253,32 @@ function sendSwitchPreview(
   }
   const pushPreview = (state: WorkbenchState): void => {
     if (!isCurrent()) return
-    const next = withTranscriptWindow(socket, serializeSnapshot(state))
+    const next = projectWorkbenchSnapshot(withTranscriptWindow(socket, serializeSnapshot(state)))
     const patch = diffSnapshots(socket.data.lastSnapshot, next)
     socket.data.lastSnapshot = next
     if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
   }
   socket.data.previewTranscript = undefined
+  socket.data.transcriptWindow = undefined
   pushPreview(preview)
+  const settle = (messages: WorkbenchState['messages'], hasOlder: boolean) => {
+    if (!isCurrent()) return
+    if (messages.length > 0) socket.data.previewTranscript = { sessionFile: targetPath, messages, hasOlder }
+    pushPreview({
+      ...preview,
+      connection: 'connected',
+      connectionMessage: 'Connected',
+      activity: 'Ready',
+      messages,
+      messagesHasOlder: hasOlder,
+    })
+  }
   void loadHistory(sessionPath).then((page) => {
     // Navigation identity, not snapshot object identity, decides whether this async preview is stale.
-    if (!isCurrent()) return
-    if (page.messages.length > 0) socket.data.previewTranscript = { sessionFile: targetPath, messages: page.messages, hasOlder: page.hasOlder }
-    pushPreview({ ...preview, messages: page.messages, messagesHasOlder: page.hasOlder })
-  }).catch(() => { /* No transcript yet; the bundle's bootstrap fills it in. */ })
+    settle(page.messages, page.hasOlder)
+  }).catch(() => {
+    settle([], false)
+  })
 }
 
 export interface PreviewTranscript {
@@ -211,11 +290,72 @@ export interface PreviewTranscript {
 export interface PreviewSocketData {
   lastSnapshot: WorkbenchSnapshot | undefined
   previewTranscript?: PreviewTranscript | undefined
+  loadEarlierTask?: Promise<void> | undefined
 }
 
 // A bundle that just booted reports connected before its transcript loads. Sending its empty message
 // list would paint a blank draft over a thread the client is already reading from the disk preview, so
 // the preview transcript stays on the socket until the bundle produces messages of its own.
+export function lookupSocketTranscriptDetail(
+  state: WorkbenchState,
+  preview: PreviewTranscript | undefined,
+  entryId: string,
+): TranscriptDetailSource | undefined {
+  return findTranscriptDetail({ messages: state.messages, liveTools: state.liveTools, liveAssistant: state.liveAssistant }, entryId)
+    ?? findTranscriptDetail({ messages: preview?.messages }, entryId)
+}
+
+async function resolveSocketTranscriptDetail(
+  options: RuntimeCommandHostOptions,
+  socket: Bun.ServerWebSocket<{ sessionKey: string; previewTranscript?: PreviewTranscript | undefined }>,
+  controller: WorkbenchController,
+  command: { entryId: string; offset?: number; limit?: number; sessionFile?: string; requestId?: string },
+): Promise<TranscriptDetail> {
+  if (!command.entryId) throw new Error('Transcript entry id is required')
+  const selected = resolve(socket.data.sessionKey)
+  const controllerState = controller.getSnapshot()
+  const pagingSession = controllerState.session.sessionFile
+    ?? socket.data.previewTranscript?.sessionFile
+    ?? (socket.data.sessionKey.endsWith('.jsonl') ? socket.data.sessionKey : undefined)
+  const paging = {
+    offset: command.offset ?? 0,
+    limit: clampTranscriptDetailLimit(command.limit),
+    ...(pagingSession ? { sessionFile: pagingSession } : {}),
+    ...(command.requestId ? { requestId: command.requestId } : {}),
+  }
+  const activeFile = controllerState.session.sessionFile ?? socket.data.previewTranscript?.sessionFile
+  if (command.sessionFile && activeFile && !sameSessionFile(command.sessionFile, activeFile) && resolve(command.sessionFile) !== resolve(activeFile)) {
+    throw new Error('Session changed')
+  }
+  const controllerFile = controllerState.session.sessionFile
+  const controllerMatches = !options.runtime || (controllerFile !== undefined && resolve(controllerFile) === selected)
+  const controllerSources = {
+    messages: controllerState.messages,
+    liveTools: controllerState.liveTools,
+    liveAssistant: controllerState.liveAssistant,
+  }
+  if (controllerMatches) {
+    const fromController = findTranscriptDetail(controllerSources, command.entryId)
+    if (fromController) return pageTranscriptDetail(fromController, paging)
+  }
+  const preview = socket.data.previewTranscript
+  const previewMatches = preview !== undefined && resolve(preview.sessionFile) === selected
+  if (previewMatches) {
+    const fromPreview = findTranscriptDetail({ messages: preview.messages }, command.entryId)
+    if (fromPreview) return pageTranscriptDetail(fromPreview, paging)
+  }
+  const omitted = (controllerMatches ? findOmittedTranscriptEntry(controllerSources, command.entryId) : undefined)
+    ?? (previewMatches ? findOmittedTranscriptEntry({ messages: preview!.messages }, command.entryId) : undefined)
+  const loadId = omitted?.entryId ?? command.entryId
+  const load = options.loadSessionEntry
+    ?? (options.runtime
+      ? (sessionPath: string, entryId: string) => options.runtime!.loadHistoryEntry(sessionPath, entryId)
+      : undefined)
+  const loaded = load ? await load(socket.data.sessionKey, loadId) : await new PiSessionHistoryPager(socket.data.sessionKey).loadEntry(loadId)
+  if (!loaded) throw new Error('Unknown transcript entry: ' + command.entryId)
+  return pageTranscriptDetail({ kind: 'message', entryId: loadId, message: loaded }, paging)
+}
+
 export function withPreviewTranscript(socket: Bun.ServerWebSocket<PreviewSocketData>, next: WorkbenchSnapshot): WorkbenchSnapshot {
   const preview = socket.data.previewTranscript
   if (!preview) return next
@@ -247,6 +387,7 @@ export async function executeSocketCommand(
     navigationGeneration?: number | undefined
     pendingNavigation?: PendingNavigation | undefined
     transcriptWindow?: TranscriptWindow | undefined
+    loadEarlierTask?: Promise<void> | undefined
   }>,
   message: { id: number; requestId?: string | undefined; command: WorkbenchCommand },
   send: (socket: Bun.ServerWebSocket<unknown>, message: ServerMessage) => void,
@@ -269,19 +410,143 @@ export async function executeSocketCommand(
       if (socket.data.pendingNavigation === pending) break
     }
   }
-  const { controller, flows, sessionKey } = socketAttachment(options, socket)
-
-  if (options.runtime) {
-    const decision = options.runtime.admission(clientId, requestId, message.command, sessionKey)
-    if (decision.action === 'respond') {
-      const record = decision.record
-      if (record.error === 'in-flight') throw new HostCommandSignal('in-flight')
-      if (record.ok) return record.value
-      throw new HostCommandSignal(record.error ?? 'failed')
-    }
-  }
-
   try {
+    if (options.runtime && message.command.type === 'switchSession') {
+      const path = message.command.path
+      const targetPath = resolve(path)
+      const previous = options.runtime.bundleForKey(socket.data.sessionKey)?.controller.getSnapshot() ?? options.controller.getSnapshot()
+      const generation = (socket.data.navigationGeneration ?? 0) + 1
+      socket.data.navigationGeneration = generation
+      const previousKey = socket.data.sessionKey
+      socket.data.sessionKey = targetPath
+      if (previousKey !== targetPath) {
+        options.runtime.releaseSocket(previousKey)
+        options.runtime.retainSocket(targetPath)
+      }
+      const target = options.runtime.bundleForKey(targetPath)
+      const isCurrent = () => socket.data.navigationGeneration === generation && socket.data.sessionKey === targetPath && !options.runtime!.hasExecutionLease(targetPath)
+      const loadHistory = options.loadSessionHistory ?? ((sessionPath: string) => options.runtime!.browseHistory(sessionPath))
+      if (target) {
+        resyncSocket(send, socket, target.controller, target.flows)
+      } else {
+        sendSwitchPreview(send, socket, previous, path, isCurrent, loadHistory)
+      }
+      options.runtime.recordCommandResult(clientId, requestId, message.command, targetPath, true)
+      void options.runtime.releaseIdleExecutionLeases()
+      return undefined
+    }
+
+    if (options.runtime && commandNeedsExecutionLease(message.command.type) && !options.runtime.hasExecutionLease(socket.data.sessionKey)) {
+      const intendedGeneration = socket.data.navigationGeneration ?? 0
+      const intendedKey = socket.data.sessionKey
+      const summary = (socket.data.lastSnapshot?.sessions ?? options.controller.getSnapshot().sessions)
+        .find((candidate) => resolve(candidate.path) === resolve(intendedKey))
+      const opening = options.runtime.ensureSession(intendedKey, summary)
+      const pending: PendingNavigation = { generation: intendedGeneration, promise: opening.then(() => undefined, (error) => { pending.error = error }) }
+      socket.data.pendingNavigation = pending
+      const bundle = await opening.catch((error) => {
+        if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
+        throw error
+      })
+      if ((socket.data.navigationGeneration ?? 0) !== intendedGeneration || socket.data.sessionKey !== intendedKey) {
+        options.runtime.recordCommandResult(clientId, requestId, message.command, intendedKey, true)
+        throw new HostCommandSignal('Navigation changed; command was not sent')
+      }
+      if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
+      const preview = socket.data.lastSnapshot
+      if (preview) {
+        bundle.controller.setEditorText(preview.editorText)
+        for (const image of preview.editorImages) {
+          if (typeof image.data === 'string') bundle.controller.addEditorImage(image as import('../pi/types.ts').ComposerImage)
+        }
+      }
+      resyncSocket(send, socket, bundle.controller, bundle.flows)
+    }
+
+    if (options.runtime && !options.runtime.hasExecutionLease(socket.data.sessionKey)) {
+      if (message.command.type === 'loadEarlierMessages') {
+        const intendedGeneration = socket.data.navigationGeneration ?? 0
+        const intendedKey = socket.data.sessionKey
+        const pending = socket.data.loadEarlierTask
+        if (pending) await pending
+        if ((socket.data.navigationGeneration ?? 0) !== intendedGeneration || socket.data.sessionKey !== intendedKey) {
+          options.runtime.recordCommandResult(clientId, requestId, message.command, intendedKey, true)
+          return undefined
+        }
+        let finish!: () => void
+        const task = new Promise<void>((resolve) => { finish = resolve })
+        socket.data.loadEarlierTask = task
+        try {
+          const loadHistory = options.loadSessionHistory ?? ((sessionPath: string) => options.runtime!.browseHistory(sessionPath))
+          const page = await loadHistory(intendedKey)
+          if ((socket.data.navigationGeneration ?? 0) !== intendedGeneration || socket.data.sessionKey !== intendedKey) {
+            options.runtime.recordCommandResult(clientId, requestId, message.command, intendedKey, true)
+            return undefined
+          }
+          const current = socket.data.lastSnapshot
+          if (current && page.messages.length > 0) {
+            const known = new Set(current.messages.flatMap((message) => message.workbenchEntryId ? [message.workbenchEntryId] : []))
+            const older = page.messages.filter((message) => !known.has(message.workbenchEntryId ?? ''))
+            const combined = [...older, ...current.messages]
+            const messages = combined.length <= SESSION_HISTORY_PAGE_MAX_MESSAGES
+              ? combined
+              : combined.slice(0, SESSION_HISTORY_PAGE_MAX_MESSAGES)
+            const hasOlder = page.hasOlder || combined.length > messages.length
+            socket.data.previewTranscript = { sessionFile: resolve(socket.data.sessionKey), messages, hasOlder }
+            const next = { ...current, messages, messagesHasOlder: hasOlder }
+            const patch = diffSnapshots(current, next)
+            socket.data.lastSnapshot = next
+            if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
+          }
+          options.runtime.recordCommandResult(clientId, requestId, message.command, socket.data.sessionKey, true)
+          return undefined
+        } finally {
+          finish()
+          if (socket.data.loadEarlierTask === task) socket.data.loadEarlierTask = undefined
+        }
+      }
+      if (message.command.type === 'setEditorText') {
+        const current = socket.data.lastSnapshot
+        if (current) {
+          const next = { ...current, editorText: message.command.text }
+          const patch = diffSnapshots(current, next)
+          socket.data.lastSnapshot = next
+          if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
+        }
+        options.runtime.recordCommandResult(clientId, requestId, message.command, socket.data.sessionKey, true)
+        return undefined
+      }
+      if (message.command.type === 'addEditorImage' || message.command.type === 'removeEditorImage') {
+        const current = socket.data.lastSnapshot
+        if (current) {
+          const editorImages = message.command.type === 'addEditorImage'
+            ? [...current.editorImages, message.command.image]
+            : current.editorImages.filter((image) => image.id !== (message.command as { id: string }).id)
+          const next = { ...current, editorImages }
+          const patch = diffSnapshots(current, next)
+          socket.data.lastSnapshot = next
+          if (!isPatchEmpty(patch)) send(socket, { kind: 'patch', patch })
+        }
+        options.runtime.recordCommandResult(clientId, requestId, message.command, socket.data.sessionKey, true)
+        return undefined
+      }
+    }
+
+    const { controller, flows, sessionKey, leased } = socketAttachment(options, socket)
+    if (options.runtime && !leased && !commandNeedsExecutionLease(message.command.type) && !commandAllowedWithoutLease(message.command.type)) {
+      throw new HostCommandSignal(message.command.type + ' is not available without an execution lease')
+    }
+
+    if (options.runtime) {
+      const decision = options.runtime.admission(clientId, requestId, message.command, sessionKey)
+      if (decision.action === 'respond') {
+        const record = decision.record
+        if (record.error === 'in-flight') throw new HostCommandSignal('in-flight')
+        if (record.ok) return record.value
+        throw new HostCommandSignal(record.error ?? 'failed')
+      }
+    }
+
     if (options.runtime && message.command.type === 'newSession') {
       const generation = (socket.data.navigationGeneration ?? 0) + 1
       socket.data.navigationGeneration = generation
@@ -302,7 +567,12 @@ export async function executeSocketCommand(
         return undefined
       }
       if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
+      const previousKey = socket.data.sessionKey
       socket.data.sessionKey = created.sessionKey
+      if (previousKey !== created.sessionKey) {
+        options.runtime.releaseSocket(previousKey)
+        options.runtime.retainSocket(created.sessionKey)
+      }
       resyncSocket(send, socket, created.bundle.controller, created.bundle.flows)
       options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
       return undefined
@@ -319,50 +589,22 @@ export async function executeSocketCommand(
         return undefined
       }
       if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
+      const previousKey = socket.data.sessionKey
       socket.data.sessionKey = opened.sessionKey
+      if (previousKey !== opened.sessionKey) {
+        options.runtime.releaseSocket(previousKey)
+        options.runtime.retainSocket(opened.sessionKey)
+      }
       resyncSocket(send, socket, opened.bundle.controller, opened.bundle.flows)
       options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
       return undefined
     }
-    if (options.runtime && message.command.type === 'switchSession') {
-      const path = message.command.path
-      const targetPath = resolve(path)
-      const current = controller.getSnapshot()
-      const summary = current.sessions.find((candidate) => resolve(candidate.path) === targetPath)
-      const generation = (socket.data.navigationGeneration ?? 0) + 1
-      socket.data.navigationGeneration = generation
-      let previewActive = true
-      // Stop old-session broadcasts immediately; commands arriving during startup wait below instead of
-      // accidentally attaching to the previous live bundle.
-      socket.data.sessionKey = targetPath
-      const target = options.runtime.bundleForKey(targetPath)
-      // A thread with no live bundle needs a Pi process, which takes seconds. Show the thread now from
-      // the current snapshot plus its transcript on disk; the real bundle replaces it when it lands.
-      const isCurrent = () => previewActive && socket.data.navigationGeneration === generation && socket.data.sessionKey === targetPath
-      const loadHistory = options.loadSessionHistory ?? ((sessionPath: string) => new PiSessionHistoryPager(sessionPath).loadEarlier(SESSION_HISTORY_PAGE_MESSAGES))
-      if (!target) sendSwitchPreview(send, socket, current, path, isCurrent, loadHistory)
-      const opening = options.runtime.ensureSession(path, summary)
-      const pending: PendingNavigation = { generation, promise: opening.then(() => undefined, (error) => { pending.error = error }) }
-      socket.data.pendingNavigation = pending
-      const bundle = await opening.catch((error) => {
-        previewActive = false
-        if (socket.data.navigationGeneration === generation && socket.data.sessionKey === targetPath) {
-          socket.data.sessionKey = sessionKey
-          resyncSocket(send, socket, controller, flows)
-        }
-        throw error
-      })
-      if (!isCurrent()) {
-        options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
-        return undefined
-      }
-      previewActive = false
-      if (socket.data.pendingNavigation === pending) socket.data.pendingNavigation = undefined
-      resyncSocket(send, socket, bundle.controller, bundle.flows)
-      options.runtime.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
-      return undefined
-    }
 
+    if (message.command.type === 'getTranscriptDetail') {
+      const detail = await resolveSocketTranscriptDetail(options, socket, controller, message.command)
+      options.runtime?.recordCommandResult(clientId, requestId, message.command, sessionKey, true, detail)
+      return detail
+    }
     if (message.command.type === 'loadEarlierMessages') {
       await revealEarlierMessages(send, socket, controller)
       options.runtime?.recordCommandResult(clientId, requestId, message.command, sessionKey, true)
@@ -377,7 +619,7 @@ export async function executeSocketCommand(
     options.runtime?.recordCommandResult(clientId, requestId, message.command, sessionKey, true, commandValue)
     return commandValue
   } catch (error) {
-    options.runtime?.recordCommandResult(clientId, requestId, message.command, sessionKey, false, undefined, error instanceof Error ? error.message : String(error))
+    options.runtime?.recordCommandResult(clientId, requestId, message.command, socket.data.sessionKey, false, undefined, error instanceof Error ? error.message : String(error))
     throw error
   }
 }

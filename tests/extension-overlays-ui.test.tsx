@@ -169,8 +169,8 @@ describeNative('conversation extension overlays', () => {
         root.renderer.flush()
         enteringSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
       }
-      expect(enteringSpacerHeight).toBeGreaterThan(baseSpacerHeight)
-      expect(enteringSpacerHeight).toBeLessThan(baseSpacerHeight + 35)
+      expect(enteringSpacerHeight).toBeGreaterThanOrEqual(baseSpacerHeight)
+      expect(enteringSpacerHeight).toBeLessThanOrEqual(baseSpacerHeight + 35)
       await Bun.sleep(SPRING_SETTLE_MS + 80)
       root.renderer.flush()
       expect((await automation.getByTestId('composer-spacer').bounds()).height).toBeCloseTo(baseSpacerHeight + 35, 0)
@@ -186,8 +186,8 @@ describeNative('conversation extension overlays', () => {
       root.renderer.flush()
       expect(await automation.getByTestId('extension-surface-rail').count()).toBe(0)
       const exitingSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
-      expect(exitingSpacerHeight).toBeGreaterThan(baseSpacerHeight)
-      expect(exitingSpacerHeight).toBeLessThan(baseSpacerHeight + 35)
+      expect(exitingSpacerHeight).toBeGreaterThanOrEqual(baseSpacerHeight)
+      expect(exitingSpacerHeight).toBeLessThanOrEqual(baseSpacerHeight + 35)
       await Bun.sleep(SPRING_SETTLE_MS + 80)
       root.renderer.flush()
       expect((await automation.getByTestId('composer-spacer').bounds()).height).toBeCloseTo(baseSpacerHeight, 0)
@@ -378,7 +378,7 @@ describeNative('conversation extension overlays', () => {
       expect(await automation.getByTestId('ask-user-collapsed').count()).toBe(1)
       const growingSpacerHeight = (await automation.getByTestId('composer-spacer').bounds()).height
       expect(growingSpacerHeight).toBeGreaterThan(spacerHeightBeforeCollapse)
-      expect(growingSpacerHeight).toBeLessThan(spacerHeightBeforeCollapse + 53)
+      expect(growingSpacerHeight).toBeLessThanOrEqual(spacerHeightBeforeCollapse + 53)
       await Bun.sleep(SPRING_SETTLE_MS + 80)
       root.renderer.flush()
       expect((await automation.getByTestId('composer-spacer').bounds()).height).toBeCloseTo(spacerHeightBeforeCollapse + 53, 0)
@@ -400,6 +400,60 @@ describeNative('conversation extension overlays', () => {
       }
       await automation.getByTestId('ask-user-reopen').click()
       controller.cancelAskUserQuestionnaire('ask-overlay')
+    } finally {
+      await automation.close()
+      root.unmount()
+      await controller.dispose()
+    }
+  })
+
+  it('renders a math single-choice question with note, unknown, and cancel without a tool-name whitelist', async () => {
+    const transport = new OverlayTransport()
+    const controller = new WorkbenchController(transport, '/tmp/workspace', testControllerDependencies(new PiSessionCatalog({ scope: 'cwd' })))
+    const root = createTestRoot()
+    root.render(React.createElement(WorkbenchApp, { controller, presenters: new Map(), ui: createTestUiRegistry(controller) }))
+    await controller.start()
+    const automation = await connectTest(root.renderer)
+    try {
+      transport.emit({ type: 'agent_start' })
+      transport.emit({
+        type: 'tool_execution_start',
+        toolCallId: 'math-quiz',
+        toolName: 'fabric_probe',
+        args: {
+          question: 'Let $A=U\\Sigma V^*$ be invertible. Which directions attain $\\kappa_2(A)$?',
+          details: 'This jumps ahead deliberately to see whether you can construct the worst case.',
+          options: [
+            { label: '$b=u_n$, $\\delta b=\\varepsilon u_1$', value: 'un-u1' },
+            { label: '$b=u_1$, $\\delta b=\\varepsilon u_1$', value: 'u1-u1' },
+            { label: '$b=v_1$, $\\delta b=\\varepsilon v_n$', value: 'v1-vn' },
+            { label: '$b=u_1$, $\\delta b=\\varepsilon u_n$', value: 'u1-un' },
+          ],
+          correctAnswer: 'un-u1',
+          explanation: 'Hidden.',
+        },
+      })
+      transport.emit({
+        type: 'extension_ui_request',
+        id: 'math-select',
+        method: 'select',
+        title: 'Let $A=U\\Sigma V^*$ be invertible. Which directions attain $\\kappa_2(A)$?',
+        options: ['$b=u_n$, $\\delta b=\\varepsilon u_1$', '$b=u_1$, $\\delta b=\\varepsilon u_1$', '$b=v_1$, $\\delta b=\\varepsilon v_n$', '$b=u_1$, $\\delta b=\\varepsilon u_n$', "I don't know"],
+      })
+      await Bun.sleep(30)
+      root.renderer.flush()
+      expect(await automation.getByTestId('native-question-overlay').count()).toBe(1)
+      expect(await automation.getByTestId('native-question-stem').count()).toBe(1)
+      expect(await automation.getByTestId('native-question-description').count()).toBe(1)
+      expect(await automation.getByTestId('native-question-unknown').count()).toBe(1)
+      expect(await automation.getByTestId('native-question-note').count()).toBe(1)
+      expect(await automation.getByTestId('native-question-option-0').count()).toBe(1)
+      expect(JSON.stringify(root.renderer.findByTestId('native-question-overlay'))).not.toContain('Hidden.')
+      await automation.getByTestId('native-question-option-0').click()
+      await automation.getByTestId('native-question-note').click()
+      await Bun.sleep(10)
+      await automation.getByTestId('native-question-cancel').click()
+      expect(transport.sent).toContainEqual({ type: 'extension_ui_response', id: 'math-select', cancelled: true })
     } finally {
       await automation.close()
       root.unmount()

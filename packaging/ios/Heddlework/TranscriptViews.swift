@@ -20,17 +20,18 @@ struct TranscriptView: View {
     private var rows: [TranscriptProjectionRow] { cachedRows }
 
     private var projectionKey: String {
-        let lastLive = snapshot?.liveAssistant?.blocks.last?.text.count ?? 0
-        let tools = snapshot?.liveTools?.map { "\($0.id):\($0.status)" }.joined(separator: ",") ?? ""
         let expanded = expandedTraceIds.sorted().joined(separator: ",")
-        return "\(currentSessionKey)|\(snapshot?.messages?.count ?? 0)|\(lastLive)|\(tools)|\(snapshot?.session?.isStreaming == true ? "1" : "0")|\(expanded)"
+        return "\(currentSessionKey)|\(client.contentRevision)|\(expanded)"
     }
 
     private func refreshRows() {
         let key = projectionKey
         guard key != cachedProjectionKey || cachedRows.isEmpty else { return }
         cachedProjectionKey = key
-        let next = snapshot.map { TranscriptProjection.projectWorkspace(snapshot: $0, expandedTraceIds: expandedTraceIds) } ?? []
+        let base = client.transcriptRows.isEmpty
+            ? (snapshot.map { TranscriptProjection.projectWorkspace(snapshot: $0) } ?? [])
+            : client.transcriptRows
+        let next = TranscriptProjection.expandCollapsedRows(base, expandedTraceIds: expandedTraceIds)
         cachedRows = TranscriptProjection.reuseRows(cachedRows, next: next)
     }
 
@@ -60,7 +61,7 @@ struct TranscriptView: View {
                             .onDisappear { historySentinelVisible = false }
                         }
                         ForEach(rows) { row in
-                            TranscriptRowView(row: row, expanded: expandedTraceIds.contains(traceId(of: row)), mobile: mobile, onToggle: { toggle(traceId(of: row)) }, onOpenDiff: openDiff)
+                            TranscriptRowView(row: row, expanded: expandedTraceIds.contains(traceId(of: row)), mobile: mobile, onToggle: { toggle(traceId(of: row)) }, onOpenDiff: openDiff, onLoadDetail: { client.loadTranscriptDetail(entryId: $0) })
                                 .equatable()
                                 .frame(maxWidth: WorkbenchLayoutMetrics.fallbackContentMax)
                                 .frame(maxWidth: .infinity)
@@ -224,6 +225,7 @@ struct TranscriptRowView: View, Equatable {
     var mobile = false
     var onToggle: () -> Void
     var onOpenDiff: () -> Void
+    var onLoadDetail: (String) -> Void = { _ in }
 
     static func == (lhs: TranscriptRowView, rhs: TranscriptRowView) -> Bool {
         lhs.row == rhs.row && lhs.expanded == rhs.expanded && lhs.mobile == rhs.mobile
@@ -232,13 +234,13 @@ struct TranscriptRowView: View, Equatable {
     var body: some View {
         switch row.kind {
         case .timelineItem:
-            if let item = row.item { TimelineLeafView(item: item, mobile: mobile) }
+            if let item = row.item { TimelineLeafView(item: item, mobile: mobile, onLoadDetail: onLoadDetail) }
         case .traceHeader:
             if let trace = row.trace {
                 WorkTraceHeaderView(trace: trace, expanded: expanded, onToggle: onToggle)
             }
         case .traceEntry:
-            if let item = row.item { TraceEntryView(item: item) }
+            if let item = row.item { TraceEntryView(item: item, onLoadDetail: onLoadDetail) }
         case .traceNotices:
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(row.notices, id: \.id) { notice in
@@ -272,6 +274,7 @@ struct TranscriptRowView: View, Equatable {
 struct TimelineLeafView: View {
     let item: TimelineItem
     var mobile = false
+    var onLoadDetail: (String) -> Void = { _ in }
 
     var body: some View {
         switch item.kind {
@@ -282,14 +285,20 @@ struct TimelineLeafView: View {
                     .padding(.vertical, 10)
                     .background(AppColors.raised)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
+                OmittedDetailButton(item: item, onLoadDetail: onLoadDetail)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, mobile ? 28 : 64)
             .accessibilityIdentifier("user-message")
+            .onAppear { prefetchDetail(item, onLoadDetail) }
         case .assistant:
-            RichMarkdownView(source: displayText(item.text), streaming: item.streaming, style: .body)
+            VStack(alignment: .leading, spacing: 6) {
+                RichMarkdownView(source: displayText(item.text), streaming: item.streaming, style: .body)
+                OmittedDetailButton(item: item, onLoadDetail: onLoadDetail)
+            }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("assistant-message")
+                .onAppear { prefetchDetail(item, onLoadDetail) }
         case .status:
             Text(displayText(item.text))
                 .font(.workbench(size: 12))
@@ -352,6 +361,7 @@ struct WorkTraceHeaderView: View {
 
 struct TraceEntryView: View {
     let item: TimelineItem
+    var onLoadDetail: (String) -> Void = { _ in }
     @State private var copied = false
 
     var body: some View {
@@ -372,6 +382,7 @@ struct TraceEntryView: View {
                         copied = true
                     }
                     .font(.workbench(size: 11, weight: .medium))
+                    OmittedDetailButton(item: item, onLoadDetail: onLoadDetail)
                 } label: {
                     HStack {
                         Text("\(tool.name) · \(tool.status)\(tool.isError ? " · error" : "")")
@@ -380,6 +391,7 @@ struct TraceEntryView: View {
                 }
                 .font(.workbench(size: 12))
                 .foregroundStyle(tool.isError ? AppColors.error : AppColors.muted)
+                .onAppear { prefetchDetail(item, onLoadDetail) }
             } else if item.kind == .assistant || item.kind == .contextInjection || item.kind == .compaction {
                 Text(displayText(item.text))
                     .font(.workbench(size: 12))
@@ -396,6 +408,28 @@ struct TraceEntryView: View {
         guard let data = try? JSONSerialization.data(withJSONObject: value.any, options: [.prettyPrinted, .sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return nil }
         return text
+    }
+}
+
+private let transcriptDetailAutoMaxBytes = 2_000_000
+
+func prefetchDetail(_ item: TimelineItem, _ onLoadDetail: (String) -> Void) {
+    guard let detail = item.detailRef, detail.omitted, detail.bytes > 0, detail.bytes <= transcriptDetailAutoMaxBytes else { return }
+    onLoadDetail(detail.entryId)
+}
+
+struct OmittedDetailButton: View {
+    let item: TimelineItem
+    var onLoadDetail: (String) -> Void
+
+    var body: some View {
+        if let detail = item.detailRef, detail.omitted, detail.bytes > transcriptDetailAutoMaxBytes {
+            Button("Load full output (\(detail.bytes) bytes)") {
+                onLoadDetail(detail.entryId)
+            }
+            .font(.workbench(size: 11, weight: .medium))
+            .accessibilityIdentifier("load-transcript-detail")
+        }
     }
 }
 

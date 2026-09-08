@@ -1,4 +1,4 @@
-import type { ExtensionDialog, ToolRun } from './state.ts'
+import type { ExtensionDialog } from './state.ts'
 
 export const ASK_USER_QUESTION_TOOL = 'ask_user_question'
 
@@ -24,6 +24,8 @@ export type AskUserSubmissionAnswer =
   | { kind: 'option'; optionIndex: number }
   | { kind: 'multi'; optionIndices: number[] }
   | { kind: 'custom'; value: string }
+  | { kind: 'unknown' }
+  | { kind: 'text'; value: string }
 
 export interface AskUserDialogAction {
   method: 'select' | 'input'
@@ -33,7 +35,7 @@ export interface AskUserDialogAction {
   value?: string
 }
 
-export function questionnaireFromTool(tool: ToolRun): AskUserQuestionnaire | undefined {
+export function questionnaireFromTool(tool: { id: string; name: string; args?: unknown; status: string }): AskUserQuestionnaire | undefined {
   if (tool.name !== ASK_USER_QUESTION_TOOL || tool.status === 'complete') return undefined
   const args = record(tool.args)
   if (!Array.isArray(args.questions) || args.questions.length === 0) return undefined
@@ -62,7 +64,7 @@ export function questionnaireFromTool(tool: ToolRun): AskUserQuestionnaire | und
   return { toolCallId: tool.id, questions }
 }
 
-export function questionnaireMatchesDialog(questionnaire: AskUserQuestionnaire, dialog: ExtensionDialog | undefined): boolean {
+export function questionnaireMatchesDialog(questionnaire: AskUserQuestionnaire, dialog: { title: string; method: string } | undefined): boolean {
   if (!dialog) return false
   const first = questionnaire.questions[0]
   if (!first || !dialog.title.includes(first.question)) return false

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useWindowSize } from '@gpuix/react'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
 import { SESSION_SETTLED_AFTER_MS, sessionLifecycleBucket, sortActiveSessions } from '../workbench/thread-lifecycle.ts'
@@ -69,8 +69,20 @@ export function SessionRow({
   const metadataColor = active ? colors.sidebarActiveMuted : colors.textFaint
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(session.title)
+  const pointerArmed = useRef(false)
   const activation = disabled || renaming ? {} : {
-    onClick,
+    onMouseDown: (event: { button?: number }) => {
+      if (event.button !== undefined && event.button !== 0) return
+      pointerArmed.current = true
+      onClick()
+    },
+    onClick: () => {
+      if (pointerArmed.current) {
+        pointerArmed.current = false
+        return
+      }
+      onClick()
+    },
     onKeyDown: (event: { key?: string }) => {
       if (event.key === 'enter' || event.key === 'space') onClick()
     },

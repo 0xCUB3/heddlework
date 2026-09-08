@@ -94,6 +94,26 @@ describe('live session discovery', () => {
     } finally { await controller.dispose() }
   })
 
+  it('does not full-invalidate on every retry when native watches are unavailable', async () => {
+    const { directory } = await fixture()
+    let notifications = 0
+    const close = watchPiSessions(directory, () => { notifications++ }, {
+      debounceMs: 5,
+      retryMs: 20,
+      openWatch: () => { throw new Error('watch unsupported') },
+    })
+    try {
+      await waitFor(() => notifications >= 1)
+      const settleUntil = Date.now() + 80
+      while (Date.now() < settleUntil) await Bun.sleep(10)
+      expect(notifications).toBeLessThanOrEqual(2)
+      const count = notifications
+      const holdUntil = Date.now() + 80
+      while (Date.now() < holdUntil) await Bun.sleep(10)
+      expect(notifications).toBe(count)
+    } finally { close() }
+  })
+
   it('recovers a root created after subscription and releases all notifications on unsubscribe', async () => {
     const { root, cwd } = await fixture()
     const directory = join(root, 'later')

@@ -42,6 +42,14 @@ describe('Pi live bridge', () => {
     expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('request.type === "get_live_state"')
     expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('type: "heddlework_session_state"')
     expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('ctx.ui.setWidget(STATE_WIDGET')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('heddlework.question.v1')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('answer_native_question')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('heddlework_native_question')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('ui.custom = async')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('AsyncLocalStorage')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('bindCustomQuestion')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).toContain('pendingByToolCallId')
+    expect(HEDDLEWORK_LIVE_BRIDGE_SOURCE).not.toContain('function currentQuestion')
   })
 
   test('parses private RPC state widget into a dedicated transport record', () => {
@@ -444,4 +452,226 @@ describe('Pi live bridge', () => {
       if (child.exitCode === null) child.kill('SIGKILL')
     }
   }, 15_000)
+
+  test('wraps custom Q&A and resumes the original waiter from an attached answer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'heddlework-live-question-'))
+    temporary.push(root)
+    const runtimeDir = join(root, 'runtime')
+    const extension = heddleworkLiveBridgePath(join(root, 'extension'))
+    const previousRuntime = process.env.HEDDLEWORK_RUNTIME_DIR
+    process.env.HEDDLEWORK_RUNTIME_DIR = runtimeDir
+    try {
+      const factory = (await import(`${extension}?question=${Date.now()}`)).default as (pi: any) => void
+      const handlers = new Map<string, Function>()
+      const pi = {
+        on(name: string, handler: Function) { handlers.set(name, handler) },
+        getThinkingLevel: () => 'medium',
+        getSessionName: () => undefined,
+        getCommands: () => [],
+        sendUserMessage() {}, setThinkingLevel() {}, setSessionName() {}, async setModel() { return true },
+      }
+      factory(pi)
+      const ui = {
+        setWidget() {},
+        async select(title: string, options: string[]) { return options[0] },
+        async input() { return 'a note' },
+        async editor() { return 'typed' },
+        custom(factory: (tui: unknown, theme: unknown, kb: unknown, done: (value: unknown) => void) => unknown) {
+          return new Promise((resolve) => {
+            factory(null, null, null, resolve)
+          })
+        },
+      }
+      const ctx = {
+        mode: 'tui', cwd: '/tmp/project', model: { provider: 'test', id: 'model' },
+        isIdle: () => false, hasPendingMessages: () => false, abort() {}, getContextUsage: () => undefined,
+        ui,
+        modelRegistry: { getAvailable: () => [], find: () => undefined },
+        sessionManager: {
+          getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'session', getLeafId: () => null,
+          getTree: () => [], getEntries: () => [], buildContextEntries: () => [],
+        },
+      }
+      handlers.get('session_start')?.({ type: 'session_start', reason: 'startup' }, ctx)
+      handlers.get('tool_execution_start')?.({
+        type: 'tool_execution_start', toolCallId: 'quiz-1', toolName: 'quiz',
+        args: { question: 'Pick one', options: [{ label: 'Alpha', value: 'a' }, { label: 'Beta', value: 'b' }], correctAnswer: 'a', explanation: 'why' },
+      }, ctx)
+      const custom = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, _done: (value: unknown) => void) => {
+        return {
+          render: () => ['quiz'],
+          handleInput() {},
+          invalidate() {},
+        }
+      })
+      const registry = join(runtimeDir, 'pi-live')
+      for (let attempt = 0; attempt < 100 && discoverPiLiveBridges(registry).length === 0; attempt++) await Bun.sleep(5)
+      const advertisement = discoverPiLiveBridges(registry)[0]
+      if (!advertisement) throw new Error('Expected live advertisement')
+      const attached = new PiLiveBridgeTransport({ advertisement })
+      await attached.start()
+      const answered = attached.request({ type: 'answer_native_question', requestId: 'quiz-1', answer: { unknown: true, result: { dontKnow: true, answers: [] } } })
+      const doneValue = await custom
+      await answered
+      expect(doneValue).toEqual({ dontKnow: true, answers: [] })
+      await attached.stop()
+      handlers.get('session_shutdown')?.({ type: 'session_shutdown', reason: 'quit' }, ctx)
+    } finally {
+      if (previousRuntime === undefined) delete process.env.HEDDLEWORK_RUNTIME_DIR
+      else process.env.HEDDLEWORK_RUNTIME_DIR = previousRuntime
+    }
+  })
+
+  test('correlates native Q&A without last-writer-wins and settles delayed factories once', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'heddlework-live-qa-race-'))
+    temporary.push(root)
+    const runtimeDir = join(root, 'runtime')
+    const extension = heddleworkLiveBridgePath(join(root, 'extension'))
+    const previousRuntime = process.env.HEDDLEWORK_RUNTIME_DIR
+    process.env.HEDDLEWORK_RUNTIME_DIR = runtimeDir
+    const registered: Array<{ name: string; execute: Function }> = []
+    let delayNextFactory = false
+    let startDelayedFactory: (() => void) | undefined
+    const localClosed: unknown[] = []
+    try {
+      const factory = (await import(`${extension}?qa-race=${Date.now()}`)).default as (pi: any) => void
+      const handlers = new Map<string, Function>()
+      const pi = {
+        on(name: string, handler: Function) { handlers.set(name, handler) },
+        registerTool(tool: { name: string; execute: Function }) { registered.push(tool) },
+        getThinkingLevel: () => 'medium',
+        getSessionName: () => undefined,
+        getCommands: () => [],
+        sendUserMessage() {}, setThinkingLevel() {}, setSessionName() {}, async setModel() { return true },
+      }
+      factory(pi)
+      pi.registerTool({
+        name: 'qa',
+        async execute(toolCallId: string, params: { question: string }, _signal: unknown, _onUpdate: unknown, ctx: { ui: { custom: Function } }) {
+          return ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, _done: (value: unknown) => void) => ({ render: () => [params.question], handleInput() {}, invalidate() {} }))
+        },
+      })
+      const ui = {
+        setWidget() {},
+        async select(title: string, options: string[]) { return options[0] },
+        async input() { return '' },
+        async editor() { return '' },
+        custom(customFactory: (tui: unknown, theme: unknown, kb: unknown, done: (value: unknown) => void) => unknown) {
+          return new Promise((resolve) => {
+            const run = () => customFactory(null, null, null, (value) => {
+              localClosed.push(value)
+              resolve(value)
+            })
+            if (delayNextFactory) {
+              delayNextFactory = false
+              startDelayedFactory = run
+              return
+            }
+            run()
+          })
+        },
+      }
+      const ctx = {
+        mode: 'tui', cwd: '/tmp/project', model: { provider: 'test', id: 'model' },
+        isIdle: () => false, hasPendingMessages: () => false, abort() {}, getContextUsage: () => undefined,
+        ui,
+        modelRegistry: { getAvailable: () => [], find: () => undefined },
+        sessionManager: {
+          getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'session', getLeafId: () => null,
+          getTree: () => [], getEntries: () => [], buildContextEntries: () => [],
+        },
+      }
+      handlers.get('session_start')?.({ type: 'session_start', reason: 'startup' }, ctx)
+      const quizArgs = (stem: string, value: string) => ({
+        question: stem,
+        options: [{ label: stem + ' yes', value }, { label: stem + ' no', value: value + '-no' }],
+        correctAnswer: value,
+        explanation: 'hidden',
+      })
+      const registry = join(runtimeDir, 'pi-live')
+      for (let attempt = 0; attempt < 100 && discoverPiLiveBridges(registry).length === 0; attempt++) await Bun.sleep(5)
+      const advertisement = discoverPiLiveBridges(registry)[0]
+      if (!advertisement) throw new Error('Expected live advertisement')
+      const attached = new PiLiveBridgeTransport({ advertisement })
+      const events: RpcRecord[] = []
+      attached.onEvent((event) => events.push(event))
+      await attached.start()
+
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-a', toolName: 'qa', args: quizArgs('First', 'a') }, ctx)
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-b', toolName: 'qa', args: quizArgs('Second', 'b') }, ctx)
+      const concurrentA = registered[0]!.execute('quiz-a', quizArgs('First', 'a'), undefined, undefined, ctx)
+      const concurrentB = registered[0]!.execute('quiz-b', quizArgs('Second', 'b'), undefined, undefined, ctx)
+      for (let attempt = 0; attempt < 50 && events.filter((event) => event.type === 'heddlework_native_question').length < 2; attempt++) await Bun.sleep(5)
+      const questions = events.filter((event) => event.type === 'heddlework_native_question').map((event) => event.question as { requestId: string; toolCallId: string; stem: string })
+      expect(questions).toHaveLength(2)
+      expect(new Set(questions.map((question) => question.requestId)).size).toBe(2)
+      expect(questions.map((question) => question.toolCallId).sort()).toEqual(['quiz-a', 'quiz-b'])
+      expect(JSON.stringify(questions)).not.toContain('hidden')
+      const first = questions.find((question) => question.toolCallId === 'quiz-a')!
+      const second = questions.find((question) => question.toolCallId === 'quiz-b')!
+      await attached.request({ type: 'answer_native_question', requestId: first.requestId, toolCallId: 'quiz-a', answer: { selectedValues: ['a'], result: { dontKnow: false, answers: [{ label: 'First yes', value: 'a', index: 1 }] } } })
+      await attached.request({ type: 'answer_native_question', requestId: second.requestId, toolCallId: 'quiz-b', answer: { unknown: true, result: { dontKnow: true, answers: [] } } })
+      expect(await concurrentA).toEqual({ dontKnow: false, answers: [{ label: 'First yes', value: 'a', index: 1 }] })
+      expect(await concurrentB).toEqual({ dontKnow: true, answers: [] })
+
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-a', toolName: 'qa', result: {}, isError: false }, ctx)
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-b', toolName: 'qa', result: {}, isError: false }, ctx)
+
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-1', toolName: 'quiz', args: quizArgs('Pick one', 'a') }, ctx)
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-2', toolName: 'quiz', args: quizArgs('Pick two', 'b') }, ctx)
+      const hijackA = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, done: (value: unknown) => void) => { done('terminal-a'); return {} })
+      const hijackB = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, done: (value: unknown) => void) => { done('terminal-b'); return {} })
+      expect(await hijackA).toBe('terminal-a')
+      expect(await hijackB).toBe('terminal-b')
+      const duplicate = await attached.request({ type: 'answer_native_question', requestId: first.requestId, answer: { unknown: true, result: { dontKnow: true, answers: [] } } }) as { settled?: boolean }
+      expect(duplicate.settled).toBe(false)
+
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-1', result: {}, isError: false }, ctx)
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-2', result: {}, isError: false }, ctx)
+
+      delayNextFactory = true
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-delay', toolName: 'quiz', args: quizArgs('Delayed', 'd') }, ctx)
+      const delayed = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, _done: (value: unknown) => void) => ({ render: () => ['delayed'] }))
+      const queued = attached.request({ type: 'answer_native_question', requestId: 'quiz-delay', answer: { unknown: true, result: { dontKnow: true, answers: [] } } })
+      expect(await delayed).toEqual({ dontKnow: true, answers: [] })
+      await queued
+      const beforeFactory = localClosed.length
+      startDelayedFactory?.()
+      await Bun.sleep(20)
+      expect(localClosed[beforeFactory] ?? localClosed.at(-1)).toEqual({ dontKnow: true, answers: [] })
+
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-delay', result: {}, isError: false }, ctx)
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-live', toolName: 'quiz', args: quizArgs('Live', 'l') }, ctx)
+      const liveQuiz = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, _done: (value: unknown) => void) => ({ render: () => ['live'] }))
+      const snake = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, done: (value: unknown) => void) => { done('snake'); return {} })
+      expect(await snake).toBe('snake')
+      await attached.request({ type: 'answer_native_question', requestId: 'quiz-live', answer: { selectedValues: ['l'], selectedIndices: [1] } })
+      expect(await liveQuiz).toEqual({ dontKnow: false, answers: [{ label: 'Live yes', value: 'l', index: 1 }] })
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-live', result: {}, isError: false }, ctx)
+
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-local', toolName: 'quiz', args: quizArgs('Local', 'x') }, ctx)
+      const localWin = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, done: (value: unknown) => void) => { done({ local: true }); return {} })
+      expect(await localWin).toEqual({ local: true })
+      const afterLocal = await attached.request({ type: 'answer_native_question', requestId: 'quiz-local', answer: { unknown: true, result: { dontKnow: true, answers: [] } } }) as { settled?: boolean }
+      expect(afterLocal.settled).toBe(false)
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-local', result: {}, isError: false }, ctx)
+
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-end', toolName: 'quiz', args: quizArgs('End', 'e') }, ctx)
+      const ended = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, _done: (value: unknown) => void) => ({ render: () => ['end'] }))
+      handlers.get('tool_execution_end')?.({ type: 'tool_execution_end', toolCallId: 'quiz-end', result: {}, isError: false }, ctx)
+      expect(await ended).toBeNull()
+
+      handlers.get('tool_execution_start')?.({ type: 'tool_execution_start', toolCallId: 'quiz-queue', toolName: 'quiz', args: quizArgs('Queued', 'q') }, ctx)
+      const queuedAnswer = attached.request({ type: 'answer_native_question', requestId: 'quiz-queue', answer: { unknown: true, result: { dontKnow: true, answers: [] } } })
+      const queuedCustom = ctx.ui.custom((_tui: unknown, _theme: unknown, _kb: unknown, _done: (value: unknown) => void) => ({ render: () => ['queued'] }))
+      expect(await queuedCustom).toEqual({ dontKnow: true, answers: [] })
+      await queuedAnswer
+
+      await attached.stop()
+      handlers.get('session_shutdown')?.({ type: 'session_shutdown', reason: 'quit' }, ctx)
+    } finally {
+      if (previousRuntime === undefined) delete process.env.HEDDLEWORK_RUNTIME_DIR
+      else process.env.HEDDLEWORK_RUNTIME_DIR = previousRuntime
+    }
+  })
 })

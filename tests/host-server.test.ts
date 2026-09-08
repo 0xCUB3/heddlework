@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { WorkbenchKernel } from '../src/core/kernel.ts'
 import { createFlowRuntimePlugin, flowRuntimeToken } from '../src/flows/plugin.ts'
-import { applyWorkbenchCommand, FrameAssembler, MAX_WS_FRAME_BYTES, utf8ByteLength, type ClientMessage, type ServerMessage } from '../src/protocol/index.ts'
+import { applyWorkbenchCommand, FrameAssembler, MAX_WS_FRAME_BYTES, PROTOCOL_VERSION, utf8ByteLength, type ClientMessage, type ServerMessage } from '../src/protocol/index.ts'
 import { createWorkspaceHost, hostConnectUrl, phonePairingLink, preferredPairingLink, type WorkspaceHost } from '../src/host/server.ts'
 import { generateHostToken } from '../src/host/token.ts'
 import type { WorkbenchController } from '../src/workbench/controller.ts'
@@ -42,7 +42,7 @@ class TestClient {
       this.rawSizes.push(utf8ByteLength(raw))
       const assembled = this.#frames.push(raw)
       if (assembled === undefined) return
-      const message = JSON.parse(assembled) as ServerMessage
+      const message = (typeof assembled === 'string' ? JSON.parse(assembled) : assembled) as ServerMessage
       this.messages.push(message)
       for (const waiter of [...this.#waiters]) {
         if (waiter.predicate(message)) {
@@ -87,7 +87,7 @@ describe('workspace host server', () => {
     const { kernel, host } = await bootstrap()
     const health = await fetch(`${host.url}/health`)
     expect(health.status).toBe(200)
-    expect(((await health.json()) as { protocol: number }).protocol).toBe(1)
+    expect(((await health.json()) as { protocol: number }).protocol).toBe(PROTOCOL_VERSION)
     const denied = await fetch(`${host.url}/ws?token=wrong`, { headers: { upgrade: 'websocket', connection: 'upgrade' } })
     expect(denied.status).toBe(401)
     const bad = new TestClient(wsUrl(host, 'wrong'))
@@ -104,7 +104,7 @@ describe('workspace host server', () => {
     await client.open()
     const welcome = await client.next((message) => message.kind === 'welcome')
     if (welcome.kind !== 'welcome') throw new Error('expected welcome')
-    expect(welcome.protocol).toBe(1)
+    expect(welcome.protocol).toBe(PROTOCOL_VERSION)
     expect(welcome.workspacePath).toBe(WORKSPACE)
     expect(welcome.hostUrls).toEqual([])
     expect(welcome.snapshot.connection).toBe('connected')

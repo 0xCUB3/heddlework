@@ -14,7 +14,7 @@ struct ClientEnvelope: Encodable {
     }
 
     static func hello() -> ClientEnvelope {
-        ClientEnvelope(kind: "hello", protocolVersion: 1, id: nil, command: nil)
+        ClientEnvelope(kind: "hello", protocolVersion: 2, id: nil, command: nil)
     }
 
     static func command(id: Int, command: [String: JSONValue]) -> ClientEnvelope {
@@ -40,6 +40,7 @@ struct ServerEnvelope: Decodable {
     let error: String?
     let message: String?
     let event: AttentionEvent?
+    let value: JSONValue?
 
     enum CodingKeys: String, CodingKey {
         case kind
@@ -59,6 +60,7 @@ struct ServerEnvelope: Decodable {
         case error
         case message
         case event
+        case value
     }
 }
 
@@ -75,6 +77,21 @@ struct SnapshotPatch: Decodable, Equatable {
     let changed: [String: JSONValue]
     let removed: [String]?
     let messagesPrepend: [JSONValue]?
+    let liveOps: [LiveContentOp]?
+    let seq: Int?
+    let contentRevision: Int?
+}
+
+struct LiveContentOp: Decodable, Equatable {
+    var op: String
+    var target: String?
+    var id: String?
+    var blockIndex: Int?
+    var text: String?
+    var bytes: Int?
+    var assistant: LiveAssistant?
+    var tool: ToolRun?
+    var tools: [ToolRun]?
 }
 
 enum CommandFactory {
@@ -98,6 +115,13 @@ enum CommandFactory {
     static func withString(_ type: String, key: String, value: String) -> [String: JSONValue] {
         var command = simple(type)
         command[key] = .string(value)
+        return command
+    }
+
+    static func getTranscriptDetail(entryId: String, offset: Int = 0, limit: Int? = nil) -> [String: JSONValue] {
+        var command = withString("getTranscriptDetail", key: "entryId", value: entryId)
+        if offset > 0 { command["offset"] = .number(Double(offset)) }
+        if let limit { command["limit"] = .number(Double(limit)) }
         return command
     }
 
@@ -181,4 +205,31 @@ enum CommandFactory {
         if let cancelled { command["cancelled"] = .bool(cancelled) }
         return command
     }
+
+    static func submitAskUserQuestionnaire(toolCallId: String, answers: [[String: JSONValue]], note: String? = nil) -> [String: JSONValue] {
+        var command = simple("submitAskUserQuestionnaire")
+        command["toolCallId"] = .string(toolCallId)
+        command["answers"] = .array(answers.map { .object($0) })
+        if let note { command["note"] = .string(note) }
+        return command
+    }
+
+    static func cancelAskUserQuestionnaire(toolCallId: String) -> [String: JSONValue] {
+        var command = simple("cancelAskUserQuestionnaire")
+        command["toolCallId"] = .string(toolCallId)
+        return command
+    }
+}
+
+func sameSessionFile(_ left: String?, _ right: String?) -> Bool {
+    guard let left, let right, !left.isEmpty, !right.isEmpty else { return false }
+    if left == right { return true }
+    func normalize(_ value: String) -> String {
+        value.replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+    return normalize(left) == normalize(right)
+}
+
+func messageMatchesTranscriptEntry(_ message: PiMessage, entryId: String) -> Bool {
+    message.workbenchEntryId == entryId || message.toolCallId == entryId
 }

@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 
 if (process.platform !== 'darwin') {
   console.log('[heddlework-browser-smoke] skipped: macOS only')
@@ -8,7 +8,7 @@ if (process.platform !== 'darwin') {
 }
 
 const root = resolve(import.meta.dir, '..')
-const app = resolve(root, 'dist', 'Heddlework.app')
+const app = resolve(process.env.HEDDLEWORK_SMOKE_APP ?? resolve(root, 'dist', 'Heddlework.app'))
 const executable = resolve(app, 'Contents', 'MacOS', 'Heddlework')
 if (!existsSync(executable)) throw new Error(`Build the packaged app first: ${executable}`)
 
@@ -39,6 +39,8 @@ const child = Bun.spawn([
   cwd: root,
   env: {
     ...process.env,
+    HOME: temporary,
+    HEDDLEWORK_CWD: temporary,
     HEDDLEWORK_DEMO: '1',
     HEDDLEWORK_BROWSER_DATA_DIR: resolve(temporary, 'data'),
     HEDDLEWORK_BROWSER_SMOKE_URL: process.env.HEDDLEWORK_BROWSER_SMOKE_URL ?? `http://127.0.0.1:${server.port}/initial`,
@@ -53,7 +55,7 @@ const stderrPromise = new Response(child.stderr).text()
 let sawSandboxedHelper = false
 let lastProcessList = ''
 let monitorBusy = false
-const helperNeedle = `${app}/Contents/Frameworks/Heddlework Helper`
+const helperNeedle = `${app}/Contents/Frameworks/${basename(app, '.app')} Helper`
 const monitor = setInterval(() => {
   if (monitorBusy) return
   monitorBusy = true

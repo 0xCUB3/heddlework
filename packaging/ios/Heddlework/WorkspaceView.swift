@@ -24,6 +24,7 @@ struct WorkspaceView: View {
             .onDisappear { client.disconnect(clearState: false) }
             .modifier(lifecycle)
             .modifier(sheets)
+            .sheet(item: nativeQuestionBinding) { NativeQuestionView(question: $0, client: client) }
             .alert("Workspace", isPresented: errorPresented) {
                 Button("OK") { client.dismissError() }
             } message: { Text(client.lastError ?? "") }
@@ -149,7 +150,20 @@ struct WorkspaceView: View {
     }
 
     private var dialogBinding: Binding<ExtensionDialog?> {
-        Binding(get: { client.snapshot?.dialog }, set: { _ in })
+        Binding(get: {
+            if nativeQuestionBinding.wrappedValue != nil { return nil }
+            return client.snapshot?.dialog
+        }, set: { _ in })
+    }
+
+    private var nativeQuestionBinding: Binding<NativeQuestion?> {
+        Binding(
+            get: {
+                guard client.snapshot?.questionnaireCollapsed == nil else { return nil }
+                return client.snapshot?.liveTools?.compactMap(NativeQuestion.from(tool:)).first
+            },
+            set: { _ in }
+        )
     }
 
     private func reportPresence(visibility: String? = nil) {

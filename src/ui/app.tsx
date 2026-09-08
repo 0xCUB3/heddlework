@@ -317,19 +317,22 @@ export function WorkbenchApp({
     setRightPanel('notifications')
   }
 
-  const openWorkbenchSurface = (surfaceId: string, preserveFullscreen = false) => {
+  const openWorkbenchSurface = useCallback((surfaceId: string, preserveFullscreen = false) => {
     const contribution = uiSnapshot.surfaces.find((candidate) => candidate.id === surfaceId)
     if (!contribution) return
     contribution.onOpen?.()
     setSurface('chat')
-    closeOverlayNavigation()
+    if (layout.navigationOverlay) setLeftSidebarVisibility(false)
     if (!preserveFullscreen) setPanelFullscreen(false)
     const panelId = surfacePanelId(surfaceId)
     setDisplayedRightPanel(panelId)
     setRightPanel(panelId)
-  }
+  }, [uiSnapshot.surfaces, layout.navigationOverlay, setLeftSidebarVisibility])
 
-  const openDiff = (preserveFullscreen = false) => openWorkbenchSurface('diff', preserveFullscreen)
+  const openDiff = useCallback((preserveFullscreen = false) => openWorkbenchSurface('diff', preserveFullscreen), [openWorkbenchSurface])
+  const revertTranscript = useCallback((entryId: string) => { void controller.navigateTree(entryId) }, [controller])
+  const dismissTranscriptNotice = useCallback((id: number) => controller.dismissNotice(id), [controller])
+  const loadTranscriptDetail = useCallback((entryId: string) => controller.getTranscriptDetail(entryId).then(() => undefined), [controller])
 
   const toggleDiff = () => {
     if (diffOpen) closeRightPanel()
@@ -566,7 +569,7 @@ export function WorkbenchApp({
                     </>
                   ) : (
                     <>
-                      <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={() => openDiff()} onRevert={(entryId) => void controller.navigateTree(entryId)} onDismissNotice={(id) => controller.dismissNotice(id)} onLoadEarlier={controller.loadEarlierMessages} />
+                      <Transcript state={state} presenters={presenters} appearance={theme.resolved} interactionDisabled={composerPickerOpen} onOpenDiff={openDiff} onRevert={revertTranscript} onDismissNotice={dismissTranscriptNotice} onLoadEarlier={controller.loadEarlierMessages} onLoadDetail={loadTranscriptDetail} />
                       <TranscriptFade />
                       <ComposerNotificationStack notices={toasts} onDismiss={(id) => controller.dismissNotice(id)} onClear={() => {
                         for (const notice of toasts) controller.dismissNotice(notice.id)

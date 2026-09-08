@@ -67,8 +67,16 @@ struct PiMessage: Decodable, Equatable, Identifiable {
     var details: JSONValue? = nil
     var summary: String? = nil
     var tokensBefore: Double? = nil
+    var detailRef: TranscriptDetailRef? = nil
     var id: String { workbenchEntryId ?? "\(timestamp ?? 0)-\(role)-\(toolCallId ?? "")-\(contentText.prefix(24))" }
     var contentText: String { content?.text ?? output ?? command ?? "" }
+}
+
+struct TranscriptDetailRef: Decodable, Equatable {
+    var entryId: String
+    var bytes: Int
+    var omitted: Bool
+    var preview: String? = nil
 }
 
 struct PiForkMessage: Decodable, Equatable, Identifiable { var entryId: String; var text: String; var id: String { entryId } }
@@ -93,8 +101,26 @@ struct ContentBlock: Decodable, Equatable, Identifiable {
     var textValue: String { text ?? thinking ?? name ?? "" }
 }
 struct LiveAssistant: Decodable, Equatable, Identifiable { var id: String; var blocks: [LiveBlock] }
-struct LiveBlock: Decodable, Equatable, Identifiable { var index: Int; var kind: String; var text: String; var id: Int { index } }
-struct ToolRun: Decodable, Equatable, Identifiable { var id: String; var name: String; var args: JSONValue? = nil; var argsText: String? = nil; var output: String? = nil; var details: JSONValue? = nil; var status: String; var isError: Bool }
+struct LiveBlock: Decodable, Equatable, Identifiable {
+    var index: Int
+    var kind: String
+    var text: String
+    var textOffset: Int? = nil
+    var detailRef: TranscriptDetailRef? = nil
+    var id: Int { index }
+}
+struct ToolRun: Decodable, Equatable, Identifiable {
+    var id: String
+    var name: String
+    var args: JSONValue? = nil
+    var argsText: String? = nil
+    var output: String? = nil
+    var outputOffset: Int? = nil
+    var details: JSONValue? = nil
+    var status: String
+    var isError: Bool
+    var detailRef: TranscriptDetailRef? = nil
+}
 struct SessionSummary: Decodable, Equatable, Identifiable {
     var path: String
     var name: String? = nil

@@ -5889,7 +5889,7 @@ index eb719b8..055a5cd 100644
      fn disabled_initial_state_starts_at_the_target() {
          let now = Instant::now();
 diff --git a/packages/native/src/renderer.rs b/packages/native/src/renderer.rs
-index d66ab63..fcb7e2c 100644
+index d66ab63..e5c254b 100644
 --- a/packages/native/src/renderer.rs
 +++ b/packages/native/src/renderer.rs
 @@ -50,7 +50,7 @@ fn with_window_menu_actions(root: gpui::Div) -> gpui::Div {
@@ -6111,7 +6111,147 @@ index d66ab63..fcb7e2c 100644
      #[wasm_bindgen::prelude::wasm_bindgen(js_name = getWindowSize)]
      pub fn get_window_size(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
          let window = web_sys::window()
-@@ -4355,7 +4492,14 @@ pub(crate) fn build_host_container(
+@@ -3483,7 +3620,20 @@ impl VirtualListEntry {
+                 })
+             })
+             .collect();
+-        if self.config != config {
++        let old_count = self.config.logical_count(self.child_ids.len());
++        let new_count = config.logical_count(child_ids.len());
++        let external_mode_changed = self.config.item_count.is_some() != config.item_count.is_some();
++        let mut requires_rebuild = self.config.alignment != config.alignment || external_mode_changed;
++
++        if !requires_rebuild
++            && old_count != new_count
++            && config.item_count.is_some()
++            && !self.resize_external_count(new_count, window_start, &child_ids)
++        {
++            requires_rebuild = true;
++        }
++
++        if requires_rebuild {
+             let scroll_top = self.state.logical_scroll_top();
+             let should_follow =
+                 config.follow_tail && (!self.config.follow_tail || self.state.is_following_tail());
+@@ -3505,6 +3655,25 @@ impl VirtualListEntry {
+             return;
+         }
+ 
++        if self.config.estimated_item_height != config.estimated_item_height {
++            if let Some(height) = config.estimated_item_height {
++                self.state = self
++                    .state
++                    .clone()
++                    .with_uniform_item_height(gpui::px(height));
++            }
++        }
++        if self.config.overdraw != config.overdraw {
++            self.state.set_overdraw(gpui::px(config.overdraw));
++        }
++        if self.config.follow_tail != config.follow_tail {
++            self.state.set_follow_mode(if config.follow_tail {
++                gpui::FollowMode::Tail
++            } else {
++                gpui::FollowMode::Normal
++            });
++        }
++
+         // gpui anchors a list on a logical item, so splicing rows in at the
+         // front keeps the rows already on screen and pushes the new ones above
+         // the viewport. A browser anchors too, but suppresses it at scrollTop 0,
+@@ -3590,12 +3759,91 @@ impl VirtualListEntry {
+             self.state.scroll_to(gpui::ListOffset::default());
+         }
+ 
++        // React allocates new host IDs when external-window rows remount. Dead
++        // IDs can never regain focus; retaining them leaks across scroll cycles.
++        if self.child_ids != child_ids {
++            self.seen_rows.retain(|id| child_ids.contains(id));
++        }
++        self.config = config;
+         self.window_start = window_start;
+         self.child_ids = child_ids;
+         self.child_revisions = child_revisions;
+         self.row_focus_handles = row_focus_handles;
+     }
+ 
++    fn resize_external_count(
++        &mut self,
++        new_count: usize,
++        window_start: usize,
++        child_ids: &[u64],
++    ) -> bool {
++        let old_count = self.config.logical_count(self.child_ids.len());
++        let Some(delta) = isize::try_from(new_count)
++            .ok()
++            .zip(isize::try_from(old_count).ok())
++            .map(|(new, old)| new - old)
++        else {
++            return false;
++        };
++        if delta == 0 {
++            return true;
++        }
++
++        // A sliding external window can move while the logical list changes.
++        // Shared rows tell us whether that mutation was wholly before them
++        // (prepend) or wholly after them (append). Anything else is ambiguous
++        // because native does not know the identities of unmounted rows.
++        let mut shared_shift = None;
++        for (new_offset, id) in child_ids.iter().enumerate() {
++            let Some(old_offset) = self.child_ids.iter().position(|old| old == id) else {
++                continue;
++            };
++            let old_logical = self.window_start + old_offset;
++            let new_logical = window_start + new_offset;
++            let Some(shift) = isize::try_from(new_logical)
++                .ok()
++                .zip(isize::try_from(old_logical).ok())
++                .map(|(new, old)| new - old)
++            else {
++                return false;
++            };
++            match shared_shift {
++                Some(previous) if previous != shift => return false,
++                None => shared_shift = Some(shift),
++                _ => {}
++            }
++        }
++        let Some(shift) = shared_shift else {
++            return false;
++        };
++
++        match (delta, shift) {
++            (growth, 0) if growth > 0 => {
++                self.splice_external(old_count..old_count, growth as usize);
++            }
++            (growth, front) if growth > 0 && front == growth => {
++                self.splice_external(0..0, growth as usize);
++            }
++            (shrink, 0) if shrink < 0 => {
++                self.state.splice(new_count..old_count, 0);
++            }
++            (shrink, front) if shrink < 0 && front == shrink => {
++                self.state.splice(0..(-shrink) as usize, 0);
++            }
++            _ => return false,
++        }
++        true
++    }
++
++    fn splice_external(&self, old_range: std::ops::Range<usize>, count: usize) {
++        if let Some(height) = self.config.estimated_item_height {
++            self.state
++                .splice_with_uniform_height(old_range, count, gpui::px(height));
++        } else {
++            self.state.splice(old_range, count);
++        }
++    }
++
+     fn remeasure_unknown_rows(
+         &mut self,
+         window_start: usize,
+@@ -4355,7 +4603,14 @@ pub(crate) fn build_host_container(
              // Primary button only, like the DOM. Right and middle clicks go to
              // `onAuxClick`, and `onMouseDown` sees every button.
              "click" => {
@@ -6126,7 +6266,7 @@ index d66ab63..fcb7e2c 100644
                      emit_event_full(&callback, id, "click", |p| {
                          let (x, y) = point_to_xy(click_event.position());
                          p.x = Some(x);
-@@ -4363,6 +4507,9 @@ pub(crate) fn build_host_container(
+@@ -4363,6 +4618,9 @@ pub(crate) fn build_host_container(
                          p.modifiers = Some(click_event.modifiers().into());
                          p.click_count = Some(click_event.click_count() as u32);
                          p.is_right_click = Some(click_event.is_right_click());
@@ -6136,7 +6276,7 @@ index d66ab63..fcb7e2c 100644
                      });
                  });
              }
-@@ -4377,6 +4524,9 @@ pub(crate) fn build_host_container(
+@@ -4377,6 +4635,9 @@ pub(crate) fn build_host_container(
                          p.modifiers = Some(click_event.modifiers().into());
                          p.click_count = Some(click_event.click_count() as u32);
                          p.is_right_click = Some(click_event.is_right_click());
@@ -6146,7 +6286,7 @@ index d66ab63..fcb7e2c 100644
                      });
                  });
              }
-@@ -4965,6 +5115,10 @@ pub(crate) fn point_to_xy(p: gpui::Point<gpui::Pixels>) -> (f64, f64) {
+@@ -4965,6 +5226,10 @@ pub(crate) fn point_to_xy(p: gpui::Point<gpui::Pixels>) -> (f64, f64) {
  }
  
  /// Convert GPUI MouseButton to our u32 encoding: 0=left, 1=middle, 2=right.
@@ -6157,7 +6297,7 @@ index d66ab63..fcb7e2c 100644
  pub(crate) fn mouse_button_to_u32(button: gpui::MouseButton) -> u32 {
      match button {
          gpui::MouseButton::Left => 0,
-@@ -5482,6 +5636,11 @@ pub struct WindowOptions {
+@@ -5482,6 +5747,11 @@ pub struct WindowOptions {
      /// `"opaque"` | `"transparent"` | `"blurred"`. `transparent: true` is the
      /// same as `"transparent"` when this is unset.
      pub window_background: Option<String>,
@@ -6169,7 +6309,7 @@ index d66ab63..fcb7e2c 100644
      pub traffic_light_x: Option<f64>,
      pub traffic_light_y: Option<f64>,
      /// Give the window key focus when it opens. `false` opens it behind the
-@@ -5506,6 +5665,8 @@ impl Default for WindowOptions {
+@@ -5506,6 +5776,8 @@ impl Default for WindowOptions {
              transparent: Some(false),
              titlebar_transparent: Some(false),
              window_background: None,
@@ -6178,7 +6318,7 @@ index d66ab63..fcb7e2c 100644
              traffic_light_x: None,
              traffic_light_y: None,
              focus: Some(true),
-@@ -5945,6 +6106,14 @@ mod window_options_tests {
+@@ -5945,6 +6217,14 @@ mod window_options_tests {
          assert!(gpui_options.focus);
      }
  
@@ -7114,6 +7254,172 @@ index 6b72d34..844a263 100644
    getWindowInsets?(): NativeWindowInsets
    setWindowTitle?(title: string): void
    /** Bring the window forward and focus it. Reveals a `show: false` window. */
+diff --git a/packages/native/scripts/virtual-list-anchor-regression.mjs b/packages/native/scripts/virtual-list-anchor-regression.mjs
+new file mode 100644
+index 0000000..d4c46e0
+--- /dev/null
++++ b/packages/native/scripts/virtual-list-anchor-regression.mjs
+@@ -0,0 +1,93 @@
++import { TestGpuixRenderer } from '../index.js'
++
++function setup({ overdraw = 0 } = {}) {
++  const renderer = new TestGpuixRenderer(400, 200)
++  const ops = [
++    ['createElement', 1, 'virtual-list'],
++    ['setStyle', 1, { width: 400, height: 200 }],
++    ['setCustomProp', 1, 'estimatedItemHeight', 40],
++    ['setCustomProp', 1, 'overdraw', overdraw],
++    ['setCustomProp', 1, 'itemCount', 20],
++    ['setCustomProp', 1, 'windowStart', 0],
++  ]
++  for (let offset = 0; offset < 8; offset += 1) {
++    const id = 10 + offset
++    ops.push(
++      ['createElement', id, 'div'],
++      ['setStyle', id, { width: '100%', height: 70, flexShrink: 0 }],
++      ['appendChild', 1, id],
++    )
++  }
++  ops.push(['setRoot', 1])
++  renderer.applyBatch(JSON.stringify(ops))
++  renderer.flush()
++  renderer.scrollToItem(1, 5)
++  renderer.flush()
++  return renderer
++}
++
++function snapshot(renderer) {
++  return {
++    offset: renderer.getScrollOffset(1)?.[1] ?? 0,
++    anchor: renderer.getListScrollTop(1),
++    rowY: renderer.getElementBounds(15)?.[1],
++  }
++}
++
++const failures = []
++
++function checkStableVisibleRow(label, mutations, { expectOffsetStable = false, setupOptions } = {}) {
++  const renderer = setup(setupOptions)
++  try {
++    const before = snapshot(renderer)
++    renderer.applyBatch(JSON.stringify(mutations))
++    renderer.flush()
++    const after = snapshot(renderer)
++    const rowDelta = (after.rowY ?? 0) - (before.rowY ?? 0)
++    const offsetDelta = after.offset - before.offset
++    console.log(JSON.stringify({ label, before, after, rowDelta, offsetDelta }))
++    if (before.rowY == null || after.rowY == null || Math.abs(rowDelta) > 0.5) {
++      failures.push(`${label} moved retained row by ${rowDelta}px`)
++    }
++    if (JSON.stringify(before.anchor) !== JSON.stringify(after.anchor)) {
++      failures.push(`${label} changed logical anchor ${JSON.stringify(before.anchor)} -> ${JSON.stringify(after.anchor)}`)
++    }
++    if (expectOffsetStable && Math.abs(offsetDelta) > 0.5) {
++      failures.push(`${label} discarded cached height metadata (${offsetDelta}px offset shift)`)
++    }
++  } finally {
++    renderer.shutdown()
++  }
++}
++
++checkStableVisibleRow('append-count', [['setCustomProp', 1, 'itemCount', 21]], { expectOffsetStable: true })
++checkStableVisibleRow('overdraw-change', [['setCustomProp', 1, 'overdraw', 120]], {
++  expectOffsetStable: true,
++  setupOptions: { overdraw: 1000 },
++})
++checkStableVisibleRow('estimate-change', [['setCustomProp', 1, 'estimatedItemHeight', 52]])
++
++{
++  const renderer = setup()
++  try {
++    const before = snapshot(renderer)
++    renderer.applyBatch(JSON.stringify([
++      ['setCustomProp', 1, 'itemCount', 21],
++      ['setCustomProp', 1, 'windowStart', 1],
++    ]))
++    renderer.flush()
++    const after = snapshot(renderer)
++    const rowDelta = (after.rowY ?? 0) - (before.rowY ?? 0)
++    console.log(JSON.stringify({ label: 'prepend-identity-anchor', before, after, rowDelta }))
++    if (before.rowY == null || after.rowY == null || Math.abs(rowDelta) > 0.5) {
++      failures.push(`prepend moved retained row by ${rowDelta}px`)
++    }
++    if (after.anchor?.[0] !== (before.anchor?.[0] ?? -1) + 1 || after.anchor?.[1] !== before.anchor?.[1]) {
++      failures.push(`prepend failed to shift logical anchor ${JSON.stringify(before.anchor)} -> ${JSON.stringify(after.anchor)}`)
++    }
++  } finally {
++    renderer.shutdown()
++  }
++}
++
++if (failures.length > 0) throw new Error(failures.join('; '))
+diff --git a/crates/gpui/src/elements/list.rs b/crates/gpui/src/elements/list.rs
+index 5166061..84af798 100644
+--- a/crates/gpui/src/elements/list.rs
++++ b/crates/gpui/src/elements/list.rs
+@@ -349,6 +349,12 @@ impl ListState {
+         self
+     }
+ 
++    /// Update the list overdraw without resetting its measured item cache or
++    /// logical scroll anchor.
++    pub fn set_overdraw(&self, overdraw: Pixels) {
++        self.0.borrow_mut().overdraw = overdraw.max(px(0.));
++    }
++
+     /// Reset this instantiation of the list state.
+     ///
+     /// Note that this will cause scroll events to be dropped until the next paint.
+@@ -504,6 +510,24 @@ impl ListState {
+         self.splice_focusable(old_range, (0..count).map(|_| None))
+     }
+ 
++    /// Replace items while giving only the newly inserted rows a uniform height
++    /// hint. Existing measured rows and their scroll-anchor metadata are kept.
++    pub fn splice_with_uniform_height(
++        &self,
++        old_range: Range<usize>,
++        count: usize,
++        height: Pixels,
++    ) {
++        self.splice_focusable_with_size_hint(
++            old_range,
++            (0..count).map(|_| None),
++            Some(Size {
++                width: px(0.),
++                height,
++            }),
++        )
++    }
++
+     /// Register with the list state that the items in `old_range` have been replaced
+     /// by new items. As opposed to [`Self::splice`], this method allows an iterator of optional focus handles
+     /// to be supplied to properly integrate with items in the list that can be focused. If a focused item
+@@ -512,6 +536,15 @@ impl ListState {
+         &self,
+         old_range: Range<usize>,
+         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
++    ) {
++        self.splice_focusable_with_size_hint(old_range, focus_handles, None)
++    }
++
++    fn splice_focusable_with_size_hint(
++        &self,
++        old_range: Range<usize>,
++        focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
++        size_hint: Option<Size<Pixels>>,
+     ) {
+         let state = &mut *self.0.borrow_mut();
+ 
+@@ -524,7 +557,7 @@ impl ListState {
+             focus_handles.into_iter().map(|focus_handle| {
+                 spliced_count += 1;
+                 ListItem::Unmeasured {
+-                    size_hint: None,
++                    size_hint,
+                     focus_handle,
+                 }
+             }),
 diff --git a/crates/gpui/src/assets.rs b/crates/gpui/src/assets.rs
 index cb8b47ed01..71e12b6653 100644
 --- a/crates/gpui/src/assets.rs

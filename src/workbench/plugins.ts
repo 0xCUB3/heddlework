@@ -3,7 +3,7 @@ import { DemoTransport } from '../pi/demo-transport.ts'
 import { createPiTransport, type PiRpcTransportOptions } from '../pi/rpc-transport.ts'
 import { PiSessionCatalog, type SessionCatalogOptions } from '../pi/session-catalog.ts'
 import type { AgentTransport } from '../pi/transport.ts'
-import { loadWorkspaceDiff } from '../workspace/git-diff.ts'
+import { SharedWorkspaceDiffLoader } from '../workspace/git-diff.ts'
 import { WorkbenchController } from './controller.ts'
 import './events.ts'
 import type { SessionCatalogService, WorkspaceDiffService } from './services.ts'
@@ -41,7 +41,7 @@ export function createSessionCatalogPlugin(options: SessionCatalogOptions = {}, 
 export const localWorkspaceDiffPlugin: WorkbenchPlugin = {
   id: 'local-workspace-diff',
   activate(ctx) {
-    ctx.provide(workspaceDiffToken, { load: loadWorkspaceDiff })
+    ctx.provide(workspaceDiffToken, new SharedWorkspaceDiffLoader())
   },
 }
 

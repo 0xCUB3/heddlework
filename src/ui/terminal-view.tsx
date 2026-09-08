@@ -3,6 +3,7 @@ import { useGpuix } from '@gpuix/react'
 import type { TerminalAppearance, TerminalGridSnapshot, TerminalPlacement, TerminalRow as TerminalGridRow, TerminalSessionId } from '../terminal/types.ts'
 import { encodeTerminalKey, wrapBracketedPaste, type TerminalKeyEvent } from '../terminal/keys.ts'
 import type { TerminalSessionService } from '../terminal/service.ts'
+import { createTerminalTurnGate } from '../terminal/work-budget.ts'
 import { copyTextToClipboard } from './clipboard-media.ts'
 import { useTerminalGrid, useTerminalProjectionSuspended, useTerminalServiceSnapshot } from './terminal-context.tsx'
 import { colors } from './theme.ts'
@@ -183,26 +184,36 @@ const NativeTerminalGrid = memo(function NativeTerminalGrid({
   const direct = typeof renderer?.setTerminalFrame === 'function'
   const binaryCells = useRef<Uint8Array | undefined>(undefined)
   const terminalId = useRef<number | undefined>(undefined)
+  const turnGate = useRef(createTerminalTurnGate())
 
   const stageFrame = useCallback(() => {
     if (!direct || terminalId.current === undefined || !renderer?.setTerminalFrame) return
-    const current = service.grid(sessionId)
-    if (!current) return
-    const frame = terminalNativeBinaryFrame(current, theme, rendering, binaryCells.current)
-    binaryCells.current = frame.cells
-    const { cells, ...metadata } = frame
-    const payload = typeof Buffer === 'undefined'
-      ? cells
-      : Buffer.from(cells.buffer, cells.byteOffset, cells.byteLength)
-    renderer.setTerminalFrame(terminalId.current, JSON.stringify(metadata), payload)
+    turnGate.current.run(() => {
+      if (terminalId.current === undefined || !renderer?.setTerminalFrame) return
+      const current = service.grid(sessionId)
+      if (!current) return
+      const frame = terminalNativeBinaryFrame(current, theme, rendering, binaryCells.current)
+      binaryCells.current = frame.cells
+      turnGate.current.budget.consume(frame.cells.byteLength, 0)
+      const { cells, ...metadata } = frame
+      const payload = typeof Buffer === 'undefined'
+        ? cells
+        : Buffer.from(cells.buffer, cells.byteOffset, cells.byteLength)
+      renderer.setTerminalFrame(terminalId.current, JSON.stringify(metadata), payload)
+    })
   }, [direct, renderer, rendering, service, sessionId, theme])
 
   useLayoutEffect(() => {
     if (!direct) return
     stageFrame()
-    return service.subscribeFrames((changedId) => {
+    const stop = service.subscribeFrames((changedId) => {
       if (changedId === sessionId) stageFrame()
     })
+    return () => {
+      stop()
+      turnGate.current.dispose()
+      turnGate.current = createTerminalTurnGate()
+    }
   }, [direct, service, sessionId, stageFrame])
 
   const fallbackFrame = useMemo(

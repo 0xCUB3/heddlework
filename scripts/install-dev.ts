@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, renameSync, rmSync, symlinkSync, watch } from 'node:fs'
 import { homedir } from 'node:os'
+import { deployDevHosts } from './deploy-dev.ts'
 import { resolve } from 'node:path'
 
 // Builds the Chromium-bundled app from this checkout and installs it as "Heddlework Dev.app" so it can sit beside a
@@ -44,6 +45,13 @@ function install(): boolean {
   rmSync(launcher, { force: true })
   symlinkSync(resolve(bundle, 'Contents', 'MacOS', 'Heddlework'), launcher)
   console.log(`[install-dev] installed ${bundle} in ${((performance.now() - started) / 1000).toFixed(1)}s`)
+  // Reconcile the background runtime without opening a GUI. Idle mismatches and
+  // same-protocol identity refreshes use POST /upgrade; busy runtimes stay put.
+  if (!run([process.execPath, resolve(root, 'scripts/dev-runtime.ts'), bundle])) {
+    console.error('[install-dev] local runtime reconcile failed; the installed app is in place')
+    return false
+  }
+  if (!args.includes('--local-only') && !deployDevHosts(bundle)) return false
   if (launch && (wasRunning || !watchMode || firstRun)) run(['open', '-n', bundle])
   return true
 }

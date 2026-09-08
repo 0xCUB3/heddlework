@@ -44,7 +44,7 @@ final class FrameAssemblerTests: XCTestCase {
         ]
         let envelope = try JSONSerialization.data(withJSONObject: [
             "kind": "welcome",
-            "protocol": 1,
+            "protocol": 2,
             "workspacePath": "/tmp/large",
             "snapshot": snapshot.mapValues(\.any),
         ])
@@ -54,7 +54,7 @@ final class FrameAssemblerTests: XCTestCase {
         await engine.setPublisher { event in
             if case .welcome(_, let snapshot, _, _, _, _, _, _, let protocolVersion) = event {
                 onMain = Thread.isMainThread
-                XCTAssertEqual(protocolVersion, 1)
+                XCTAssertEqual(protocolVersion, 2)
                 XCTAssertEqual(snapshot.messages?.count, 40)
                 XCTAssertEqual(snapshot.editorText?.count, 80_000)
                 decoded.fulfill()
@@ -63,6 +63,36 @@ final class FrameAssemblerTests: XCTestCase {
         try await engine.ingest(envelope)
         await fulfillment(of: [decoded], timeout: 5)
         XCTAssertFalse(onMain)
+    }
+
+    func testWireEngineAppliesLiveOpsWithoutReplacingMessages() async throws {
+        let welcome = try JSONSerialization.data(withJSONObject: [
+            "kind": "welcome",
+            "protocol": 2,
+            "workspacePath": "/tmp/live",
+            "snapshot": [
+                "workspacePath": "/tmp/live",
+                "messages": [["role": "user", "content": "Prompt", "workbenchEntryId": "u1"]],
+                "liveAssistant": ["id": "live", "blocks": [["index": 0, "kind": "text", "text": "He"]]],
+            ],
+        ])
+        let patch = Data(#"{"kind":"patch","patch":{"version":1,"changed":{},"liveOps":[{"op":"append","target":"assistant","id":"live","blockIndex":0,"text":"llo"}],"contentRevision":4}}"#.utf8)
+        let engine = WorkspaceWireEngine()
+        let decoded = expectation(description: "live patch")
+        decoded.expectedFulfillmentCount = 1
+        await engine.setPublisher { event in
+            if case .snapshot(let snapshot, let revision, let rows) = event {
+                XCTAssertEqual(snapshot.messages?.count, 1)
+                XCTAssertEqual(snapshot.messages?.first?.workbenchEntryId, "u1")
+                XCTAssertEqual(snapshot.liveAssistant?.blocks.first?.text, "Hello")
+                XCTAssertEqual(revision, 4)
+                XCTAssertFalse(rows.isEmpty)
+                decoded.fulfill()
+            }
+        }
+        try await engine.ingest(welcome)
+        try await engine.ingest(patch)
+        await fulfillment(of: [decoded], timeout: 5)
     }
 }
 

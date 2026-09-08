@@ -132,6 +132,7 @@ export type ExtensionUiMethod =
   | 'setWidget'
   | 'setTitle'
   | 'set_editor_text'
+  | 'unsupported'
 
 export interface ExtensionUiRequest extends RpcRecord {
   type: 'extension_ui_request'
@@ -150,6 +151,7 @@ export interface ExtensionUiRequest extends RpcRecord {
   widgetLines?: string[]
   widgetPlacement?: 'aboveEditor' | 'belowEditor'
   text?: string
+  nativeQuestion?: Record<string, unknown>
 }
 
 export function isExtensionUiRequest(record: RpcRecord): record is ExtensionUiRequest {

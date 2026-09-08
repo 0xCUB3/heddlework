@@ -195,12 +195,20 @@ describeNative('terminal panels', () => {
       const scrollToControl = async (testId: string) => {
         const scroller = root.renderer.findByTestId('settings-scroll-native')!
         const viewport = await automation.getByTestId('settings-scroll').bounds()
-        const control = await automation.getByTestId(testId).bounds()
-        const overflow = control.y + control.height - viewport.y - viewport.height + 24
-        if (overflow > 0) {
-          const offset = root.renderer.getScrollOffset(scroller.id)?.[1] ?? 0
-          root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(overflow))
-          root.renderer.flush()
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          try {
+            const control = await automation.getByTestId(testId).bounds()
+            const overflow = control.y + control.height - viewport.y - viewport.height + 24
+            const underflow = viewport.y + 24 - control.y
+            if (overflow <= 0 && underflow <= 0) return
+            const offset = root.renderer.getScrollOffset(scroller.id)?.[1] ?? 0
+            root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(overflow > 0 ? overflow : -underflow))
+            root.renderer.flush()
+          } catch {
+            const offset = root.renderer.getScrollOffset(scroller.id)?.[1] ?? 0
+            root.renderer.scrollTo(scroller.id, 0, offset - Math.ceil(viewport.height * 0.75))
+            root.renderer.flush()
+          }
         }
         const visible = await automation.getByTestId(testId).bounds()
         expect(visible.y).toBeGreaterThanOrEqual(viewport.y)

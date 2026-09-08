@@ -3,12 +3,17 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { FlowRuntime } from '../flows/runtime.ts'
 import type { PiSessionSummary } from '../pi/session-catalog.ts'
+import { PiSessionHistoryPager, SESSION_HISTORY_PAGE_MESSAGES, type SessionHistoryPage } from '../pi/session-history.ts'
+import type { PiMessage } from '../pi/types.ts'
 import type { WorkbenchCommand } from '../protocol/commands.ts'
 import { writePrivateJson } from '../runtime/paths.ts'
 import type { WorkbenchController } from '../workbench/controller.ts'
 import type { WorkbenchState } from '../workbench/state.ts'
 import { CommandJournal, type CommandAdmissionRecord } from './command-journal.ts'
 import type { createRuntimeSessionFactory } from './runtime-composition.ts'
+
+export const IDLE_LEASE_SWEEP_MS = 15_000
+export const MAX_HISTORY_PAGERS = 24
 
 export type RuntimeSessionBundle = Awaited<ReturnType<ReturnType<typeof createRuntimeSessionFactory>>>
 
@@ -109,6 +114,14 @@ function controllerIsBusy(snapshot: WorkbenchState): boolean {
   return false
 }
 
+function leaseIsProtected(bundle: RuntimeSessionBundle): boolean {
+  const snapshot = bundle.controller.getSnapshot()
+  if (controllerIsBusy(snapshot)) return true
+  if (snapshot.queue.items.length > 0) return true
+  const ownership = (bundle.controller as WorkbenchController).agentOwnership
+  return ownership === 'attached'
+}
+
 export class SessionRuntime {
   readonly #createSession: ReturnType<typeof createRuntimeSessionFactory>
   readonly #registryPath: string
@@ -118,8 +131,12 @@ export class SessionRuntime {
   readonly #restored = new Map<string, RegistryEntry>()
   readonly #started = new Set<string>()
   readonly #creating = new Map<string, Promise<RuntimeSessionBundle>>()
+  readonly #historyPagers = new Map<string, PiSessionHistoryPager>()
+  readonly #lastUsed = new Map<string, number>()
+  readonly #socketRefs = new Map<string, number>()
   readonly #workspacePath: string
   #defaultKey: string
+  #idleTimer: ReturnType<typeof setInterval> | undefined
   readonly #snapshotUnsubs = new Map<string, () => void>()
   readonly #snapshotListeners = new Set<(sessionKey: string) => void>()
   readonly #flowUnsubs = new Map<string, () => void>()
@@ -137,6 +154,10 @@ export class SessionRuntime {
     this.#wireSession(this.#defaultKey, options.initial)
     this.#restoreRegistry(sessionPath)
     this.#persistRegistry()
+    this.#idleTimer = setInterval(() => {
+      void this.releaseIdleExecutionLeases()
+    }, IDLE_LEASE_SWEEP_MS)
+    this.#idleTimer.unref?.()
   }
 
   get defaultSessionKey(): string {
@@ -172,12 +193,34 @@ export class SessionRuntime {
   }
 
   attach(sessionPath?: string | undefined): SessionAttachment {
-    const key = sessionPath ? resolve(sessionPath) : this.#defaultKey
-    const session = this.#sessions.get(key) ?? this.#findSessionByPath(sessionPath) ?? this.#sessions.get(this.#defaultKey)
+    const alias = !sessionPath || isAliasRegistryKey(sessionPath)
+    const key = alias ? (sessionPath ?? this.#defaultKey) : resolve(sessionPath)
+    const session = this.#sessions.get(key)
+      ?? this.#findSessionByPath(sessionPath)
+      ?? this.#sessions.get(this.#defaultKey)
     if (!session) throw new Error('No runtime session is available')
     const resolvedKey = this.#keyForBundle(session) ?? key
+    this.#touch(resolvedKey)
     const activePath = session.controller.getSnapshot().session.sessionFile
     return { controller: session.controller, flows: session.flows, sessionPath: activePath, sessionKey: resolvedKey }
+  }
+
+  hasExecutionLease(sessionPath: string): boolean {
+    return this.bundleForKey(sessionPath) !== undefined
+  }
+
+  executionLeaseCount(): number {
+    const seen = new Set<RuntimeSessionBundle>()
+    for (const bundle of this.#sessions.values()) seen.add(bundle)
+    return seen.size
+  }
+
+  async browseHistory(sessionPath: string, limit = SESSION_HISTORY_PAGE_MESSAGES): Promise<SessionHistoryPage> {
+    return this.#pager(resolve(sessionPath)).loadEarlier(limit)
+  }
+
+  async loadHistoryEntry(sessionPath: string, entryId: string): Promise<PiMessage | undefined> {
+    return this.#pager(resolve(sessionPath)).loadEntry(entryId)
   }
 
   bundleForKey(sessionKey: string): RuntimeSessionBundle | undefined {
@@ -188,6 +231,7 @@ export class SessionRuntime {
     const bundle = this.#sessions.get(this.#defaultKey)
     if (!bundle) throw new Error('No initial runtime session is available')
     await this.#start(this.#defaultKey, bundle)
+    this.#touch(this.#defaultKey)
     this.#reindexDefaultSession()
     this.#persistRegistry()
   }
@@ -197,7 +241,10 @@ export class SessionRuntime {
     const pending = this.#creating.get(key)
     if (pending) return pending
     const existing = this.#sessions.get(key) ?? this.#findSessionByPath(key)
-    if (existing) return existing
+    if (existing) {
+      this.#touch(this.#keyForBundle(existing) ?? key)
+      return existing
+    }
     const restored = this.#restored.get(key)
     const task = this.#createSession({
       workspacePath: resolve(summary?.cwd || restored?.workspacePath || this.#workspacePath),
@@ -207,6 +254,7 @@ export class SessionRuntime {
       this.#sessions.set(key, bundle)
       this.#wireSession(key, bundle)
       await this.#start(key, bundle)
+      this.#touch(key)
       this.#restored.delete(key)
       this.#persistRegistry()
       return bundle
@@ -226,6 +274,7 @@ export class SessionRuntime {
     await this.#start(key, bundle)
     await bundle.controller.newSession()
     key = this.#assignPathKey(key, bundle)
+    this.#touch(key)
     this.#persistRegistry()
     return { sessionKey: key, bundle }
   }
@@ -235,6 +284,7 @@ export class SessionRuntime {
     for (const [key, bundle] of this.#sessions) {
       if (resolve(bundle.controller.getSnapshot().workspacePath) !== target) continue
       const sessionPath = bundle.controller.getSnapshot().session.sessionFile
+      this.#touch(sessionPath ? resolve(sessionPath) : key)
       if (sessionPath) return { sessionKey: resolve(sessionPath), bundle }
       return { sessionKey: key, bundle }
     }
@@ -246,6 +296,7 @@ export class SessionRuntime {
     await this.#start(key, bundle)
     await bundle.controller.switchWorkspace(target)
     key = this.#assignPathKey(key, bundle)
+    this.#touch(key)
     this.#persistRegistry()
     return { sessionKey: key, bundle }
   }
@@ -276,6 +327,10 @@ export class SessionRuntime {
   }
 
   async dispose(): Promise<void> {
+    if (this.#idleTimer) {
+      clearInterval(this.#idleTimer)
+      this.#idleTimer = undefined
+    }
     for (const unsub of [...this.#snapshotUnsubs.values(), ...this.#flowUnsubs.values()]) unsub()
     this.#snapshotUnsubs.clear()
     this.#flowUnsubs.clear()
@@ -287,6 +342,79 @@ export class SessionRuntime {
     this.#started.clear()
     this.#creating.clear()
     this.#restored.clear()
+    this.#historyPagers.clear()
+    this.#lastUsed.clear()
+  }
+
+  async releaseIdleExecutionLeases(options: { idleMs?: number; now?: number } = {}): Promise<string[]> {
+    const idleMs = options.idleMs ?? 60_000
+    const now = options.now ?? Date.now()
+    const released: string[] = []
+    const seen = new Set<RuntimeSessionBundle>()
+    for (const [key, bundle] of [...this.#sessions]) {
+      if (seen.has(bundle)) continue
+      seen.add(bundle)
+      if (key === this.#defaultKey) continue
+      if (this.#creating.has(key)) continue
+      if (leaseIsProtected(bundle)) continue
+      if ((this.#socketRefs.get(key) ?? 0) > 0) continue
+      if ((this.#lastUsed.get(key) ?? now) + idleMs > now) continue
+      await this.#disposeLease(key, bundle)
+      released.push(key)
+    }
+    return released
+  }
+
+  retainSocket(sessionKey: string): void {
+    const key = this.#sessions.has(sessionKey) ? sessionKey : (this.#findSessionByPath(sessionKey) ? this.#keyForBundle(this.#findSessionByPath(sessionKey)!) ?? sessionKey : sessionKey)
+    this.#socketRefs.set(key, (this.#socketRefs.get(key) ?? 0) + 1)
+    this.#touch(key)
+  }
+
+  releaseSocket(sessionKey: string): void {
+    const key = this.#sessions.has(sessionKey) ? sessionKey : (this.#findSessionByPath(sessionKey) ? this.#keyForBundle(this.#findSessionByPath(sessionKey)!) ?? sessionKey : sessionKey)
+    const next = (this.#socketRefs.get(key) ?? 0) - 1
+    if (next <= 0) this.#socketRefs.delete(key)
+    else this.#socketRefs.set(key, next)
+  }
+
+  #touch(key: string): void {
+    this.#lastUsed.set(key, Date.now())
+  }
+
+  #pager(key: string): PiSessionHistoryPager {
+    let pager = this.#historyPagers.get(key)
+    if (pager) {
+      this.#historyPagers.delete(key)
+      this.#historyPagers.set(key, pager)
+      return pager
+    }
+    pager = new PiSessionHistoryPager(key)
+    this.#historyPagers.set(key, pager)
+    for (const [candidate] of this.#historyPagers) {
+      if (this.#historyPagers.size <= MAX_HISTORY_PAGERS) break
+      if (candidate === key) continue
+      if (this.bundleForKey(candidate)) continue
+      this.#historyPagers.delete(candidate)
+    }
+    return pager
+  }
+
+  async #disposeLease(key: string, bundle: RuntimeSessionBundle): Promise<void> {
+    this.#snapshotUnsubs.get(key)?.()
+    this.#flowUnsubs.get(key)?.()
+    this.#snapshotUnsubs.delete(key)
+    this.#flowUnsubs.delete(key)
+    if (this.#sessions.get(key) === bundle) this.#sessions.delete(key)
+    for (const [candidate, occupant] of [...this.#sessions]) {
+      if (occupant === bundle) this.#sessions.delete(candidate)
+    }
+    this.#started.delete(key)
+    this.#lastUsed.delete(key)
+    const sessionPath = bundle.controller.getSnapshot().session.sessionFile
+    if (sessionPath) this.#historyPagers.delete(resolve(sessionPath))
+    await bundle.dispose()
+    this.#persistRegistry()
   }
 
   #findSessionByPath(sessionPath: string | undefined): RuntimeSessionBundle | undefined {
@@ -382,6 +510,11 @@ export class SessionRuntime {
     if (this.#started.has(fromKey)) {
       this.#started.delete(fromKey)
       this.#started.add(toKey)
+    }
+    const lastUsed = this.#lastUsed.get(fromKey)
+    if (lastUsed !== undefined) {
+      this.#lastUsed.delete(fromKey)
+      this.#lastUsed.set(toKey, lastUsed)
     }
     if (this.#defaultKey === fromKey) this.#defaultKey = toKey
     this.#persistRegistry()
