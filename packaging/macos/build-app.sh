@@ -22,6 +22,10 @@ if [ -d "$app/Contents/Frameworks/Chromium Embedded Framework.framework" ]; then
     for helper in "$frameworks"/*.app; do
       sign --entitlements "$here/helper-entitlements.plist" "$helper"
     done
+    # The runtime sidecar lives under Resources, which --deep never visits, so the notary sees its ad-hoc signature.
+    if [ -d "$app/Contents/Resources/runtime" ]; then
+      find "$app/Contents/Resources/runtime" -type f -perm -u+x -print0 | while IFS= read -r -d '' sidecar; do sign "$sidecar"; done
+    fi
     sign --entitlements "$here/entitlements.plist" "$app"
     codesign --verify --deep --strict "$app"
     echo "Re-signed Chromium-bundled $app with $SIGN_IDENTITY"

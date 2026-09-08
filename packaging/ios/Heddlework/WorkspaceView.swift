@@ -19,6 +19,21 @@ struct WorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+        layout
+            .task(id: link.hostURL.absoluteString + link.token) { client.connect(link) }
+            .onDisappear { client.disconnect(clearState: false) }
+            .modifier(lifecycle)
+            .modifier(sheets)
+            .alert("Workspace", isPresented: errorPresented) {
+                Button("OK") { client.dismissError() }
+            } message: { Text(client.lastError ?? "") }
+            .accessibilityIdentifier("workspace-root")
+            .accessibilityValue(client.status.rawValue)
+    }
+
+    // Split from body so the type checker sees three short chains instead of one that it gives up on.
+    @ViewBuilder
+    private var layout: some View {
         Group {
             if horizontalSizeClass == .compact {
                 NavigationStack {
@@ -34,40 +49,47 @@ struct WorkspaceView: View {
                 } detail: { workspaceDetail }
             }
         }
-        .task(id: link.hostURL.absoluteString + link.token) { client.connect(link) }
-        .onDisappear { client.disconnect(clearState: false) }
-        .onAppear {
-            NotificationService.shared.refreshAuthorization()
-            reportPresence()
-        }
-        .onChange(of: scenePhase) { _, phase in
-            reportPresence(visibility: phase == .active ? "focused" : "hidden")
-        }
-        .onChange(of: client.snapshot?.session?.sessionFile) { _, _ in
-            reportPresence()
-        }
-        .onChange(of: panel) { _, next in
-            if next == .notifications { client.send(CommandFactory.simple("markNoticesRead"), label: "Mark notices read") }
-        }
-        .task {
-            while !Task.isCancelled {
+    }
+
+    private var lifecycle: WorkspaceLifecycle {
+        WorkspaceLifecycle(
+            scenePhase: scenePhase,
+            sessionFile: client.snapshot?.session?.sessionFile,
+            panel: panel,
+            host: client.host,
+            onAppear: {
+                NotificationService.shared.refreshAuthorization()
                 reportPresence()
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-            }
-        }
-        .sheet(isPresented: $showingSidebar) { NavigationStack { SidebarView(client: client, surface: $surface, panel: $panel, columnVisibility: $columnVisibility, showingSessions: $showingSessions, showingHostPicker: $showingHostPicker, contract: contract, onDisconnect: onDisconnect).navigationTitle("Heddlework") } }
-        .sheet(isPresented: $showingSessions) { SessionsView(client: client) }
-        .sheet(isPresented: $showingHostPicker) { HostPickerView(client: client, link: link) }
-        .onChange(of: client.host) { _, host in
-            guard let host else { return }
-            store.remember(identity: host, url: link.hostURL, token: link.token, hostUrls: client.candidates)
-        }
-        .sheet(item: dialogBinding) { DialogView(dialog: $0, client: client) }
-        .alert("Workspace", isPresented: errorPresented) {
-            Button("OK") { client.dismissError() }
-        } message: { Text(client.lastError ?? "") }
-        .accessibilityIdentifier("workspace-root")
-        .accessibilityValue(client.status.rawValue)
+            },
+            onPhase: { phase in reportPresence(visibility: phase == .active ? "focused" : "hidden") },
+            onSessionChange: { reportPresence() },
+            onPanelChange: { next in
+                if next == .notifications { client.send(CommandFactory.simple("markNoticesRead"), label: "Mark notices read") }
+            },
+            onHostChange: { host in
+                guard let host else { return }
+                store.remember(identity: host, url: link.hostURL, token: link.token, hostUrls: client.candidates)
+            },
+            heartbeat: { reportPresence() }
+        )
+    }
+
+    private var sheets: some ViewModifier {
+        WorkspaceSheets(
+            showingSidebar: $showingSidebar,
+            showingSessions: $showingSessions,
+            showingHostPicker: $showingHostPicker,
+            dialog: dialogBinding,
+            sidebar: {
+                NavigationStack {
+                    SidebarView(client: client, surface: $surface, panel: $panel, columnVisibility: $columnVisibility, showingSessions: $showingSessions, showingHostPicker: $showingHostPicker, contract: contract, onDisconnect: onDisconnect)
+                        .navigationTitle("Heddlework")
+                }
+            },
+            sessions: { SessionsView(client: client) },
+            hostPicker: { HostPickerView(client: client, link: link) },
+            dialogView: { DialogView(dialog: $0, client: client) }
+        )
     }
 
     private var errorPresented: Binding<Bool> {
@@ -138,6 +160,54 @@ struct WorkspaceView: View {
             visibility: visibility ?? (hidden ? "hidden" : "focused"),
             sessionPath: client.snapshot?.session?.sessionFile
         ), label: "Presence", quiet: true)
+    }
+}
+
+// Lifecycle hooks for WorkspaceView, kept out of body so each modifier chain stays short enough to type-check.
+private struct WorkspaceLifecycle: ViewModifier {
+    let scenePhase: ScenePhase
+    let sessionFile: String?
+    let panel: DetailPanel?
+    let host: HostIdentity?
+    let onAppear: () -> Void
+    let onPhase: (ScenePhase) -> Void
+    let onSessionChange: () -> Void
+    let onPanelChange: (DetailPanel?) -> Void
+    let onHostChange: (HostIdentity?) -> Void
+    let heartbeat: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear(perform: onAppear)
+            .onChange(of: scenePhase) { _, phase in onPhase(phase) }
+            .onChange(of: sessionFile) { _, _ in onSessionChange() }
+            .onChange(of: panel) { _, next in onPanelChange(next) }
+            .onChange(of: host) { _, next in onHostChange(next) }
+            .task {
+                while !Task.isCancelled {
+                    heartbeat()
+                    try? await Task.sleep(nanoseconds: 15_000_000_000)
+                }
+            }
+    }
+}
+
+private struct WorkspaceSheets<Sidebar: View, Sessions: View, HostPicker: View, Dialog: View>: ViewModifier {
+    let showingSidebar: Binding<Bool>
+    let showingSessions: Binding<Bool>
+    let showingHostPicker: Binding<Bool>
+    let dialog: Binding<ExtensionDialog?>
+    @ViewBuilder let sidebar: () -> Sidebar
+    @ViewBuilder let sessions: () -> Sessions
+    @ViewBuilder let hostPicker: () -> HostPicker
+    @ViewBuilder let dialogView: (ExtensionDialog) -> Dialog
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: showingSidebar, content: sidebar)
+            .sheet(isPresented: showingSessions, content: sessions)
+            .sheet(isPresented: showingHostPicker, content: hostPicker)
+            .sheet(item: dialog, content: dialogView)
     }
 }
 
