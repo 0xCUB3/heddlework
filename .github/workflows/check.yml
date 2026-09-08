@@ -27,4 +27,15 @@ jobs:
       - run: ./scripts/ci-display.sh
       - run: bun run check
       - run: bun run build
-      - run: bun run smoke:browser
+      # Hosted macOS runners have retired the first CEF Views window on a profile switch and
+      # then never created the replacement, which times the packaged smoke out. That showed up
+      # when other macOS jobs were on the pool; a second launch against the same bundle has
+      # passed. Keep the assertions; retry once.
+      - name: Run bun run smoke:browser
+        run: |
+          set -euo pipefail
+          if bun run smoke:browser; then
+            exit 0
+          fi
+          echo "Packaged browser smoke failed once; retrying after CEF profile-switch teardown"
+          bun run smoke:browser

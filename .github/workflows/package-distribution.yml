@@ -1,0 +1,97 @@
+name: package-distribution
+
+# Publishes Homebrew, Scoop, and winget manifests for an existing GitHub release.
+# Independent of the original release run: downloads published assets, checks them
+# against checksums.txt, then renders and pushes. Dispatch this after a release
+# whose packages job never ran.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to distribute
+        required: true
+        type: string
+        default: v0.1.5
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          gh release download "$TAG" --dir assets
+          ls -la assets
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          cd assets
+          test -f checksums.txt
+          for f in *; do
+            [ "$f" = checksums.txt ] && continue
+            grep -E "  $f$" checksums.txt >/dev/null || { echo "checksums.txt is missing $f"; exit 1; }
+          done
+          sha256sum -c checksums.txt
+          awk '$2 != "checksums.txt" {print}' checksums.txt | sort > /tmp/expected-checksums
+          sha256sum heddlework-* | sort > /tmp/actual-checksums
+          diff -u /tmp/expected-checksums /tmp/actual-checksums
+          cp checksums.txt "$GITHUB_WORKSPACE/checksums.txt"
+      - name: Render the cask and Scoop manifest
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          scripts/release-packages.sh "$TAG" checksums.txt --dry-run
+          echo "## Manifests for $TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat dist/packages/heddlework.rb >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-manifests
+          path: dist/packages/
+      - name: Push to the Homebrew tap and Scoop bucket
+        if: ${{ !contains(inputs.tag, '-') }}
+        env:
+          TAG: ${{ inputs.tag }}
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PACKAGES_TOKEN:-}" ]; then echo "::notice::PACKAGES_TOKEN is not set; skipping tap and bucket update"; exit 0; fi
+          scripts/release-packages.sh "$TAG" checksums.txt
+      - name: Open a winget-pkgs pull request
+        if: ${{ !contains(inputs.tag, '-') }}
+        env:
+          TAG: ${{ inputs.tag }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WINGET_TOKEN:-}" ]; then
+            echo "::notice::WINGET_TOKEN is not set; skipping winget"
+            echo "Winget skipped: WINGET_TOKEN is not set." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          version="${TAG#v}"
+          asset=heddlework-windows-x64.zip
+          [ -f "assets/$asset" ] || asset=heddlework-windows-x64-unsigned.zip
+          url="https://github.com/${REPOSITORY}/releases/download/$TAG/$asset"
+          komac_ver=2.16.0
+          curl -sSL "https://github.com/russellbanks/Komac/releases/download/v$komac_ver/komac-$komac_ver-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          komac="$(find "$RUNNER_TEMP" -type f -name komac | head -1)"
+          if "$komac" show 0xCUB3.Heddlework --token "$WINGET_TOKEN" >/dev/null 2>&1; then
+            "$komac" update 0xCUB3.Heddlework --version "$version" --urls "$url" --submit --token "$WINGET_TOKEN"
+            echo "Winget: submitted 0xCUB3.Heddlework $version" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::0xCUB3.Heddlework is not in winget-pkgs yet; create the first manifest with 'komac new 0xCUB3.Heddlework --version $version --urls $url --submit' once, then this step keeps it updated"
+            echo "Winget blocker: 0xCUB3.Heddlework is not registered in microsoft/winget-pkgs. Komac will not open a PR until that identifier exists." >> "$GITHUB_STEP_SUMMARY"
+          fi

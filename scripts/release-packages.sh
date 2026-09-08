@@ -36,16 +36,18 @@ case "$version" in *-*) echo "prerelease $version: not publishing to the tap or 
 [ "$dry_run" = "--dry-run" ] && exit 0
 
 : "${PACKAGES_TOKEN:?PACKAGES_TOKEN is required to push}"
+# Bearer extraheader keeps the token off the remote URL so clone/push failures cannot leak it.
 push_file() {
-  local repo="$1" path="$2" src="$3" work
+  local repo="$1" path="$2" src="$3" work header
   work="$(mktemp -d)"
-  git clone -q --depth 1 "https://x-access-token:${PACKAGES_TOKEN}@github.com/0xCUB3/${repo}.git" "$work"
+  header="AUTHORIZATION: bearer ${PACKAGES_TOKEN}"
+  git -c "http.https://github.com/.extraheader=${header}" clone -q --depth 1 "https://github.com/0xCUB3/${repo}.git" "$work"
   mkdir -p "$work/$(dirname "$path")"
   cp "$src" "$work/$path"
   git -C "$work" add "$path"
   if git -C "$work" diff --cached --quiet; then echo "$repo: $path already at $version"; return; fi
   git -C "$work" -c user.name="heddlework-release" -c user.email="release@heddlework.invalid" commit -qm "heddlework $version"
-  git -C "$work" push -q origin HEAD
+  git -C "$work" -c "http.https://github.com/.extraheader=${header}" push -q origin HEAD
   echo "$repo: pushed $path for $version"
 }
 
