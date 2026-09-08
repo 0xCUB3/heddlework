@@ -549,6 +549,12 @@ describeNative('WorkbenchApp', () => {
     await automation.getByTestId('sidebar-settings').click()
     expect(root.renderer.getPaintedText()).toContain('Pi executable')
     expect(await automation.getByTestId('settings-global').count()).toBe(1)
+    // The native list stretches rows to full width; the column must still sit centered inside the pane.
+    const settingsPaneBounds = await automation.getByTestId('settings-scroll').bounds()
+    const settingsColumnBounds = await automation.getByTestId('settings-global').bounds()
+    const leftGap = settingsColumnBounds.x - settingsPaneBounds.x
+    const rightGap = settingsPaneBounds.x + settingsPaneBounds.width - settingsColumnBounds.x - settingsColumnBounds.width
+    expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(2)
     expect(root.renderer.getPaintedText().join('\n')).toContain('Copy confirmations stay as toasts')
     expect(await automation.getByTestId('theme-mode-system').count()).toBe(1)
     await automation.getByTestId('theme-mode-light').click()

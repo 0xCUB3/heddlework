@@ -90,7 +90,9 @@ export const SettingsView = React.memo(function SettingsView({
       </MotionDiv>
       <div testId="settings-scroll" style={{ flexGrow: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <NativeVirtualList testId="settings-scroll-native" alignment="top" estimatedItemHeight={620} overdraw={320} style={{ width: '100%', flexGrow: 1, minHeight: 0, minWidth: 0, paddingTop: mobile ? 18 : 28, paddingBottom: 52, paddingLeft: mobile ? contentGutter : 28, paddingRight: mobile ? contentGutter : 28 }}>
-          <div testId="settings-global" style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minHeight: mobile ? 0 : 620, flexShrink: 0, alignSelf: 'center', display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
+          {/* The native list stretches each item to full width, so a row wrapper is what centers the column. */}
+          <div testId="settings-global-row" style={{ width: '100%', flexShrink: 0, display: 'flex', flexDirection: 'row', justifyContent: 'center' }}>
+          <div testId="settings-global" style={{ width: '100%', maxWidth: uiContract.layout.settingsMaxWidth, minHeight: mobile ? 0 : 620, minWidth: 0, flexShrink: 1, display: 'flex', flexDirection: 'column', gap: mobile ? 20 : 24 }}>
           <SettingsSection title="Runtime" description={onStopAllAndQuit ? "Agents keep running when you close or update the app. Reopen to reconnect." : "Global Pi connection settings for this application."}>
             <SettingsRow icon="terminal" label="Pi executable" value={resolvePiExecutable()} />
             <SettingsRow icon="circle" label="Status" value={state.connectionMessage} tone={state.connection === 'connected' ? 'success' : 'normal'} />
@@ -143,6 +145,7 @@ export const SettingsView = React.memo(function SettingsView({
             <SettingsRow testId="settings-alpha" icon="panel" label="Pi Code" value="Alpha" />
           </SettingsSection>
           <div testId="settings-bottom-spacer" style={{ height: 52, flexShrink: 0 }} />
+          </div>
           </div>
         </NativeVirtualList>
       </div>
